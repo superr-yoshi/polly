@@ -1,4 +1,5 @@
-"""9 x 9 경기장 격자 지도와 최단 경로 계산.
+"""
+9 x 9 경기장 격자 지도와 최단 경로 계산.
 
 ROS2와 무관한 순수 Python 모듈이다. (하드웨어 없이 테스트 가능)
 
@@ -46,7 +47,7 @@ class GridMap:
         return 1 <= x <= self.size and 1 <= y <= self.size
 
     def mirror(self, cell):
-        """중앙 기준 점대칭 격자를 반환한다. 예: (3, 1) -> (7, 9)"""
+        """중앙 기준 점대칭 격자를 반환한다. 예: (3, 1) -> (7, 9)."""
         x, y = cell
         return (self.size + 1 - x, self.size + 1 - y)
 
@@ -80,7 +81,8 @@ class GridMap:
         return [c for c in candidates if self.is_passable(c)]
 
     def find_path(self, start, goal):
-        """start -> goal 최단 경로 (BFS).
+        """
+        BFS로 start -> goal 최단 경로를 찾는다.
 
         경로는 start와 goal을 포함한 격자 목록이다.
         갈 수 없으면 None을 반환한다.
@@ -116,7 +118,8 @@ class GridMap:
         return path
 
     def to_text(self, path=None):
-        """터미널 확인용 지도 문자열. 위쪽이 y = 9.
+        """
+        터미널 확인용 지도 문자열. 위쪽이 y = 9.
 
         # = 막힘, . = 비어 있음, ? = 모름, * = 경로
         """

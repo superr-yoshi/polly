@@ -1,7 +1,5 @@
 import math
 
-import pytest
-
 from poli_navigation.fake_robot import (
     arena_to_odom,
     integrate_pose,
@@ -18,6 +16,7 @@ from poli_navigation.mission2_logic import (
     START_POSE,
 )
 from poli_navigation.mission2_node import odom_to_arena
+import pytest
 
 
 DT = 0.05

@@ -1,12 +1,12 @@
 from poli_navigation.grid_map import (
     BLOCKED,
+    cell_center_m,
     CENTER,
     FREE,
     GridMap,
     MISSION1_START,
     RULE_EXAMPLE_BLOCKED,
     UNKNOWN,
-    cell_center_m,
 )
 
 

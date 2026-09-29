@@ -1,19 +1,18 @@
 import math
 import signal
 
-import rclpy
-from rclpy.node import Node
-from rclpy.signals import SignalHandlerOptions
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Bool, String
-
 from poli_interfaces.msg import TargetDetection
 from poli_navigation.mission2_logic import (
     Mission2Logic,
     Observation,
     START_POSE,
 )
+import rclpy
+from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
+from std_msgs.msg import Bool, String
 
 
 # 판단 주기 (초)
@@ -33,7 +32,7 @@ def yaw_from_quaternion(q):
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
-    """odom 좌표(출발 지점 기준, x = 출발 시 정면) -> 임무 2 경기장 좌표."""
+    """Odom 좌표(출발 지점 기준, x = 출발 시 정면) -> 임무 2 경기장 좌표."""
     start_x, start_y, start_yaw = START_POSE
     cos_s = math.cos(start_yaw)
     sin_s = math.sin(start_yaw)

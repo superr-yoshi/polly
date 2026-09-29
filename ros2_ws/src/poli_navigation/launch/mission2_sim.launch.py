@@ -1,4 +1,5 @@
-"""임무 2 시뮬레이션: 가짜 로봇 + 임무 2 노드를 한 번에 실행한다.
+"""
+임무 2 시뮬레이션: 가짜 로봇 + 임무 2 노드를 한 번에 실행한다.
 
 SIM_ONLY: 실제 로봇에서는 사용하지 않는다.
 실행: ros2 launch poli_navigation mission2_sim.launch.py

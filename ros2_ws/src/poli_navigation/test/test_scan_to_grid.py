@@ -3,20 +3,20 @@ from types import SimpleNamespace
 
 from poli_navigation.grid_map import (
     BLOCKED,
+    cell_center_m,
     CENTER,
     FREE,
     GridMap,
     MISSION1_START,
     RULE_EXAMPLE_BLOCKED,
     UNKNOWN,
-    cell_center_m,
 )
 from poli_navigation.scan_to_grid import (
     ARENA_SIZE_M,
-    START_POSE,
     odom_to_arena,
     point_to_cell,
     scan_to_cells,
+    START_POSE,
     update_grid_from_scan,
 )
 
@@ -168,7 +168,8 @@ def test_hit_near_corner_stays_in_obstacle_cell():
 
 
 def explore_to_center(true_grid, max_moves=40):
-    """스캔 -> 경로 계산 -> 한 칸 이동을 반복해서 중앙까지 간다.
+    """
+    스캔 -> 경로 계산 -> 한 칸 이동을 반복해서 중앙까지 간다.
 
     반환: (지나간 격자 목록, 로봇이 만든 지도)
     """

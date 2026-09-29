@@ -1,12 +1,7 @@
 import math
 
-import rclpy
-from rclpy.node import Node
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Bool, String
-from tf2_ros import TransformBroadcaster
-
 from poli_interfaces.msg import TargetDetection
 from poli_navigation.mission2_logic import (
     CENTER_M,
@@ -14,6 +9,10 @@ from poli_navigation.mission2_logic import (
     GRIPPER_OPEN,
     START_POSE,
 )
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Bool, String
+from tf2_ros import TransformBroadcaster
 
 
 # SIM_ONLY: 실제 로봇 없이 임무 노드를 테스트하기 위한 가짜 로봇이다.
@@ -42,7 +41,8 @@ SIM_ONLY_AREA_SCALE = 937.5  # 거리 0.25m에서 면적 15000
 
 
 def integrate_pose(x, y, yaw, linear, angular, dt):
-    """속도(linear m/s, angular rad/s)로 dt초 움직인 뒤의 위치를 계산한다.
+    """
+    속도(linear m/s, angular rad/s)로 dt초 움직인 뒤의 위치를 계산한다.
 
     odom 좌표: 출발 지점이 (0, 0), 출발 시 정면이 +x, 왼쪽이 +y.
     """

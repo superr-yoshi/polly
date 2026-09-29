@@ -5,6 +5,7 @@ from poli_navigation.mission2_logic import (
     APPROACH,
     CENTER_M,
     Command,
+    distance_to_danger_line,
     DRIVE,
     GRASP,
     GRASP_WAIT_S,
@@ -17,7 +18,6 @@ from poli_navigation.mission2_logic import (
     SEARCH,
     START_POSE,
     TURN,
-    distance_to_danger_line,
 )
 
 

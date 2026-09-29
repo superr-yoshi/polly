@@ -1,4 +1,5 @@
-"""LiDAR 스캔 -> 막힌 격자 / 빈 격자 판단.
+"""
+LiDAR 스캔 -> 막힌 격자 / 빈 격자 판단.
 
 ROS2와 무관한 순수 Python 모듈이다.
 scan 인자는 sensor_msgs/LaserScan 또는 같은 속성
@@ -13,10 +14,10 @@ import math
 
 from poli_navigation.grid_map import (
     BLOCKED,
+    cell_center_m,
     CELL_SIZE_M,
     GRID_SIZE,
     MISSION1_START,
-    cell_center_m,
 )
 
 
@@ -46,7 +47,7 @@ FREE_STOP_BEFORE_HIT_M = 0.1
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
-    """odom 좌표(출발 지점 기준, x = 출발 시 정면) -> 경기장 좌표."""
+    """Odom 좌표(출발 지점 기준, x = 출발 시 정면) -> 경기장 좌표."""
     start_x, start_y, start_yaw = START_POSE
     cos_s = math.cos(start_yaw)
     sin_s = math.sin(start_yaw)
@@ -76,7 +77,8 @@ def is_near_wall(x, y):
 
 
 def hit_to_cell(hit_x, hit_y, dir_x, dir_y):
-    """광선이 맞은 점 -> 맞은 장애물 격자.
+    """
+    광선이 맞은 점 -> 맞은 장애물 격자.
 
     장애물은 격자 1칸 크기이므로 맞은 점에서 가장 가까운 격자 선이 맞은 면이다.
     그 면을 가로지르는 방향(광선 진행 방향)으로만 밀어서 장애물 격자를 찾는다.
@@ -94,7 +96,8 @@ def hit_to_cell(hit_x, hit_y, dir_x, dir_y):
 
 
 def scan_to_cells(scan, robot_pose):
-    """스캔 한 번으로 막힌 격자와 빈 격자를 판단한다.
+    """
+    스캔 한 번으로 막힌 격자와 빈 격자를 판단한다.
 
     robot_pose: 경기장 좌표 (x, y, yaw)
     반환: (blocked_cells, free_cells) 두 개의 set
@@ -151,7 +154,8 @@ def scan_to_cells(scan, robot_pose):
 
 
 def update_grid_from_scan(grid, scan, robot_pose):
-    """스캔 결과를 격자 지도에 반영한다.
+    """
+    스캔 결과를 격자 지도에 반영한다.
 
     이미 막힘으로 표시된 격자는 빈 격자로 바꾸지 않는다.
     (장애물은 고정되어 있으므로, 한 번 막힘이면 계속 막힘으로 본다.)
