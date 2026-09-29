@@ -1,0 +1,43 @@
+import math
+
+import pytest
+
+from poli_navigation.fake_robot import integrate_pose
+
+
+DT = 0.05
+
+
+def test_stopped_robot_does_not_move():
+    assert integrate_pose(1.0, 2.0, 0.5, 0.0, 0.0, DT) == (1.0, 2.0, 0.5)
+
+
+def test_forward_moves_along_heading():
+    # 1초 동안 0.2m/s로 정면(+x) 전진
+    x, y, yaw = 0.0, 0.0, 0.0
+    for _ in range(20):
+        x, y, yaw = integrate_pose(x, y, yaw, 0.2, 0.0, DT)
+
+    assert x == pytest.approx(0.2)
+    assert y == pytest.approx(0.0)
+
+
+def test_forward_while_facing_left():
+    # 왼쪽(+90도)을 보고 전진하면 +y로 간다.
+    x, y, _ = integrate_pose(0.0, 0.0, math.pi / 2, 1.0, 0.0, 1.0)
+
+    assert x == pytest.approx(0.0)
+    assert y == pytest.approx(1.0)
+
+
+def test_positive_angular_turns_left():
+    _, _, yaw = integrate_pose(0.0, 0.0, 0.0, 0.0, 0.5, 1.0)
+
+    assert yaw == pytest.approx(0.5)
+
+
+def test_yaw_stays_between_minus_pi_and_pi():
+    _, _, yaw = integrate_pose(0.0, 0.0, math.radians(170), 0.0, 1.0, 1.0)
+
+    assert -math.pi <= yaw <= math.pi
+    assert yaw == pytest.approx(math.radians(170) + 1.0 - 2 * math.pi)

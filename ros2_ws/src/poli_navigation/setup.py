@@ -27,6 +27,7 @@ setup(
         'scan_monitor = poli_navigation.scan_monitor:main',
         'fake_scan = poli_navigation.fake_scan:main',
         'fake_odom = poli_navigation.fake_odom:main',
+        'fake_robot = poli_navigation.fake_robot:main',
         'mission2 = poli_navigation.mission2_node:main',
         ],
     },
