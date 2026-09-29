@@ -3,11 +3,21 @@ import math
 import pytest
 
 from poli_navigation.fake_robot import (
+    arena_to_odom,
     integrate_pose,
     is_holding,
+    sim_camera,
+    SIM_ONLY_AREA_SCALE,
+    SIM_ONLY_GRAB_REACH_M,
     SIM_ONLY_GRAB_TIME,
 )
-from poli_navigation.mission2_logic import GRASP_WAIT_S
+from poli_navigation.mission2_logic import (
+    CENTER_M,
+    GRAB_AREA,
+    GRASP_WAIT_S,
+    START_POSE,
+)
+from poli_navigation.mission2_node import odom_to_arena
 
 
 DT = 0.05
@@ -60,3 +70,47 @@ def test_grab_takes_time():
 def test_grab_finishes_before_mission2_checks():
     # mission2는 grab 후 GRASP_WAIT_S 뒤에 holding을 확인한다.
     assert SIM_ONLY_GRAB_TIME < GRASP_WAIT_S
+
+
+def test_center_is_3_cells_forward_3_cells_left():
+    # docs/mission_strategy.md: 임무 2 중앙은 앞 3칸, 왼쪽 3칸
+    x, y = arena_to_odom(*CENTER_M)
+
+    assert x == pytest.approx(1.2)
+    assert y == pytest.approx(1.2)
+
+
+def test_arena_to_odom_is_reverse_of_odom_to_arena():
+    x, y = arena_to_odom(1.0, 2.5)
+    arena_x, arena_y, _ = odom_to_arena(x, y, 0.0)
+
+    assert arena_x == pytest.approx(1.0)
+    assert arena_y == pytest.approx(2.5)
+    assert START_POSE[:2] == pytest.approx(odom_to_arena(0.0, 0.0, 0.0)[:2])
+
+
+def test_camera_sees_target_in_front():
+    detected, x_offset, _ = sim_camera(0.0, 0.0, 0.0, (1.0, 0.0))
+
+    assert detected is True
+    assert x_offset == pytest.approx(0.0)
+
+
+def test_camera_target_on_left_is_negative_offset():
+    detected, x_offset, _ = sim_camera(0.0, 0.0, 0.0, (1.0, 0.3))
+
+    assert detected is True
+    assert x_offset < 0.0
+
+
+def test_camera_does_not_see_target_behind_or_far():
+    assert sim_camera(0.0, 0.0, 0.0, (-1.0, 0.0))[0] is False
+    assert sim_camera(0.0, 0.0, 0.0, (3.0, 0.0))[0] is False
+
+
+def test_grab_area_is_within_grab_reach():
+    # mission2는 area >= GRAB_AREA일 때 grab을 보낸다.
+    # 그 거리에서 가짜 집게가 잡을 수 있어야 한다.
+    grab_distance = math.sqrt(SIM_ONLY_AREA_SCALE / GRAB_AREA)
+
+    assert grab_distance < SIM_ONLY_GRAB_REACH_M

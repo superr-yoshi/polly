@@ -8,6 +8,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, String
 
+from poli_interfaces.msg import TargetDetection
 from poli_navigation.mission2_logic import (
     Mission2Logic,
     Observation,
@@ -17,6 +18,11 @@ from poli_navigation.mission2_logic import (
 
 # 판단 주기 (초)
 CONTROL_PERIOD = 0.05
+
+# 카메라 결과가 이 시간(초) 넘게 오지 않으면 "대상을 못 찾음"으로 본다.
+# 카메라가 멈췄는데 예전 값을 믿고 움직이지 않기 위해서다.
+# TODO: 조원 B의 전송 주기가 정해지면 조정
+VISION_TIMEOUT = 0.5
 
 
 def yaw_from_quaternion(q):
@@ -47,6 +53,8 @@ class Mission2Node(Node):
         self.logic = Mission2Logic()
         self.pose = None
         self.holding = None
+        self.vision = None
+        self.vision_received_at = None
         self.last_state = None
 
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -60,8 +68,9 @@ class Mission2Node(Node):
             Bool, '/gripper/holding', self.holding_callback, 10
         )
 
-        # TODO: /vision/target 구독 (메시지 형식은 docs/interfaces.md 확정 후)
-        # 연결 전까지는 항상 "대상을 못 찾음"으로 판단한다.
+        self.create_subscription(
+            TargetDetection, '/vision/target', self.vision_callback, 10
+        )
 
         self.create_timer(CONTROL_PERIOD, self.control_step)
 
@@ -75,17 +84,39 @@ class Mission2Node(Node):
     def holding_callback(self, msg):
         self.holding = msg.data
 
+    def vision_callback(self, msg):
+        self.vision = msg
+        self.vision_received_at = self.now_seconds()
+
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def fresh_vision(self, now):
+        """최근 카메라 결과. 없거나 오래됐으면 None."""
+        if self.vision_received_at is None:
+            return None
+        if now - self.vision_received_at > VISION_TIMEOUT:
+            return None
+        return self.vision
+
     def control_step(self):
         if self.pose is None:
             # 위치를 아직 모르면 움직이지 않는다.
             return
 
         x, y, yaw = self.pose
-        now = self.get_clock().now().nanoseconds / 1e9
+        now = self.now_seconds()
 
         observation = Observation(
             x=x, y=y, yaw=yaw, now=now, holding=self.holding
         )
+
+        vision = self.fresh_vision(now)
+        if vision is not None:
+            observation.detected = vision.detected
+            observation.x_offset = vision.x_offset
+            observation.area = vision.area
+
         command = self.logic.step(observation)
 
         twist = Twist()
