@@ -19,10 +19,7 @@ from poli_navigation.scan_to_grid import (
     START_POSE,
     update_grid_from_scan,
 )
-
-
-NUM_RAYS = 360
-RAY_STEP_M = 0.005
+from poli_navigation.sim_world import simulate_scan
 
 
 def make_true_grid():
@@ -30,36 +27,6 @@ def make_true_grid():
     for cell in RULE_EXAMPLE_BLOCKED:
         grid.mark_blocked(cell)
     return grid
-
-
-def simulate_scan(true_grid, pose):
-    """정답 지도에서 광선을 쏴서 가짜 LaserScan을 만든다 (테스트 전용)."""
-    x0, y0, yaw = pose
-    increment = 2.0 * math.pi / NUM_RAYS
-    angle_min = -math.pi + increment / 2.0
-    ranges = []
-
-    for i in range(NUM_RAYS):
-        angle = yaw + angle_min + i * increment
-        dx, dy = math.cos(angle), math.sin(angle)
-        distance = 0.0
-
-        while True:
-            distance += RAY_STEP_M
-            x, y = x0 + dx * distance, y0 + dy * distance
-            cell = point_to_cell(x, y)
-            if cell is None or true_grid.get(cell) == BLOCKED:
-                break
-
-        ranges.append(distance)
-
-    return SimpleNamespace(
-        angle_min=angle_min,
-        angle_increment=increment,
-        range_min=0.05,
-        range_max=12.0,
-        ranges=ranges,
-    )
 
 
 # ---------------------------------------------------------------

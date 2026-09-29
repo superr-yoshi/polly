@@ -4,8 +4,6 @@ from poli_navigation.fake_robot import (
     arena_to_odom,
     integrate_pose,
     is_holding,
-    sim_camera,
-    SIM_ONLY_AREA_SCALE,
     SIM_ONLY_GRAB_REACH_M,
     SIM_ONLY_GRAB_TIME,
 )
@@ -16,6 +14,7 @@ from poli_navigation.mission2_logic import (
     START_POSE,
 )
 from poli_navigation.mission2_node import odom_to_arena
+from poli_navigation.sim_world import sim_camera, SIM_ONLY_AREA_SCALE
 import pytest
 
 
