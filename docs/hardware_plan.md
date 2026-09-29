@@ -10,17 +10,18 @@
 - Role:
   - Left / right wheel control
   - Encoder feedback
-  - Gripper servo control
+  - Built-in 6-axis IMU data
 
 ## 3. Sensor MCU
-- NUCLEO-F446RE
+- Arduino Mega 2560
+- Connection: USB Serial bridge to Raspberry Pi 5
 - Role:
-  - BNO085 IMU
   - HC-SR04 ultrasonic sensors × 4
-  - Send sensor data to Raspberry Pi
+  - Battery monitoring
+  - Send range / battery data to Raspberry Pi
 
 ## 4. LiDAR
-- SLAMTEC RPLIDAR A2M12
+- SLAMTEC RPLIDAR C1
 - Connection: USB → Raspberry Pi 5
 - Role:
   - Obstacle detection
@@ -28,26 +29,28 @@
   - Navigation
 
 ## 5. Camera
-- Innomaker U20CAM-720P
-- Connection: USB → Raspberry Pi 5
+- Raspberry Pi AI Camera (Sony IMX500)
+- Connection: CSI → Raspberry Pi 5
 - Role:
   - Red rescue target detection
   - Visual alignment
 
 ## 6. IMU
-- BNO085
-- Connection: NUCLEO-F446RE
+- RRC Lite built-in 6-axis IMU
+- Connection: RRC Lite → Raspberry Pi 5
 - Role:
   - Robot heading
   - Rotation angle
   - Orientation
+  - ROS 2 /imu/data
 
 ## 7. Ultrasonic Sensors
 - HC-SR04 × 4
-- Connection: NUCLEO-F446RE
+- Connection: Arduino Mega 2560
 - Role:
   - Short-range obstacle detection
   - Collision prevention
+  - ROS 2 /range/front_left, /range/front_right, /range/rear_left, /range/rear_right
 
 ## 8. Gripper
 - Byte Robot Black Composite Claw
@@ -63,11 +66,13 @@
 
 ## 10. Software Interface Plan
 - /cmd_vel → motor command
-- /odom_raw → encoder odometry
-- /imu/data → IMU data
-- /scan → LiDAR data
-- /range/front_left
-- /range/front_right
-- /range/rear_left
-- /range/rear_right
-- /camera/image_raw → camera image
+- /odom_raw → RRC Lite encoder odometry
+- /imu/data → RRC Lite built-in 6-axis IMU
+- /range/front_left → front-left ultrasonic sensor
+- /range/front_right → front-right ultrasonic sensor
+- /range/rear_left → rear-left ultrasonic sensor
+- /range/rear_right → rear-right ultrasonic sensor
+- /battery_state → battery status from Arduino Mega
+- /scan → RPLIDAR C1 LaserScan
+- /odometry/filtered → robot_localization filtered odometry
+
