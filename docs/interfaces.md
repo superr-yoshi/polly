@@ -29,8 +29,13 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 | `x_offset` | float32 | 화면 가운데 기준 좌우 위치, -1.0 ~ 1.0. **음수 = 화면 왼쪽**, 양수 = 오른쪽 |
 | `area` | float32 | 대상이 화면에서 차지하는 넓이 (픽셀). 가까울수록 커진다 |
 
-- 메시지 형식 제안: 전용 메시지 `poli_interfaces/msg/TargetDetection`
-  (새 패키지가 필요하므로 팀 동의 후 만든다. TODO)
+- 메시지 형식: 전용 메시지 `poli_interfaces/msg/TargetDetection`
+  (`ros2_ws/src/poli_interfaces/msg/TargetDetection.msg`)
+  - 필드 이름을 코드에서 바로 알 수 있고, 세 값이 항상 한 묶음으로 온다.
+  - 사용하려면 `poli_interfaces`를 먼저 빌드한다:
+    `colcon build --packages-select poli_interfaces`
+  - Python: `from poli_interfaces.msg import TargetDetection`
+  - 문제가 있으면 말해주세요. 필드 추가/변경 가능.
 - TODO_MEASURE: 집게로 집을 수 있는 거리일 때의 `area` 값
 
 ### 1-2. `/gripper/command` — 집게 명령
@@ -67,4 +72,4 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 - [ ] 조원 B: 보낼 수 있는 주기
 - [ ] 조원 A: `/gripper/command` 값 (`"open"`, `"grab"`) 괜찮은지
 - [ ] 조원 A: 집게가 잡았는지 알 수 있는지 (`/gripper/holding`)
-- [ ] 팀: 전용 메시지 패키지 `poli_interfaces` 만들지
+- [x] 팀: 전용 메시지 패키지 `poli_interfaces` 만들지 → 만들었음 (의견 있으면 알려주세요)
