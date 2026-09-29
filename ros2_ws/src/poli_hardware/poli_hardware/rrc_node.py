@@ -1,17 +1,21 @@
 """RRC Lite 주행 계층: /cmd_vel -> 바퀴, 엔코더 -> /odom_raw, 내장 IMU -> /imu/data.
 
 - fake_rrc_node   : SimTransport (부품 도착 전, 바퀴가 명령을 그대로 따른다고 가정)
-- rrc_adapter_node: RrcTransport (RRC Lite 도착 후 통신 부분만 구현)
+- rrc_adapter_node: RrcTransport (RRC Lite USB Serial, docs/rrc_protocol.md)
 
 두 노드의 Topic·frame_id·parameter 계약은 같다. launch에서 노드만 바꿔 끼운다.
 odom -> base_link TF는 발행하지 않는다 (robot_localization EKF 소유).
 """
+import threading
+import time
+
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 
+from poli_hardware import rrc_protocol
 from poli_hardware.diff_drive import (
     CmdWatchdog, DiffDriveParams, OdomIntegrator, twist_to_wheels,
     wheels_to_twist, yaw_to_quaternion)
@@ -30,27 +34,101 @@ class SimTransport:
     def read_wheel_speeds(self):
         return self._left, self._right
 
-    def read_gyro_z(self):
-        return None  # None이면 노드가 휠 오도메트리 각속도로 대신 채운다
+    def read_imu(self):
+        return None  # None이면 노드가 휠 오도메트리 각속도로 z축만 채운다
 
     def close(self):
         pass
 
 
 class RrcTransport:
-    """RRC Lite USB Serial 통신. TODO: 보드 도착 후 제조사 SDK/프로토콜 확인 후 구현.
+    """RRC Lite USB Serial (docs/rrc_protocol.md).
 
-    구현할 것 (docs/rrc_adapter_plan.md 참고):
-      set_wheel_speeds(left, right)  바퀴 각속도 rad/s -> RRC 모터 속도 명령
-      read_wheel_speeds()            엔코더 -> 바퀴 각속도 rad/s (부호: 전진 +)
-      read_gyro_z()                  내장 IMU z축 각속도 rad/s (ROS 축 기준)
+    제조사 펌웨어는 엔코더 값을 Pi로 보내지 않는다. 그래서 read_wheel_speeds()는
+    마지막으로 보낸 명령(=STM32 PID 목표값)을 돌려준다. /odom_raw는 명령 기반 추정이고,
+    회전은 EKF에서 IMU gyro로 보정한다.
     """
 
     def __init__(self, node):
-        port = node.get_parameter('port').value
-        raise NotImplementedError(
-            f'RRC Lite 통신이 아직 구현되지 않았습니다 (port={port}). '
-            '부품 도착 전에는 use_fake_hardware:=true 로 실행하세요.')
+        self._log = node.get_logger()
+        p = node.declare_parameter
+        p('motor_type', rrc_protocol.MOTOR_TYPE_JGB37)
+        p('motor_ticks_per_rev', 1980.0)   # TODO_MEASURE: 실제 JGB37-520 출력축 1회전 tick
+        p('max_motor_rps', 3.0)             # 펌웨어 JGB37 rps 제한과 동일
+        p('left_motor_id', 0)               # M1
+        p('right_motor_id', 1)              # M2
+        p('left_sign', -1.0)                # TODO_MEASURE: 전진 명령에 바퀴가 뒤로 돌면 부호 반전
+        p('right_sign', 1.0)                # TODO_MEASURE
+        p('imu_timeout', 0.5)
+        g = node.get_parameter
+        self._ids = (g('left_motor_id').value, g('right_motor_id').value)
+        self._signs = (g('left_sign').value, g('right_sign').value)
+        self._ticks = g('motor_ticks_per_rev').value
+        self._limit = g('max_motor_rps').value
+        self._imu_timeout = g('imu_timeout').value
+
+        import serial  # pyserial (python3-serial)
+        port = g('port').value
+        self._ser = serial.Serial(port, g('baud').value, timeout=0.05)
+        self._lock = threading.Lock()
+        self._parser = rrc_protocol.FrameParser()
+        self._imu = None
+        self._imu_t = 0.0
+        self._imu_warned = False
+        self._sent = (0.0, 0.0)
+        self._stop = False
+        self._write(rrc_protocol.motor_type_frame(g('motor_type').value))
+        self._write(rrc_protocol.motor_stop_frame())
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
+        self._log.info(f'RRC Lite connected: {port}')
+        self._log.warn('RRC 펌웨어는 엔코더를 보내지 않음 -> /odom_raw는 명령 기반 추정')
+
+    def _write(self, frame):
+        try:
+            with self._lock:
+                self._ser.write(frame)
+        except Exception as e:  # noqa: BLE001 - USB 분리 등
+            self._log.error(f'RRC write error: {e}', throttle_duration_sec=2.0)
+
+    def _read_loop(self):
+        while not self._stop:
+            try:
+                chunk = self._ser.read(self._ser.in_waiting or 1)
+            except Exception as e:  # noqa: BLE001
+                self._log.error(f'RRC read error: {e}', throttle_duration_sec=2.0)
+                time.sleep(0.5)
+                continue
+            for func, data in self._parser.feed(chunk):
+                if func == rrc_protocol.FUNC_IMU:
+                    imu = rrc_protocol.parse_imu(data)
+                    if imu is not None:
+                        self._imu, self._imu_t = imu, time.monotonic()
+
+    def set_wheel_speeds(self, left, right):
+        rps = [rrc_protocol.wheel_to_motor_rps(w, s, self._ticks, self._limit)
+               for w, s in zip((left, right), self._signs)]
+        self._write(rrc_protocol.motor_speeds_frame(list(zip(self._ids, rps))))
+        self._sent = tuple(rrc_protocol.motor_rps_to_wheel(r, s, self._ticks)
+                           for r, s in zip(rps, self._signs))
+
+    def read_wheel_speeds(self):
+        return self._sent
+
+    def read_imu(self):
+        if self._imu is None or time.monotonic() - self._imu_t > self._imu_timeout:
+            if not self._imu_warned:
+                self._log.warn(f'RRC IMU 수신 없음 ({self._imu_timeout}s)')
+                self._imu_warned = True
+            return None
+        self._imu_warned = False
+        return self._imu
+
+    def close(self):
+        self._write(rrc_protocol.motor_stop_frame())
+        self._stop = True
+        self._reader.join(timeout=0.5)
+        self._ser.close()
 
 
 class RrcNode(Node):
@@ -146,15 +224,23 @@ class RrcNode(Node):
         self.odom_pub.publish(msg)
 
     def _on_imu(self):
-        gz = self.transport.read_gyro_z()
+        imu = self.transport.read_imu()
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.imu_frame
         msg.orientation_covariance[0] = -1.0  # orientation 미제공
-        msg.angular_velocity.z = self._angular if gz is None else gz
-        # SIM_ONLY: 테스트용 covariance
+        # SIM_ONLY: 테스트용 covariance. 실제 IMU 정지 상태 분산 측정 후 교체
+        msg.angular_velocity_covariance[0] = 1e-3
+        msg.angular_velocity_covariance[4] = 1e-3
         msg.angular_velocity_covariance[8] = 1e-3
-        msg.linear_acceleration_covariance[0] = -1.0  # 가속도 미제공
+        if imu is None:
+            msg.angular_velocity.z = self._angular
+            msg.linear_acceleration_covariance[0] = -1.0  # 가속도 미제공
+        else:
+            a, w = msg.linear_acceleration, msg.angular_velocity
+            a.x, a.y, a.z, w.x, w.y, w.z = imu
+            for i in (0, 4, 8):
+                msg.linear_acceleration_covariance[i] = 1e-2
         self.imu_pub.publish(msg)
 
     def stop(self):

@@ -1,31 +1,32 @@
-# RRC Lite 어댑터 구현 계획 (부품 도착 후)
+# RRC Lite 어댑터 — 보드 도착 후 확인 순서
 
-`rrc_adapter_node`는 이미 만들어져 있고, **통신 부분(`RrcTransport`)만 비어 있다.**
-/cmd_vel 처리, 속도 제한, watchdog, 휠 오도메트리 적분, /odom_raw·/imu/data 발행은
-fake_rrc_node와 같은 코드(`rrc_node.py`, `diff_drive.py`)를 쓴다.
+통신 코드(`RrcTransport`)는 제조사 펌웨어 분석(`docs/rrc_protocol.md`)을 바탕으로 구현되어 있다.
+보드가 오면 **실측값만 채우고 동작을 확인**한다.
 
-## 채워야 할 함수 (`ros2_ws/src/poli_hardware/poli_hardware/rrc_node.py`)
-| 함수 | 입력/출력 | 비고 |
-|---|---|---|
-| `__init__(node)` | `port`, `baud` 파라미터로 시리얼 열기 | 포트는 `/dev/robot_rrc` |
-| `set_wheel_speeds(left, right)` | 바퀴 각속도 rad/s | RRC 명령 단위(rps/rpm/PWM)로 변환. 전진이 + |
-| `read_wheel_speeds()` | → (left, right) rad/s | 엔코더 기반. 전진이 + |
-| `read_gyro_z()` | → rad/s 또는 None | 내장 IMU z축, ROS 축(위쪽 +, 반시계 +)으로 변환 |
-| `close()` | | 정지 명령 후 포트 닫기 |
+## 실측해서 `config/hardware.yaml`에 넣을 값
+| 파라미터 | 확인 방법 |
+|---|---|
+| `motor_ticks_per_rev` | 모터 라벨/판매 페이지의 기어비 × 11(PPR) × 4. 예: 30:1 → 1320. 펌웨어 가정은 1980(45:1) |
+| `left_sign`, `right_sign` | 바퀴 띄우고 전진 명령 → 둘 다 앞으로 돌아야 함. 반대면 부호 반전 |
+| `left_motor_id`, `right_motor_id` | 실제 M1/M2에 어느 바퀴를 꽂았는지 |
+| `wheel_radius`, `wheel_separation` | 직선 1~2 m, 제자리 360° 시험 |
 
 ## 순서
-1. **제조사 자료 확인**: Hiwonder RRC Lite의 시리얼 프로토콜/SDK(파이썬 예제)와 ROS 2 드라이버 유무·배포판.
-   제조사 ROS 2 드라이버가 Jazzy에서 빌드되고 odom→base_link TF를 끌 수 있으면 그걸 쓰고,
-   아니면 SDK를 `RrcTransport`에 감싼다.
-2. **바퀴 띄운 상태**에서 `use_fake_hardware:=false`로 실행하고 `teleop_twist_keyboard`로
-   전진/후진/좌회전/우회전/정지 확인. 방향이 반대면 코드에서 부호를 고친다 (배선을 바꾸지 말고 기록).
-3. `/cmd_vel` 발행을 멈추고 0.3초 안에 바퀴가 서는지 확인 (watchdog).
-4. `ros2 topic echo /odom_raw`로 엔코더 부호 확인: 전진 시 x 증가, 좌회전 시 yaw 증가.
-5. 직선 1~2 m, 제자리 360° 시험으로 `wheel_radius`, `wheel_separation` 보정 → `config/hardware.yaml` +
-   `docs/calibration.md`에 날짜와 함께 기록.
-6. 내장 IMU 축 확인: 정지 시 gyro≈0, 좌회전 시 z > 0.
+1. Pi에 연결 후 udev 별칭 `/dev/robot_rrc` 설정 (`docs/udev_template.md`)
+2. **바퀴를 띄운 상태**에서 실행:
+   ```bash
+   ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false
+   ros2 topic hz /imu/data           # 약 50 Hz면 통신 정상 (IMU 수신 확인)
+   ros2 run teleop_twist_keyboard teleop_twist_keyboard
+   ```
+3. 전진/후진/좌회전/우회전/정지 확인. 방향이 틀리면 sign·motor_id만 고친다 (배선 변경 X, 기록 O).
+4. teleop을 끄고 0.3초 안에 바퀴가 서는지 확인 (Pi 쪽 watchdog).
+5. 바퀴 1회전 속도 확인: `/cmd_vel` linear.x = 2π × wheel_radius (= 0.204 m/s)로 10초 → 바퀴가 10바퀴 도는지.
+   다르면 `motor_ticks_per_rev` 보정.
+6. IMU 축 확인: 정지 시 az ≈ +9.8, 좌회전 시 gz > 0. 다르면 URDF의 imu_link 회전으로 맞춘다.
+7. 직선·회전 시험으로 `wheel_radius`, `wheel_separation` 보정 → `docs/calibration.md`에 날짜와 기록.
 
 ## 지켜야 할 것
 - Topic 이름·타입·frame_id·parameter 이름을 바꾸지 않는다.
-- RRC 쪽이 odom→base_link TF를 발행하면 끈다 (EKF 소유).
-- 모터 정지 경로: watchdog(0.3 s) + 노드 종료 시 `set_wheel_speeds(0, 0)` + 물리 E-stop.
+- STM32는 명령이 끊겨도 스스로 멈추지 않는다 → **물리 E-stop 필수**, 시험은 바퀴를 띄우고 시작.
+- `/odom_raw`는 엔코더가 아니라 명령 기반 추정이다 (펌웨어 한계). EKF 설정 때 통합 담당에게 알린다.

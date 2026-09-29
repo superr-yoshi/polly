@@ -9,7 +9,7 @@
 | `ros2_ws/src/poli_hardware/` | RRC 주행 어댑터, Mega 브리지, fake 노드, launch | A |
 | `ros2_ws/src/poli_navigation/` | LiDAR·SLAM·Nav2 | 통합 |
 | `scripts/pc_serial_tester.py` | PC에서 Mega 시리얼 확인 도구 | A |
-| `docs/` | 프로토콜, 핀맵, 하드웨어 계획, udev, RRC 어댑터 계획 | |
+| `docs/` | Mega·RRC 프로토콜, 핀맵, 하드웨어 계획, udev, RRC 확인 순서 | |
 | `firmware/nucleo_controller/` | (구) NUCLEO-F446RE 계획. Mega로 대체되어 사용하지 않음 | |
 
 ## 빠른 확인

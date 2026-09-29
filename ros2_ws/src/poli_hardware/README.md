@@ -7,7 +7,7 @@
 | 노드 | 상태 | 역할 |
 |---|---|---|
 | `fake_rrc_node` | 사용 가능 | 부품 없이 /cmd_vel → /odom_raw, /imu/data (SIM_ONLY) |
-| `rrc_adapter_node` | 통신 부분 TODO | RRC Lite 실제 주행. `docs/rrc_adapter_plan.md` |
+| `rrc_adapter_node` | 구현됨, 실기 미검증 | RRC Lite 실제 주행 (`docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`) |
 | `fake_mega_node` | 사용 가능 | 부품 없이 /range/*, 집게 서비스 (SIM_ONLY) |
 | `mega_bridge_node` | 사용 가능 | Arduino Mega 시리얼 v1.1 ↔ ROS |
 
@@ -23,7 +23,8 @@
 
 - odom → base_link **TF는 발행하지 않는다** (robot_localization EKF 소유).
 - `/cmd_vel`이 `cmd_timeout`(0.3 s) 이상 끊기면 0 속도.
-- `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`), z축 각속도만. fake는 휠 각속도를 복사.
+- `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = RRC 내장 IMU 가속도·자이로 3축, fake = z축 각속도만(휠 각속도 복사).
+- `/odom_raw`: real도 엔코더가 아니라 **명령 기반 추정**이다 (RRC 제조사 펌웨어가 엔코더 값을 보내지 않음).
 - `/battery_state`는 발행하지 않는다 (전압 측정 회로 없음, 프로토콜 v1.1에서 `$BAT` 삭제).
 
 ## 실행 (Ubuntu 24.04 + ROS 2 Jazzy)
@@ -33,7 +34,7 @@ colcon build --symlink-install --packages-select poli_hardware
 source install/setup.bash
 
 ros2 launch poli_hardware hardware.launch.py                          # fake
-ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false  # 실제 (RRC 통신 구현 후)
+ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false  # 실제 RRC + Mega
 ```
 
 ## 검증 (통과 기준: 매뉴얼 12장)
@@ -51,7 +52,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard   # 키보드 주행
 ## 단위 테스트 (ROS 없이도 가능)
 ```bash
 pip install pytest
-python -m pytest ros2_ws/src/poli_hardware/test -q     # 프로토콜 파서 + 차동구동 계산
+python -m pytest ros2_ws/src/poli_hardware/test -q     # Mega·RRC 프로토콜 + 차동구동 계산
 ```
 
 ## 설정
