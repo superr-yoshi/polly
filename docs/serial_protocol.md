@@ -1,28 +1,34 @@
 # POLI Serial Protocol
 
 ## 목적
-NUCLEO-F446RE에서 읽은 센서 데이터를
+Arduino Mega 2560에서 읽은 초음파 센서 및 배터리 데이터를
 USB Serial을 통해 Raspberry Pi 5로 전달한다.
 
 ## 연결
-NUCLEO-F446RE → USB Serial → Raspberry Pi 5
+- Arduino Mega 2560 → Raspberry Pi 5
+- Interface: USB Serial
+- Baudrate: TODO
 
 ## 기본 형식
 센서 데이터는 한 줄씩 전송한다.
 
-### IMU
-IMU,yaw,pitch,roll
+### Ultrasonic Range
+
+$RNG,seq,millis,fl_mm,fr_mm,rl_mm,rr_mm*CS
 
 예:
-IMU,90.5,1.2,-0.8
+$RNG,15,123456,320,305,551,540*CS
 
-### Ultrasonic
-US,front_left,front_right,rear_left,rear_right
+### Battery
+
+$BAT,seq,millis,millivolt*CS
 
 예:
-US,32.4,30.8,55.2,53.9
+$BAT,16,123500,22100*CS
 
 ## 아직 미정
-- Serial 속도: 115200 baud
-- IMU 전송 주기: 50 Hz
-- 초음파 전송 주기: 8 Hz
+- Serial Baudrate: TODO
+- RNG packet rate: TODO
+- BAT packet rate: TODO
+- Checksum / CRC rule: TODO
+- Timeout / invalid range rule: TODO

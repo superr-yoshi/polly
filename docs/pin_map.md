@@ -3,14 +3,7 @@
 > 실제 부품 연결 후 핀 번호를 확정한다.
 > 확정 전 값은 TODO로 유지한다.
 
-## 1. NUCLEO-F446RE
-
-### BNO085 IMU
-- Power: TODO
-- GND: TODO
-- SDA: TODO
-- SCL: TODO
-- Interface: I2C
+## 1. Arduino Mega 2560
 
 ### HC-SR04 Front Left
 - VCC: TODO
@@ -36,19 +29,20 @@
 - TRIG: TODO
 - ECHO: TODO
 
-## 2. Raspberry Pi 5 USB Connections
+## 2. Raspberry Pi 5 USB / Serial Connections
 - RRC Lite: TODO
-- RPLIDAR A2M12: TODO
-- U20CAM-720P: TODO
-- NUCLEO-F446RE: TODO
+- RPLIDAR C1: TODO
+- Arduino Mega 2560: TODO
+
+### Camera Connection
+- Raspberry Pi AI Camera (Sony IMX500): CSI
 
 ## 3. RRC Lite
 - Left Motor: TODO
 - Left Encoder: TODO
 - Right Motor: TODO
 - Right Encoder: TODO
-- Gripper Servo 1: TODO
-- Gripper Servo 2: TODO
+- Built-in 6-axis IMU: Internal
 
 ## 4. Power Connections
 - Battery → Main Fuse: TODO
