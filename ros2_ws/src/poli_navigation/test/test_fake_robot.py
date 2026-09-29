@@ -2,7 +2,12 @@ import math
 
 import pytest
 
-from poli_navigation.fake_robot import integrate_pose
+from poli_navigation.fake_robot import (
+    integrate_pose,
+    is_holding,
+    SIM_ONLY_GRAB_TIME,
+)
+from poli_navigation.mission2_logic import GRASP_WAIT_S
 
 
 DT = 0.05
@@ -41,3 +46,17 @@ def test_yaw_stays_between_minus_pi_and_pi():
 
     assert -math.pi <= yaw <= math.pi
     assert yaw == pytest.approx(math.radians(170) + 1.0 - 2 * math.pi)
+
+
+def test_open_gripper_is_not_holding():
+    assert is_holding(None, 10.0) is False
+
+
+def test_grab_takes_time():
+    assert is_holding(10.0, 10.0 + SIM_ONLY_GRAB_TIME / 2) is False
+    assert is_holding(10.0, 10.0 + SIM_ONLY_GRAB_TIME) is True
+
+
+def test_grab_finishes_before_mission2_checks():
+    # mission2는 grab 후 GRASP_WAIT_S 뒤에 holding을 확인한다.
+    assert SIM_ONLY_GRAB_TIME < GRASP_WAIT_S

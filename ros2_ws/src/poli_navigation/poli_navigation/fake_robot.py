@@ -4,16 +4,25 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Bool, String
 from tf2_ros import TransformBroadcaster
+
+from poli_navigation.mission2_logic import GRIPPER_GRAB, GRIPPER_OPEN
 
 
 # SIM_ONLY: 실제 로봇 없이 임무 노드를 테스트하기 위한 가짜 로봇이다.
 # /cmd_vel 속도대로 움직였다고 가정하고 위치를 계산해 /odom_raw로 보낸다.
 # 바퀴 미끄러짐, 가속 시간 등은 없다. 실제 /odom_raw는 조원 A가 제공한다.
+# 집게도 흉내 낸다: /gripper/command를 받아 /gripper/holding을 보낸다.
 # fake_odom과 같은 토픽을 보내므로 동시에 실행하지 않는다.
 SIM_ONLY_ODOM_FRAME_ID = 'odom'
 SIM_ONLY_BASE_FRAME_ID = 'base_link'
 SIM_ONLY_PUBLISH_PERIOD = 0.05
+
+# SIM_ONLY: "grab"을 받고 잡았다고 알릴 때까지 걸리는 시간 (초)
+# mission2_logic.GRASP_WAIT_S(1.0초)보다 짧아야 GRASP -> HOLD로 넘어간다.
+# 실제 집게 시간이 아니다. (TODO_MEASURE)
+SIM_ONLY_GRAB_TIME = 0.5
 
 
 def integrate_pose(x, y, yaw, linear, angular, dt):
@@ -30,6 +39,16 @@ def integrate_pose(x, y, yaw, linear, angular, dt):
     return new_x, new_y, new_yaw
 
 
+def is_holding(grab_started_at, now):
+    """집게가 물체를 잡고 있는지. grab_started_at이 None이면 열린 상태.
+
+    SIM_ONLY: 대상 위치와 관계없이 항상 잡는 데 성공한다.
+    """
+    if grab_started_at is None:
+        return False
+    return now - grab_started_at >= SIM_ONLY_GRAB_TIME
+
+
 class FakeRobot(Node):
 
     def __init__(self):
@@ -40,9 +59,17 @@ class FakeRobot(Node):
         self.yaw = 0.0
         self.linear = 0.0
         self.angular = 0.0
+        self.grab_started_at = None
 
         self.odom_publisher = self.create_publisher(Odometry, '/odom_raw', 10)
         self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
+
+        self.holding_publisher = self.create_publisher(
+            Bool, '/gripper/holding', 10
+        )
+        self.create_subscription(
+            String, '/gripper/command', self.gripper_callback, 10
+        )
 
         # SIM_ONLY: 실제 로봇에서는 odom -> base_link TF를
         # robot_localization이 보낸다. 이 노드와 동시에 실행하지 않는다.
@@ -59,6 +86,20 @@ class FakeRobot(Node):
         self.linear = msg.linear.x
         self.angular = msg.angular.z
 
+    def gripper_callback(self, msg):
+        if msg.data == GRIPPER_GRAB:
+            self.grab_started_at = self.now_seconds()
+        elif msg.data == GRIPPER_OPEN:
+            self.grab_started_at = None
+        else:
+            self.get_logger().warn(f'Unknown gripper command: {msg.data}')
+            return
+
+        self.get_logger().info(f'Gripper: {msg.data}')
+
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
     def update(self):
         self.x, self.y, self.yaw = integrate_pose(
             self.x, self.y, self.yaw,
@@ -66,6 +107,9 @@ class FakeRobot(Node):
             SIM_ONLY_PUBLISH_PERIOD
         )
         self.publish_odom()
+
+        holding = is_holding(self.grab_started_at, self.now_seconds())
+        self.holding_publisher.publish(Bool(data=holding))
 
     def publish_odom(self):
         now = self.get_clock().now().to_msg()
