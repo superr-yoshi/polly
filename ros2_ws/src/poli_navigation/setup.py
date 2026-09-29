@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
         'scan_monitor = poli_navigation.scan_monitor:main',
+        'fake_scan = poli_navigation.fake_scan:main',
         ],
     },
 )
