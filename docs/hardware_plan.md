@@ -10,14 +10,15 @@
 - Role:
   - Left / right wheel control
   - Encoder feedback
-  - Gripper servo control
+  - Built-in 6-axis IMU
 
 ## 3. Sensor MCU
-- NUCLEO-F446RE
+- Arduino Mega 2560 (NUCLEO-F446RE에서 변경)
+- Connection: USB Serial → Raspberry Pi 5 (docs/serial_protocol.md v1.1)
 - Role:
-  - BNO085 IMU
   - HC-SR04 ultrasonic sensors × 4
-  - Send sensor data to Raspberry Pi
+  - Gripper servo (D9)
+  - Send sensor data to Raspberry Pi, receive gripper commands
 
 ## 4. LiDAR
 - SLAMTEC RPLIDAR A2M12
@@ -35,8 +36,8 @@
   - Visual alignment
 
 ## 6. IMU
-- BNO085
-- Connection: NUCLEO-F446RE
+- RRC Lite 내장 6축 IMU (BNO085에서 변경)
+- Connection: RRC Lite → /imu/data (rrc_adapter_node)
 - Role:
   - Robot heading
   - Rotation angle
@@ -44,14 +45,14 @@
 
 ## 7. Ultrasonic Sensors
 - HC-SR04 × 4
-- Connection: NUCLEO-F446RE
+- Connection: Arduino Mega 2560 (D22~D29, docs/pin_map.md)
 - Role:
   - Short-range obstacle detection
   - Collision prevention
 
 ## 8. Gripper
 - Byte Robot Black Composite Claw
-- Servo: DS3218 × 2
+- Servo: DS3218 (결선도 기준 1개, Mega D9 신호 / XL4015 6V 별도 전원)
 - Role:
   - Open / close gripper
   - Rescue object handling
@@ -70,4 +71,5 @@
 - /range/front_right
 - /range/rear_left
 - /range/rear_right
+- /gripper/state, /gripper/set → gripper
 - /camera/image_raw → camera image
