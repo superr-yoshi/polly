@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
         'scan_monitor = poli_navigation.scan_monitor:main',
         'fake_scan = poli_navigation.fake_scan:main',
+        'fake_odom = poli_navigation.fake_odom:main',
         ],
     },
 )
