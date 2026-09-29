@@ -11,11 +11,11 @@ import time
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 
 from poli_hardware import rrc_protocol
+from poli_hardware.node_runner import run_node
 from poli_hardware.diff_drive import (
     CmdWatchdog, DiffDriveParams, OdomIntegrator, twist_to_wheels,
     wheels_to_twist, yaw_to_quaternion)
@@ -249,17 +249,7 @@ class RrcNode(Node):
 
 
 def _run(name, transport_cls, args):
-    rclpy.init(args=args)
-    node = RrcNode(name, transport_cls)
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.stop()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    run_node(lambda: RrcNode(name, transport_cls), cleanup=RrcNode.stop, args=args)
 
 
 def main_fake(args=None):

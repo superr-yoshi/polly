@@ -3,13 +3,13 @@
 발행:  /range/* 8 Hz (고정 거리), /gripper/state 2 Hz
 서비스: /gripper/set (std_srvs/SetBool: true = 닫기) -> move_time 동안 moving 후 완료
 """
-import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
 from poli_hardware.mega_bridge_node import (
     create_range_publishers, declare_range_params, make_range_msg)
+from poli_hardware.node_runner import run_node
 
 
 class FakeMegaNode(Node):
@@ -61,16 +61,7 @@ class FakeMegaNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = FakeMegaNode()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    run_node(FakeMegaNode, args=args)
 
 
 if __name__ == '__main__':

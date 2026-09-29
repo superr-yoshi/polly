@@ -18,6 +18,7 @@ from std_srvs.srv import SetBool
 from poli_hardware.mega_protocol import (
     GRIP_CLOSE, GRIP_OPEN, GstPacket, make_grip_command, MegaParser,
     mm_to_range_m, RANGE_ORDER, RngPacket)
+from poli_hardware.node_runner import run_node
 
 # RANGE_ORDER 이름 -> URDF frame 이름
 RANGE_FRAMES = {
@@ -110,7 +111,12 @@ class MegaBridgeNode(Node):
                 self._close()
                 continue
             if raw:
-                self._handle(self.parser.feed(raw))
+                try:
+                    self._handle(self.parser.feed(raw))
+                except Exception:  # noqa: BLE001
+                    if not rclpy.ok():  # Ctrl+C로 ROS가 먼저 종료됨 -> 조용히 끝낸다
+                        break
+                    raise
 
     def _close(self):
         if self._ser is not None:
@@ -183,20 +189,14 @@ class MegaBridgeNode(Node):
         self._close()
 
 
+def _cleanup(node):
+    node.shutdown()
+    p = node.parser
+    print(f'[mega_bridge_node] packets ok={p.ok} bad={p.bad} gap={p.gap}')
+
+
 def main(args=None):
-    rclpy.init(args=args)
-    node = MegaBridgeNode()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        p = node.parser
-        node.get_logger().info(f'packets ok={p.ok} bad={p.bad} gap={p.gap}')
-        node.shutdown()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    run_node(MegaBridgeNode, cleanup=_cleanup, args=args)
 
 
 if __name__ == '__main__':
