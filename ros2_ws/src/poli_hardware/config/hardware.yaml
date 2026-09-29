@@ -22,7 +22,8 @@ rrc_adapter_node:
     port: /dev/robot_rrc       # udev 별칭 (docs/udev_template.md)
     baud: 1000000              # 제조사 펌웨어 USART1 설정 (docs/rrc_protocol.md)
     motor_type: 1              # 1 = JGB37 (부팅 기본값은 JGA27이라 반드시 설정)
-    motor_ticks_per_rev: 1980.0  # TODO_MEASURE: 우리 JGB37-520(330RPM) 출력축 1회전 tick. 펌웨어는 1980(45:1) 가정
+    motor_ticks_per_rev: 1320.0  # JGB37-520 12V 330RPM = 30:1 x 11PPR x 4. 펌웨어는 1980(45:1) 가정 -> Pi가 비율 보정
+                               # TODO_MEASURE: 10초 1rev/s 명령 -> 바퀴 10바퀴인지 확인 (PPR 12 변형이면 1440)
     max_motor_rps: 3.0         # 펌웨어 JGB37 제한과 동일. 펌웨어 명령 경로는 제한을 안 걸어서 Pi가 제한
     left_motor_id: 0           # M1 (0부터 시작)
     right_motor_id: 1          # M2

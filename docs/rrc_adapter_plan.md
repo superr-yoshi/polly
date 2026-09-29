@@ -6,7 +6,7 @@
 ## 실측해서 `config/hardware.yaml`에 넣을 값
 | 파라미터 | 확인 방법 |
 |---|---|
-| `motor_ticks_per_rev` | 모터 라벨/판매 페이지의 기어비 × 11(PPR) × 4. 예: 30:1 → 1320. 펌웨어 가정은 1980(45:1) |
+| `motor_ticks_per_rev` | **1320 입력됨** (JGB37-520 12V 330RPM = 30:1 × 11 PPR × 4). 5번 속도 시험으로 확인. PPR 12 변형이면 1440 |
 | `left_sign`, `right_sign` | 바퀴 띄우고 전진 명령 → 둘 다 앞으로 돌아야 함. 반대면 부호 반전 |
 | `left_motor_id`, `right_motor_id` | 실제 M1/M2에 어느 바퀴를 꽂았는지 |
 | `wheel_radius`, `wheel_separation` | 직선 1~2 m, 제자리 360° 시험 |
