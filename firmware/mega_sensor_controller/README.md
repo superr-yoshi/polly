@@ -31,3 +31,12 @@ python scripts/pc_serial_tester.py <포트>     # pip install pyserial, o=열기
 - `$RNG` 초당 약 8줄, `$GST` 초당 2줄, L LED 1초 토글
 - 시리얼 모니터(115200, "Both NL & CR")에 `$GRIP,1,1*0C` → 즉시 `$GST` 응답, 각도 40→120 서서히 이동
 - 그다음 Pi에서 `ros2 run poli_hardware mega_bridge_node` → `/range/*`, `/gripper/set` 확인
+
+## 실기 확인 기록
+| 날짜 | 내용 | 결과 |
+|---|---|---|
+| 2026-09-29 | Mega(호환보드, COM7) 업로드 + 모의값 모드 통신 | RNG 약 8 Hz, GST 2 Hz, 체크섬 오류·누락 0. `$GRIP` 응답 0.01 s, 40→120도 약 1.2 s |
+| 2026-09-29 | HC-SR04 1개를 ① 전방 자리(D22/D23, 코드상 front_left)에 연결, `SIM_ULTRASONIC 0` | 15 s 120회 중 117회 유효. 손 20~70 mm, 배경 약 1870 mm, 정지 시 흔들림 ±5 mm. 실패 3회는 20 mm 미만 근접 |
+
+- 남은 센서 3개(D24~D29)는 도착 후 같은 방법으로 확인한다.
+- 집게 서보는 아직 `SIM_GRIPPER 1` (서보 + XL4015 6V 전원 배선 후 확인).
