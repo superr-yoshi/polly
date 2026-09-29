@@ -1,7 +1,9 @@
 import math
+import signal
 
 import rclpy
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, String
@@ -103,8 +105,17 @@ class Mission2Node(Node):
         self.cmd_vel_publisher.publish(Twist())
 
 
+def raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main(args=None):
-    rclpy.init(args=args)
+    # 종료 신호(Ctrl+C, kill)를 rclpy가 받으면 통신을 먼저 끊어서
+    # 아래 finally에서 정지 명령을 보낼 수 없다.
+    # 그래서 신호는 직접 받고, 정지 명령을 보낸 뒤에 종료한다.
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, raise_keyboard_interrupt)
+    signal.signal(signal.SIGTERM, raise_keyboard_interrupt)
 
     node = Mission2Node()
 
