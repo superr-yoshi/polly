@@ -1,4 +1,5 @@
-"""RRC Lite 주행 계층: /cmd_vel -> 바퀴, 엔코더 -> /odom_raw, 내장 IMU -> /imu/data.
+"""
+RRC Lite 주행 계층: /cmd_vel -> 바퀴, /odom_raw, 내장 IMU -> /imu/data, /battery_state.
 
 - fake_rrc_node   : SimTransport (부품 도착 전, 바퀴가 명령을 그대로 따른다고 가정)
 - rrc_adapter_node: RrcTransport (RRC Lite USB Serial, docs/rrc_protocol.md)
@@ -11,14 +12,13 @@ import time
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from rclpy.node import Node
-from sensor_msgs.msg import Imu
-
 from poli_hardware import rrc_protocol
-from poli_hardware.node_runner import run_node
 from poli_hardware.diff_drive import (
     CmdWatchdog, DiffDriveParams, OdomIntegrator, twist_to_wheels,
     wheels_to_twist, yaw_to_quaternion)
+from poli_hardware.node_runner import run_node
+from rclpy.node import Node
+from sensor_msgs.msg import BatteryState, Imu
 
 
 class SimTransport:
@@ -37,12 +37,16 @@ class SimTransport:
     def read_imu(self):
         return None  # None이면 노드가 휠 오도메트리 각속도로 z축만 채운다
 
+    def read_supply_voltage(self):
+        return 12.0  # SIM_ONLY
+
     def close(self):
         pass
 
 
 class RrcTransport:
-    """RRC Lite USB Serial (docs/rrc_protocol.md).
+    """
+    RRC Lite USB Serial (docs/rrc_protocol.md).
 
     제조사 펌웨어는 엔코더 값을 Pi로 보내지 않는다. 그래서 read_wheel_speeds()는
     마지막으로 보낸 명령(=STM32 PID 목표값)을 돌려준다. /odom_raw는 명령 기반 추정이고,
@@ -76,6 +80,8 @@ class RrcTransport:
         self._imu_t = 0.0
         self._imu_warned = False
         self._sent = (0.0, 0.0)
+        self._supply_mv = None
+        self._supply_t = 0.0
         self._stop = False
         self._write(rrc_protocol.motor_type_frame(g('motor_type').value))
         self._write(rrc_protocol.motor_stop_frame())
@@ -104,6 +110,10 @@ class RrcTransport:
                     imu = rrc_protocol.parse_imu(data)
                     if imu is not None:
                         self._imu, self._imu_t = imu, time.monotonic()
+                elif func == rrc_protocol.FUNC_SYS:
+                    mv = rrc_protocol.parse_battery_mv(data)
+                    if mv is not None:
+                        self._supply_mv, self._supply_t = mv, time.monotonic()
 
     def set_wheel_speeds(self, left, right):
         rps = [rrc_protocol.wheel_to_motor_rps(w, s, self._ticks, self._limit)
@@ -123,6 +133,12 @@ class RrcTransport:
             return None
         self._imu_warned = False
         return self._imu
+
+    def read_supply_voltage(self):
+        """RRC 입력 전압 V (약 1 Hz 보고). 3초 넘게 안 오면 None."""
+        if self._supply_mv is None or time.monotonic() - self._supply_t > 3.0:
+            return None
+        return self._supply_mv / 1000.0
 
     def close(self):
         self._write(rrc_protocol.motor_stop_frame())
@@ -171,8 +187,10 @@ class RrcNode(Node):
         self.create_subscription(Twist, '/cmd_vel', self._on_cmd_vel, 10)
         self.odom_pub = self.create_publisher(Odometry, '/odom_raw', 10)
         self.imu_pub = self.create_publisher(Imu, '/imu/data', 10)
+        self.battery_pub = self.create_publisher(BatteryState, '/battery_state', 10)
         self.create_timer(1.0 / g('odom_rate').value, self._on_control)
         self.create_timer(1.0 / g('imu_rate').value, self._on_imu)
+        self.create_timer(1.0, self._on_battery)
 
         self.get_logger().info(
             f'{name} started: wheel_radius={self.drive.wheel_radius} '
@@ -242,6 +260,32 @@ class RrcNode(Node):
             for i in (0, 4, 8):
                 msg.linear_acceleration_covariance[i] = 1e-2
         self.imu_pub.publish(msg)
+
+    def _on_battery(self):
+        """
+        RRC 입력 전압을 발행한다.
+
+        주의: RRC는 12V 컨버터 뒤에 있어 LiPo 잔량이 아니라 컨버터 출력(약 12V)이 나온다.
+        percentage 등 모르는 값은 NaN.
+        """
+        volts = self.transport.read_supply_voltage()
+        if volts is None:
+            return
+        nan = float('nan')
+        msg = BatteryState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.voltage = volts
+        msg.current = nan
+        msg.charge = nan
+        msg.capacity = nan
+        msg.design_capacity = nan
+        msg.percentage = nan
+        msg.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
+        msg.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_UNKNOWN
+        msg.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_UNKNOWN
+        msg.present = True
+        msg.location = 'rrc_lite_input (12V converter output, not LiPo)'
+        self.battery_pub.publish(msg)
 
     def stop(self):
         self.transport.set_wheel_speeds(0.0, 0.0)

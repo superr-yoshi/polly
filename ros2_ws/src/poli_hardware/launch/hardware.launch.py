@@ -1,11 +1,13 @@
-"""하드웨어 계층 launch (조원 A).
+"""
+하드웨어 계층 launch (조원 A).
 
   ros2 launch poli_hardware hardware.launch.py                         # fake (기본)
   ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false # 실제 RRC + Mega
 
 통합 bringup에서는 IncludeLaunchDescription으로 이 파일을 포함한다.
-fake/real 어느 쪽이든 Topic 계약은 같다: /cmd_vel -> /odom_raw, /imu/data, /range/*,
-/gripper/state, /gripper/set. odom -> base_link TF는 발행하지 않는다 (EKF 소유).
+fake/real 어느 쪽이든 Topic 계약은 같다 (docs/interfaces.md): /cmd_vel, /gripper/command 구독,
+/odom_raw, /imu/data, /battery_state, /range/*, /gripper/state 발행.
+odom -> base_link TF는 발행하지 않는다 (EKF 소유).
 """
 import os
 

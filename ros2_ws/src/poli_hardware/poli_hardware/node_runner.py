@@ -1,4 +1,5 @@
-"""노드 실행/종료 공통 처리.
+"""
+노드 실행/종료 공통 처리.
 
 터미널에서 launch를 Ctrl+C로 끄면 SIGINT가 두 번 온다 (터미널 + launch 전달).
 두 번째 신호가 정리 도중에 KeyboardInterrupt를 일으키면 RRC 모터 정지 명령이

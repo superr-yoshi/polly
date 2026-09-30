@@ -52,7 +52,7 @@ $GRIP,2,0*0E        ← 열기, id 2
 |---|---|---|---|
 | `/range/front_left` 등 4개 | Topic | sensor_msgs/Range | RNG의 fl/fr/rl/rr (m). 0(실패)은 `+inf` (REP-117 "감지 없음") |
 | `/gripper/state` | Topic | std_msgs/String | GST state: `open` / `closed` / `moving` |
-| `/gripper/set` | Service | std_srvs/SetBool | `true` = 닫기, `false` = 열기. GST의 last_id로 수신 확인 (0.5초, 1회 재전송) |
+| `/gripper/command` | Topic (구독) | std_msgs/String | `"open"` = 열기(GRIP 0), `"grab"` = 닫아 잡기(GRIP 1). 들어 올리기 없음. GST의 last_id로 수신 확인, 0.5초마다 최대 3번 전송 |
 
-- `/battery_state`는 `$BAT` 삭제에 따라 발행하지 않는다 (매뉴얼의 fake_mega_node 권장 항목과 다름).
+- `/battery_state`는 Mega가 아니라 RRC Lite 노드가 발행한다 (RRC 입력 전압). Mega 프로토콜에 `$BAT`는 없다.
 - 주의: 펌웨어는 20 mm 미만(너무 가까움)도 0으로 보내므로 `+inf`에 섞인다. 근접 정지는 LiDAR와 함께 판단한다.

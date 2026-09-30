@@ -40,15 +40,19 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 | 값 | 동작 |
 |---|---|
 | `"open"` | 집게 열기 |
-| `"grab"` | 잡고 들어 올리기 |
+| `"grab"` | 집게를 닫아 잡기 (**들어 올리지 않는다**) |
 
-- 규정 3.4.4: 로봇을 들어 올렸을 때 대상이 같이 들려야 확보로 인정된다.
+- **조원 A 결정: 집게는 어떤 경우에도 대상을 들어 올리지 않고, 잡은 채로 끌고 간다.**
+  들어 올리기 기능은 만들지 않는다. (`"open"`, `"grab"` 외의 값은 경고 후 무시)
+- 규정 3.4.4: **심판이** 로봇을 들어 올렸을 때 대상이 같이 들려야 확보로 인정된다.
+  → 집게가 스스로 들 필요는 없고, 로봇이 들려도 빠지지 않을 만큼 꽉 잡아야 한다.
+- "grab" 후 완전히 닫히기까지 약 1.2초 (서보 40→120도, 1도/15ms). 각도는 실측 전 임시값 (TODO_MEASURE)
 
 ### 1-3. `/gripper/holding` — 집게 상태
 - 보내는 쪽: 조원 A / 받는 쪽: 담당 1
 - 형식: `std_msgs/msg/Bool` (true = 물체를 잡고 있음)
-- TODO: 잡았는지 알 수 있는 방법이 있는지 조원 A 확인.
-  알 수 없으면 이 토픽은 없어도 된다. (그 경우 잡았다고 가정한다.)
+- **현재 없음.** DS3218 서보는 위치·힘 피드백이 없어서 잡았는지 알 수 없다.
+  조원 A가 잡힘 감지 센서를 추가할 예정 (방법 미정). 그때까지는 잡았다고 가정한다.
 
 ## 2. 이미 정해진 토픽 (docs/hardware_plan.md)
 
@@ -58,13 +62,13 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 | `/odom_raw` | `nav_msgs/msg/Odometry` | 조원 A → 담당 1 | 엔코더 odometry |
 | `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | RRC Lite 내장 IMU |
 | `/range/front_left` 등 4개 | `sensor_msgs/msg/Range` | 조원 A → 담당 1 | 초음파, 단위 m |
-| `/battery_state` | `sensor_msgs/msg/BatteryState` | 조원 A → 담당 1 | |
+| `/battery_state` | `sensor_msgs/msg/BatteryState` | 조원 A → 담당 1 | **RRC Lite 입력 전압** (12V 컨버터 출력, 약 1 Hz). LiPo 잔량 아님, percentage = NaN |
 | `/scan` | `sensor_msgs/msg/LaserScan` | LiDAR 드라이버 → 담당 1 | RPLIDAR C1 |
 
 ## 3. 확인 필요 (TODO)
 
 - [ ] 조원 B: `/vision/target` 필드와 `x_offset` 부호(음수 = 왼쪽) 괜찮은지
 - [ ] 조원 B: 보낼 수 있는 주기
-- [ ] 조원 A: `/gripper/command` 값 (`"open"`, `"grab"`) 괜찮은지
-- [ ] 조원 A: 집게가 잡았는지 알 수 있는지 (`/gripper/holding`)
+- [x] 조원 A: `/gripper/command` 값 (`"open"`, `"grab"`) 괜찮은지 → 그대로 사용. 단 grab = 잡기만 (들어 올리지 않음)
+- [ ] 조원 A: 집게가 잡았는지 알 수 있는지 (`/gripper/holding`) → 센서 추가 예정, 지금은 없음
 - [ ] 팀: 전용 메시지 패키지 `poli_interfaces` 만들지

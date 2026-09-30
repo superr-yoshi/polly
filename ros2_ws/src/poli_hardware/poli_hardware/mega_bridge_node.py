@@ -1,24 +1,27 @@
-"""Arduino Mega <-> ROS 2 브리지 (프로토콜 v1.1, docs/serial_protocol.md).
+"""
+Arduino Mega <-> ROS 2 브리지 (프로토콜 v1.1, docs/serial_protocol.md).
 
 발행:  /range/front_left, /range/front_right, /range/rear_left, /range/rear_right
        (sensor_msgs/Range), /gripper/state (std_msgs/String: open|closed|moving)
-서비스: /gripper/set (std_srvs/SetBool: true = 닫기, false = 열기)
+구독:  /gripper/command (std_msgs/String: "open" = 열기, "grab" = 닫아서 잡기)
+       들어 올리는 동작은 없다 (조원 A 결정).
+TODO: 잡힘 감지 센서가 추가되면 /gripper/holding (std_msgs/Bool)을 여기서 발행한다.
 
 시리얼 읽기는 별도 스레드, packet 해석은 mega_protocol(순수 모듈)이 담당한다.
 """
 import threading
 import time
 
+from poli_hardware.mega_protocol import (
+    gripper_action, GstPacket, make_grip_command, MegaParser,
+    mm_to_range_m, RANGE_ORDER, RangeMedianFilter, RngPacket)
+from poli_hardware.node_runner import run_node
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
-from std_srvs.srv import SetBool
 
-from poli_hardware.mega_protocol import (
-    GRIP_CLOSE, GRIP_OPEN, GstPacket, make_grip_command, MegaParser,
-    mm_to_range_m, RANGE_ORDER, RangeMedianFilter, RngPacket)
-from poli_hardware.node_runner import run_node
+MAX_GRIP_TRIES = 3
 
 # RANGE_ORDER 이름 -> URDF frame 이름
 RANGE_FRAMES = {
@@ -72,14 +75,15 @@ class MegaBridgeNode(Node):
         self.range_filter = RangeMedianFilter(self.get_parameter('median_window').value)
         self.range_pubs = create_range_publishers(self)
         self.state_pub = self.create_publisher(String, '/gripper/state', 10)
-        self.create_service(SetBool, '/gripper/set', self._on_gripper_set)
+        self.create_subscription(String, '/gripper/command', self._on_gripper_command, 10)
+        self.create_timer(0.1, self._on_gripper_retry)
         self.create_timer(1.0, self._on_health)
 
         self._ser = None
         self._write_lock = threading.Lock()
         self._cmd_id = 0
-        self._last_ack = 0
-        self._ack_cv = threading.Condition()
+        self._last_ack = 0      # 읽기 스레드가 GST의 last_id로 갱신
+        self._pending = None    # [action, cmd_id, 보낸 시각, 보낸 횟수]
         self._last_rng = None
         self._stale_warned = False
         self._stop = False
@@ -139,29 +143,39 @@ class MegaBridgeNode(Node):
                     make_range_msg(self, name, mm_to_range_m(mm, lo, hi)))
         elif isinstance(pkt, GstPacket):
             self.state_pub.publish(String(data=pkt.state_name))
-            with self._ack_cv:
-                self._last_ack = pkt.last_id
-                self._ack_cv.notify_all()
+            self._last_ack = pkt.last_id
 
     # ---- gripper --------------------------------------------------------
-    def _on_gripper_set(self, request, response):
-        action = GRIP_CLOSE if request.data else GRIP_OPEN
-        word = 'close' if request.data else 'open'
-        for _attempt in range(2):  # 응답이 없으면 한 번 재전송
-            self._cmd_id += 1
-            cmd_id = self._cmd_id
-            if not self._write(make_grip_command(cmd_id, action)):
-                break
-            with self._ack_cv:
-                if self._ack_cv.wait_for(lambda: self._last_ack == cmd_id,
-                                         timeout=self.ack_timeout):
-                    response.success = True
-                    response.message = f'gripper {word} accepted (id={cmd_id})'
-                    return response
-        response.success = False
-        response.message = f'gripper {word}: Mega 응답 없음'
-        self.get_logger().warn(response.message)
-        return response
+    def _on_gripper_command(self, msg):
+        action = gripper_action(msg.data)
+        if action is None:
+            self.get_logger().warn(
+                f'알 수 없는 집게 명령 "{msg.data}" (open / grab만 가능)')
+            return
+        self.get_logger().info(f'gripper command: {msg.data}')
+        self._send_grip(action, tries=1)
+
+    def _send_grip(self, action, tries):
+        self._cmd_id += 1
+        if not self._write(make_grip_command(self._cmd_id, action)):
+            self.get_logger().warn('집게 명령 실패: Mega 연결 안 됨')
+            self._pending = None
+            return
+        self._pending = [action, self._cmd_id, time.monotonic(), tries]
+
+    def _on_gripper_retry(self):
+        """Mega가 GST로 받았다고 답할 때까지 최대 MAX_GRIP_TRIES번 보낸다."""
+        if self._pending is None:
+            return
+        action, cmd_id, sent_at, tries = self._pending
+        if self._last_ack == cmd_id:
+            self._pending = None
+        elif time.monotonic() - sent_at > self.ack_timeout:
+            if tries < MAX_GRIP_TRIES:
+                self._send_grip(action, tries + 1)
+            else:
+                self.get_logger().error('집게 명령: Mega 응답 없음')
+                self._pending = None
 
     def _write(self, data):
         ser = self._ser

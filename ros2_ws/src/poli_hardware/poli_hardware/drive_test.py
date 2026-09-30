@@ -1,4 +1,5 @@
-"""보정용 주행 시험 (조원 A). docs/rrc_adapter_plan.md의 실측 순서를 명령 하나로 실행한다.
+"""
+보정용 주행 시험 (조원 A). docs/rrc_adapter_plan.md의 실측 순서를 명령 하나로 실행한다.
 
   ros2 run poli_hardware drive_test straight --distance 1.0 [--speed 0.15]
   ros2 run poli_hardware drive_test rotate --angle 360 [--speed 0.6]
@@ -17,16 +18,15 @@ import time
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from poli_hardware.calibration import (
+    corrected_ticks_per_rev, corrected_wheel_radius, corrected_wheel_separation)
+from poli_hardware.diff_drive import DiffDriveParams, wheels_to_twist
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import Imu
 import yaml
-
-from poli_hardware.calibration import (
-    corrected_ticks_per_rev, corrected_wheel_radius, corrected_wheel_separation)
-from poli_hardware.diff_drive import DiffDriveParams, wheels_to_twist
 
 RATE = 20.0  # /cmd_vel 발행 Hz (watchdog 0.3 s보다 충분히 빠르게)
 

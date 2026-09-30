@@ -2,9 +2,8 @@
 import math
 import struct
 
-import pytest
-
 from poli_hardware import rrc_protocol as rp
+import pytest
 
 
 def test_crc8_maxim_check_value():

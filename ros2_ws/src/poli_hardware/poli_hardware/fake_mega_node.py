@@ -1,15 +1,15 @@
-"""SIM_ONLY: Mega 없이 mega_bridge_node와 같은 Topic·Service 계약을 제공한다.
+"""
+SIM_ONLY: Mega 없이 mega_bridge_node와 같은 Topic·Service 계약을 제공한다.
 
 발행:  /range/* 8 Hz (고정 거리), /gripper/state 2 Hz
-서비스: /gripper/set (std_srvs/SetBool: true = 닫기) -> move_time 동안 moving 후 완료
+구독:  /gripper/command ("open" / "grab") -> move_time 동안 moving 후 완료
 """
-from rclpy.node import Node
-from std_msgs.msg import String
-from std_srvs.srv import SetBool
-
 from poli_hardware.mega_bridge_node import (
     create_range_publishers, declare_range_params, make_range_msg)
+from poli_hardware.mega_protocol import GRIP_CLOSE, gripper_action
 from poli_hardware.node_runner import run_node
+from rclpy.node import Node
+from std_msgs.msg import String
 
 
 class FakeMegaNode(Node):
@@ -23,7 +23,7 @@ class FakeMegaNode(Node):
 
         self.range_pubs = create_range_publishers(self)
         self.state_pub = self.create_publisher(String, '/gripper/state', 10)
-        self.create_service(SetBool, '/gripper/set', self._on_gripper_set)
+        self.create_subscription(String, '/gripper/command', self._on_gripper_command, 10)
         self.create_timer(1.0 / self.get_parameter('range_rate').value, self._on_range)
         self.create_timer(0.5, self._publish_state)
 
@@ -40,8 +40,13 @@ class FakeMegaNode(Node):
     def _publish_state(self):
         self.state_pub.publish(String(data=self._state))
 
-    def _on_gripper_set(self, request, response):
-        self._target = 'closed' if request.data else 'open'
+    def _on_gripper_command(self, msg):
+        action = gripper_action(msg.data)
+        if action is None:
+            self.get_logger().warn(f'알 수 없는 집게 명령 "{msg.data}" (open / grab만 가능)')
+            return
+        self.get_logger().info(f'gripper command: {msg.data} (fake)')
+        self._target = 'closed' if action == GRIP_CLOSE else 'open'
         if self._done_timer is not None:
             self._done_timer.cancel()
         if self._state != self._target:
@@ -49,9 +54,6 @@ class FakeMegaNode(Node):
             self._done_timer = self.create_timer(
                 self.get_parameter('move_time').value, self._on_move_done)
         self._publish_state()
-        response.success = True
-        response.message = f'gripper {"close" if request.data else "open"} accepted (fake)'
-        return response
 
     def _on_move_done(self):
         self._done_timer.cancel()

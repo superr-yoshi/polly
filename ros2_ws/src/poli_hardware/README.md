@@ -20,13 +20,16 @@
 | `/imu/data` | Topic | sensor_msgs/Imu | 발행 50 Hz | `imu_link` |
 | `/range/front_left` `/range/front_right` `/range/rear_left` `/range/rear_right` | Topic | sensor_msgs/Range | 발행 8 Hz | `ultrasonic_fl_link` 등 |
 | `/gripper/state` | Topic | std_msgs/String | 발행 2 Hz | `open` / `closed` / `moving` |
-| `/gripper/set` | Service | std_srvs/SetBool | 제공 | `true` = 닫기 |
+| `/gripper/command` | Topic | std_msgs/String | 구독 | `"open"` 열기 / `"grab"` 닫아 잡기 (**들어 올리기 없음**) |
+| `/battery_state` | Topic | sensor_msgs/BatteryState | 발행 1 Hz | RRC 입력 전압 (LiPo 잔량 아님) |
 
 - odom → base_link **TF는 발행하지 않는다** (robot_localization EKF 소유).
 - `/cmd_vel`이 `cmd_timeout`(0.3 s) 이상 끊기면 0 속도.
 - `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = RRC 내장 IMU 가속도·자이로 3축, fake = z축 각속도만(휠 각속도 복사).
 - `/odom_raw`: real도 엔코더가 아니라 **명령 기반 추정**이다 (RRC 제조사 펌웨어가 엔코더 값을 보내지 않음).
-- `/battery_state`는 발행하지 않는다 (전압 측정 회로 없음, 프로토콜 v1.1에서 `$BAT` 삭제).
+- `/battery_state`: RRC Lite가 보고하는 자기 입력 전압. RRC는 12V 컨버터 뒤에 있어서 LiPo 잔량이 아니다. fake는 12.0 V.
+- `/gripper/holding`: 없음. 잡힘 감지 센서 추가 후 제공 예정 (TODO).
+- 기준: `docs/interfaces.md` (담당 1과 약속한 토픽). `/cmd_vel` timeout 0.3 s (약속: 0.5 s 이내).
 
 ## 실행 (Ubuntu 24.04 + ROS 2 Jazzy)
 ```bash
@@ -45,7 +48,7 @@ ros2 topic hz /imu/data               # 약 50 Hz
 ros2 topic hz /range/front_left       # 약 8 Hz
 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z: 0.0}}"
 ros2 topic echo /odom_raw --once      # twist.linear.x = 0.2 (0.3 s 뒤에는 0)
-ros2 service call /gripper/set std_srvs/srv/SetBool "{data: true}"
+ros2 topic pub --once /gripper/command std_msgs/msg/String "{data: grab}"
 ros2 topic echo /gripper/state        # moving → closed
 ros2 run teleop_twist_keyboard teleop_twist_keyboard   # 키보드 주행
 ```

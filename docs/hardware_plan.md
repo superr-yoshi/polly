@@ -72,7 +72,8 @@
 - /range/front_right → front-right ultrasonic sensor
 - /range/rear_left → rear-left ultrasonic sensor
 - /range/rear_right → rear-right ultrasonic sensor
-- /gripper/state, /gripper/set → gripper (Arduino Mega)
+- /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Arduino Mega)
+- /battery_state → RRC Lite 입력 전압 (LiPo 잔량 아님)
 - /scan → RPLIDAR C1 LaserScan
 - /odometry/filtered → robot_localization filtered odometry
 - /camera/image_raw → camera image

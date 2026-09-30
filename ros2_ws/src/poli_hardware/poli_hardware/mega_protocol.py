@@ -1,4 +1,5 @@
-"""Mega <-> Pi 시리얼 프로토콜 v1.1 (docs/serial_protocol.md).
+"""
+Mega <-> Pi 시리얼 프로토콜 v1.1 (docs/serial_protocol.md).
 
 rclpy / pyserial에 의존하지 않는 순수 모듈이다. PC에서 pytest로 바로 검증한다.
 packet 형식을 바꾸면 docs/serial_protocol.md와 펌웨어를 함께 고친다.
@@ -15,6 +16,10 @@ RANGE_ORDER = ('front_left', 'front_right', 'rear_left', 'rear_right')
 
 GRIP_OPEN = 0
 GRIP_CLOSE = 1
+
+# /gripper/command (std_msgs/String) 값 -> Mega GRIP action.
+# "grab"은 집게를 닫아 잡기만 한다. 들어 올리는 동작은 없다 (조원 A 결정, 끌고 간다).
+GRIPPER_COMMANDS = {'open': GRIP_OPEN, 'grab': GRIP_CLOSE}
 GRIP_STATE_NAMES = {0: 'open', 1: 'closed', 2: 'moving'}
 
 MAX_LINE = 96
@@ -53,6 +58,11 @@ def checksum(body: str) -> int:
 
 def make_packet(body: str) -> bytes:
     return f'${body}*{checksum(body):02X}\r\n'.encode('ascii')
+
+
+def gripper_action(command: str) -> Optional[int]:
+    """/gripper/command 문자열 -> GRIP action (0 열기, 1 닫기). 모르는 값은 None."""
+    return GRIPPER_COMMANDS.get(command.strip().lower())
 
 
 def make_grip_command(cmd_id: int, action: int) -> bytes:
@@ -114,7 +124,8 @@ class MegaParser:
 
 
 def mm_to_range_m(mm: int, min_range: float, max_range: float) -> float:
-    """Range.range 값(m). 0(실패)은 REP-117에 따라 +inf(감지 없음)로 변환한다.
+    """
+    Range.range 값(m). 0(실패)은 REP-117에 따라 +inf(감지 없음)로 변환한다.
 
     주의: 펌웨어는 20 mm 미만(너무 가까움)도 0으로 보내므로 +inf에 섞인다.
     근접 안전은 LiDAR/Collision Monitor와 함께 판단한다.
@@ -126,7 +137,8 @@ def mm_to_range_m(mm: int, min_range: float, max_range: float) -> float:
 
 
 class RangeMedianFilter:
-    """센서별 최근 window개 값의 중간값. 한 번 튀는 값(반사·가장자리)을 걸러낸다.
+    """
+    센서별 최근 window개 값의 중간값. 한 번 튀는 값(반사·가장자리)을 걸러낸다.
 
     0(측정 실패)은 '감지 없음(무한대)'으로 보고 중간값을 구한다. 결과가 무한대면 0을 돌려준다.
     window=1이면 필터 없음. 지연은 약 (window-1)/2 패킷 (8 Hz에서 window 3 = 약 0.125 s).

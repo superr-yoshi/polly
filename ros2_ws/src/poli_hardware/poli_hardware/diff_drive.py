@@ -1,9 +1,10 @@
-"""차동구동 계산: /cmd_vel <-> 바퀴 속도, 휠 오도메트리 적분, cmd_vel watchdog.
+"""
+차동구동 계산: /cmd_vel <-> 바퀴 속도, 휠 오도메트리 적분, cmd_vel watchdog.
 
 rclpy에 의존하지 않는 순수 모듈이다. fake_rrc_node와 실제 RRC 어댑터가 같이 쓴다.
 """
-import math
 from dataclasses import dataclass
+import math
 
 
 @dataclass
@@ -20,7 +21,8 @@ def clamp(v: float, limit: float) -> float:
 
 
 def twist_to_wheels(p: DiffDriveParams, linear: float, angular: float):
-    """(linear m/s, angular rad/s) -> (left, right) 바퀴 각속도 rad/s.
+    """
+    (linear m/s, angular rad/s) -> (left, right) 바퀴 각속도 rad/s.
 
     속도 제한 후, 한쪽 바퀴가 정격 RPM을 넘으면 두 바퀴를 같은 비율로 줄여
     회전 반경(곡률)을 유지한다.
@@ -75,7 +77,8 @@ def yaw_to_quaternion(yaw: float):
 
 
 class CmdWatchdog:
-    """마지막 명령 후 timeout이 지나면 0 속도를 돌려준다.
+    """
+    마지막 명령 후 timeout이 지나면 0 속도를 돌려준다.
 
     Ctrl+C·네트워크 단절이 '마지막 속도 유지'로 이어지지 않게 한다.
     """

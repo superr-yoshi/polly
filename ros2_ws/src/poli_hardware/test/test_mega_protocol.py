@@ -3,7 +3,7 @@ import math
 import random
 
 from poli_hardware.mega_protocol import (
-    checksum, GstPacket, make_grip_command, make_packet, MegaParser,
+    checksum, gripper_action, GstPacket, make_grip_command, make_packet, MegaParser,
     mm_to_range_m, parse_line, RANGE_ORDER, RangeMedianFilter, RngPacket)
 import pytest
 
@@ -134,3 +134,13 @@ def test_median_filter_window_1_is_passthrough_and_validates():
     assert f.update((1, 2, 0, 4)) == (1, 2, 0, 4)
     with pytest.raises(ValueError):
         RangeMedianFilter(2)
+
+
+def test_gripper_command_words():
+    # docs/interfaces.md: "open" = 열기, "grab" = 닫아서 잡기 (들어 올리지 않음)
+    assert gripper_action('open') == 0
+    assert gripper_action('grab') == 1
+    assert gripper_action(' GRAB\n') == 1
+    assert gripper_action('lift') is None
+    assert gripper_action('close') is None
+    assert gripper_action('') is None

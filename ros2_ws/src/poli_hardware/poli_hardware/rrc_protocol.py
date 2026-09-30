@@ -1,4 +1,5 @@
-"""Hiwonder RRC Lite (STM32F407VET6) USB Serial 프로토콜.
+"""
+Hiwonder RRC Lite (STM32F407VET6) USB Serial 프로토콜.
 
 출처: 제조사 펌웨어 RosRobotControllerLite_ros_250811 (Hiwonder/Misc/packet.c,
 System/packet_handle.c, Portings/imu_porting.c). 요약은 docs/rrc_protocol.md.
@@ -139,7 +140,8 @@ class FrameParser:
 
 def wheel_to_motor_rps(wheel_rad_s: float, sign: float, motor_ticks_per_rev: float,
                        limit_rps: float) -> float:
-    """바퀴 각속도(rad/s, 전진 +) -> RRC 모터 명령 rps.
+    """
+    바퀴 각속도(rad/s, 전진 +) -> RRC 모터 명령 rps.
 
     펌웨어는 JGB37을 1980 ticks/rev(45:1)로 가정하고 rps를 계산한다. 실제 모터의
     ticks/rev가 다르면 비율만큼 보정해야 실제 바퀴가 원하는 속도로 돈다.
