@@ -38,6 +38,7 @@ mega_bridge_node:
     open_delay: 2.0            # 포트 열면 Mega 자동 리셋
     stale_timeout: 1.0         # s, RNG 끊김 경고
     ack_timeout: 0.5           # s, 집게 명령 응답 대기
+    median_window: 3           # 초음파 중간값 필터 (홀수, 1 = 끔). 튀는 값 제거, 지연 약 0.125 s
     field_of_view: 0.26        # rad, HC-SR04 약 15도
     min_range: 0.02
     max_range: 4.0

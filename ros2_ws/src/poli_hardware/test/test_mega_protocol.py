@@ -4,7 +4,7 @@ import random
 
 from poli_hardware.mega_protocol import (
     checksum, GstPacket, make_grip_command, make_packet, MegaParser,
-    mm_to_range_m, parse_line, RANGE_ORDER, RngPacket)
+    mm_to_range_m, parse_line, RANGE_ORDER, RangeMedianFilter, RngPacket)
 import pytest
 
 
@@ -114,3 +114,23 @@ def test_fuzz_1000_packets():
             assert pkt == RngPacket(i, i * 125, tuple(mm))
     assert p.ok == valid
     assert p.ok + p.bad == 1000
+
+
+def test_median_filter_removes_spike_and_dropout():
+    f = RangeMedianFilter(3, count=1)
+    out = [f.update((v,))[0] for v in (1870, 1870, 1434, 1870, 0, 1870, 1870)]
+    assert out[2:] == [1870, 1870, 1870, 1870, 1870]   # 1434 튐, 0 실패 한 번 -> 무시
+
+
+def test_median_filter_follows_real_change():
+    f = RangeMedianFilter(3, count=1)
+    out = [f.update((v,))[0] for v in (1870, 1870, 30, 30, 30, 0, 0)]
+    assert out[3] == 30          # 두 번 연속이면 반영 (1패킷 지연)
+    assert out[-1] == 0          # 실패가 계속되면 0(감지 없음)
+
+
+def test_median_filter_window_1_is_passthrough_and_validates():
+    f = RangeMedianFilter(1)
+    assert f.update((1, 2, 0, 4)) == (1, 2, 0, 4)
+    with pytest.raises(ValueError):
+        RangeMedianFilter(2)

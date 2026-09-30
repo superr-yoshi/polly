@@ -17,7 +17,7 @@ from std_srvs.srv import SetBool
 
 from poli_hardware.mega_protocol import (
     GRIP_CLOSE, GRIP_OPEN, GstPacket, make_grip_command, MegaParser,
-    mm_to_range_m, RANGE_ORDER, RngPacket)
+    mm_to_range_m, RANGE_ORDER, RangeMedianFilter, RngPacket)
 from poli_hardware.node_runner import run_node
 
 # RANGE_ORDER 이름 -> URDF frame 이름
@@ -60,6 +60,7 @@ class MegaBridgeNode(Node):
         self.declare_parameter('open_delay', 2.0)   # 포트를 열면 Mega가 자동 리셋된다
         self.declare_parameter('stale_timeout', 1.0)
         self.declare_parameter('ack_timeout', 0.5)
+        self.declare_parameter('median_window', 3)  # 1 = 필터 없음
         declare_range_params(self)
 
         self.port = self.get_parameter('port').value
@@ -68,6 +69,7 @@ class MegaBridgeNode(Node):
         self.stale_timeout = self.get_parameter('stale_timeout').value
 
         self.parser = MegaParser()
+        self.range_filter = RangeMedianFilter(self.get_parameter('median_window').value)
         self.range_pubs = create_range_publishers(self)
         self.state_pub = self.create_publisher(String, '/gripper/state', 10)
         self.create_service(SetBool, '/gripper/set', self._on_gripper_set)
@@ -132,7 +134,7 @@ class MegaBridgeNode(Node):
             self._stale_warned = False
             lo = self.get_parameter('min_range').value
             hi = self.get_parameter('max_range').value
-            for name, mm in zip(RANGE_ORDER, pkt.mm):
+            for name, mm in zip(RANGE_ORDER, self.range_filter.update(pkt.mm)):
                 self.range_pubs[name].publish(
                     make_range_msg(self, name, mm_to_range_m(mm, lo, hi)))
         elif isinstance(pkt, GstPacket):

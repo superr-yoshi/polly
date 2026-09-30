@@ -3,6 +3,7 @@
 rclpy / pyserial에 의존하지 않는 순수 모듈이다. PC에서 pytest로 바로 검증한다.
 packet 형식을 바꾸면 docs/serial_protocol.md와 펌웨어를 함께 고친다.
 """
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -122,3 +123,25 @@ def mm_to_range_m(mm: int, min_range: float, max_range: float) -> float:
         return float('inf')
     m = mm / 1000.0
     return min(max(m, min_range), max_range)
+
+
+class RangeMedianFilter:
+    """센서별 최근 window개 값의 중간값. 한 번 튀는 값(반사·가장자리)을 걸러낸다.
+
+    0(측정 실패)은 '감지 없음(무한대)'으로 보고 중간값을 구한다. 결과가 무한대면 0을 돌려준다.
+    window=1이면 필터 없음. 지연은 약 (window-1)/2 패킷 (8 Hz에서 window 3 = 약 0.125 s).
+    """
+
+    def __init__(self, window: int = 3, count: int = len(RANGE_ORDER)):
+        if window < 1 or window % 2 == 0:
+            raise ValueError('window must be an odd number >= 1')
+        self._hist = [deque(maxlen=window) for _ in range(count)]
+
+    def update(self, mm: tuple) -> tuple:
+        out = []
+        for hist, v in zip(self._hist, mm):
+            hist.append(float('inf') if v <= 0 else v)
+            s = sorted(hist)
+            med = s[len(s) // 2]
+            out.append(0 if med == float('inf') else int(med))
+        return tuple(out)
