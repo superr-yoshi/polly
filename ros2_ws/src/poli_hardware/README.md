@@ -9,7 +9,8 @@
 | `fake_rrc_node` | 사용 가능 | 부품 없이 /cmd_vel → /odom_raw, /imu/data (SIM_ONLY) |
 | `rrc_adapter_node` | 구현됨, 실기 미검증 | RRC Lite 실제 주행 (`docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`) |
 | `fake_mega_node` | 사용 가능 | 부품 없이 /range/*, 집게 서비스 (SIM_ONLY) |
-| `mega_bridge_node` | 사용 가능 | Arduino Mega 시리얼 v1.1 ↔ ROS |
+| `mega_bridge_node` | 사용 가능 (실물 Mega 확인) | Arduino Mega 시리얼 v1.1 ↔ ROS |
+| `drive_test` | 사용 가능 | 보정용 주행 시험 (직진/회전/바퀴 N바퀴) → 새 파라미터 계산. `docs/calibration.md` |
 
 ## 인터페이스 계약 (바꾸지 말 것)
 | 이름 | 종류 | 타입 | 방향 | frame_id |

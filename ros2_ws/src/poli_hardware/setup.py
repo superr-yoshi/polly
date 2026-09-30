@@ -32,6 +32,7 @@ setup(
             'rrc_adapter_node = poli_hardware.rrc_node:main_real',
             'fake_mega_node = poli_hardware.fake_mega_node:main',
             'mega_bridge_node = poli_hardware.mega_bridge_node:main',
+            'drive_test = poli_hardware.drive_test:main',
         ],
     },
 )

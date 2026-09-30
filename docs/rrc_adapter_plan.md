@@ -21,10 +21,11 @@
    ```
 3. 전진/후진/좌회전/우회전/정지 확인. 방향이 틀리면 sign·motor_id만 고친다 (배선 변경 X, 기록 O).
 4. teleop을 끄고 0.3초 안에 바퀴가 서는지 확인 (Pi 쪽 watchdog).
-5. 바퀴 1회전 속도 확인: `/cmd_vel` linear.x = 2π × wheel_radius (= 0.204 m/s)로 10초 → 바퀴가 10바퀴 도는지.
-   다르면 `motor_ticks_per_rev` 보정.
+5. 바퀴 1회전 속도 확인: `ros2 run poli_hardware drive_test wheel --revs 10` → 센 바퀴 수 입력
+   → `motor_ticks_per_rev` 계산값 반영.
 6. IMU 축 확인: 정지 시 az ≈ +9.8, 좌회전 시 gz > 0. 다르면 URDF의 imu_link 회전으로 맞춘다.
-7. 직선·회전 시험으로 `wheel_radius`, `wheel_separation` 보정 → `docs/calibration.md`에 날짜와 기록.
+7. `drive_test straight --distance 1.0`, `drive_test rotate --angle 360`으로 `wheel_radius`,
+   `wheel_separation` 보정 → `docs/calibration.md`에 날짜와 기록.
 
 ## 지켜야 할 것
 - Topic 이름·타입·frame_id·parameter 이름을 바꾸지 않는다.
