@@ -54,7 +54,7 @@
 
 ## 8. Gripper
 - Byte Robot Black Composite Claw
-- Servo: DS3218 (결선도 기준 1개, Mega D9 신호 / XL4015 6V 별도 전원)
+- Servo: DS3218 × 1 (확정, Mega D9 신호 / XL4015 6V 별도 전원). 들어 올리기 없음
 - Role:
   - Open / close gripper
   - Rescue object handling
