@@ -53,7 +53,8 @@
 - Role:
   - Short-range obstacle detection
   - Collision prevention
-  - ROS 2 /range/front_left, /range/front_right, /range/rear_left, /range/rear_right
+  - ROS 2 /range/front, /range/left, /range/right, /range/rear
+  - 장착: 전방·우측·후방은 지면에서 약 14 cm, 좌측만 낮게 (TODO_MEASURE)
 
 ## 8. Gripper
 - Byte Robot Black Composite Claw 125mm (최대 개폐 125 mm, 파지력 500 g, 140 g)
@@ -72,10 +73,7 @@
 - /cmd_vel → motor command
 - /odom_raw → RRC Lite odometry (제조사 펌웨어가 엔코더를 보내지 않아 명령 기반 추정)
 - /imu/data → RRC Lite built-in 6-axis IMU
-- /range/front_left → front-left ultrasonic sensor
-- /range/front_right → front-right ultrasonic sensor
-- /range/rear_left → rear-left ultrasonic sensor
-- /range/rear_right → rear-right ultrasonic sensor
+- /range/front, /range/left, /range/right, /range/rear → 초음파 (전방·좌측·우측·후방)
 - /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Arduino Mega)
 - /battery_state → RRC Lite 입력 전압 (LiPo 잔량 아님)
 - /scan → RPLIDAR C1 LaserScan

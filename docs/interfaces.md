@@ -61,7 +61,7 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | 담당 1 → 조원 A | `linear.x` 전진 m/s, `angular.z` 회전 rad/s (**양수 = 왼쪽 회전**) |
 | `/odom_raw` | `nav_msgs/msg/Odometry` | 조원 A → 담당 1 | 엔코더 odometry |
 | `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | RRC Lite 내장 IMU |
-| `/range/front_left` 등 4개 | `sensor_msgs/msg/Range` | 조원 A → 담당 1 | 초음파, 단위 m |
+| `/range/front`, `/range/left`, `/range/right`, `/range/rear` | `sensor_msgs/msg/Range` | 조원 A → 담당 1 | 초음파, 단위 m. **2026-09-30 이름 변경** (예전 front_left 등, 조원 A 결정: 실제 장착이 전방·좌측·우측·후방). 좌측만 낮게, 나머지 지면 약 14 cm. 측정 실패는 `inf` |
 | `/battery_state` | `sensor_msgs/msg/BatteryState` | 조원 A → 담당 1 | **RRC Lite 입력 전압** (12V 컨버터 출력, 약 1 Hz). LiPo 잔량 아님, percentage = NaN |
 | `/scan` | `sensor_msgs/msg/LaserScan` | LiDAR 드라이버 → 담당 1 | RPLIDAR C1 |
 
@@ -106,7 +106,13 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
 - 대회 launch에서는 `IncludeLaunchDescription`으로 `poli_hardware/launch/hardware.launch.py`를 포함하면 됩니다.
 - `/cmd_vel`이 0.3초 넘게 안 오면 정지합니다 (약속 0.5초 이내). mission2의 20 Hz 발행이면 문제없습니다.
 
-### 4-5. 주의할 점
+### 4-5. 좌표계 (TF) — 2026-09-30 추가
+- `poli_description` 패키지(URDF)가 `base_link` → `laser`, `imu_link`, `camera_link`, `ultrasonic_front/left/right/rear_link`, `gripper_link`를 발행합니다.
+  `hardware.launch.py`에 기본 포함 (`use_description:=false`로 끔). robot_state_publisher를 따로 켜지 마세요.
+- LiDAR frame 이름은 `laser` (sllidar_ros2 기본값, fake_scan과 같음). `scan_to_grid.py`의 `LASER_OFFSET_X/Y_M` 대신 TF(`base_link` → `laser`)를 쓰면
+  실측값을 URDF 한 곳에서만 고치면 됩니다. 지금 URDF 값은 둘 다 0 (TODO_MEASURE).
+
+### 4-6. 주의할 점
 - **`/odom_raw`는 엔코더 값이 아닙니다.** RRC Lite 제조사 펌웨어가 엔코더 값을 Pi로 보내지 않아서,
   보낸 속도 명령으로 추정한 값입니다. 바퀴가 미끄러지거나 막혀도 모릅니다.
   대각선 1697mm 주행 거리는 IMU·LiDAR 벽 거리 등으로 보정하는 것을 권장합니다. (자세한 내용: `docs/rrc_protocol.md`)

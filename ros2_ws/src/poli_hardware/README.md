@@ -18,7 +18,7 @@
 | `/cmd_vel` | Topic | geometry_msgs/Twist | 구독 | — |
 | `/odom_raw` | Topic | nav_msgs/Odometry | 발행 25 Hz | `odom` → child `base_link` |
 | `/imu/data` | Topic | sensor_msgs/Imu | 발행 50 Hz | `imu_link` |
-| `/range/front_left` `/range/front_right` `/range/rear_left` `/range/rear_right` | Topic | sensor_msgs/Range | 발행 8 Hz | `ultrasonic_fl_link` 등 |
+| `/range/front` `/range/left` `/range/right` `/range/rear` | Topic | sensor_msgs/Range | 발행 8 Hz | `ultrasonic_front_link` 등 |
 | `/gripper/state` | Topic | std_msgs/String | 발행 2 Hz | `open` / `closed` / `moving` |
 | `/gripper/command` | Topic | std_msgs/String | 구독 | `"open"` 열기 / `"grab"` 닫아 잡기 (**들어 올리기 없음**) |
 | `/battery_state` | Topic | sensor_msgs/BatteryState | 발행 1 Hz | RRC 입력 전압 (LiPo 잔량 아님) |
@@ -45,7 +45,7 @@ ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false  # 실제 
 ```bash
 ros2 topic list                       # /odom_raw /imu/data /range/* /gripper/state
 ros2 topic hz /imu/data               # 약 50 Hz
-ros2 topic hz /range/front_left       # 약 8 Hz
+ros2 topic hz /range/front            # 약 8 Hz
 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z: 0.0}}"
 ros2 topic echo /odom_raw --once      # twist.linear.x = 0.2 (0.3 s 뒤에는 0)
 ros2 topic pub --once /gripper/command std_msgs/msg/String "{data: grab}"

@@ -7,17 +7,16 @@
 ## 1. Arduino Mega 2560 (센서 MCU, 조원 A)
 
 ### HC-SR04 × 4
-| 펌웨어 순서 | ROS 토픽 | 결선도 라벨 | Trig | Echo |
-|---|---|---|---|---|
-| 0 (fl) | /range/front_left | ① 전방 | D22 | D23 |
-| 1 (fr) | /range/front_right | ② 좌측 | D24 | D25 |
-| 2 (rl) | /range/rear_left | ③ 우측 | D26 | D27 |
-| 3 (rr) | /range/rear_right | ④ 후방 | D28 | D29 |
+| 펌웨어 순서 | ROS 토픽 | 방향 | Trig | Echo | 장착 높이 |
+|---|---|---|---|---|---|
+| 0 | /range/front | 전방 | D22 | D23 | 지면에서 약 14 cm (TODO_MEASURE) |
+| 1 | /range/left | 좌측 | D24 | D25 | **낮게** (정확한 높이 TODO_MEASURE) |
+| 2 | /range/right | 우측 | D26 | D27 | 지면에서 약 14 cm (TODO_MEASURE) |
+| 3 | /range/rear | 후방 | D28 | D29 | 지면에서 약 14 cm (TODO_MEASURE) |
 
 - VCC ×4 → 브레드보드 위 + 레일 (Mega 5V), GND ×4 → 위 − 레일 (Mega GND)
-- ⚠ **확인 필요 (TODO_MEASURE)**: 결선도 라벨은 전방/좌측/우측/후방이고 ROS 토픽은 매뉴얼대로
-  front_left/front_right/rear_left/rear_right다. 실제 장착 위치가 결선도 라벨대로라면
-  토픽 이름과 방향이 어긋나므로, 조립 후 통합 담당과 **URDF frame 위치 또는 장착 위치**를 맞춘다.
+- 2026-09-30 결정: 결선도대로 전방·좌측·우측·후방에 단다. 토픽 이름도 이에 맞춰 바꿨다 (예전 front_left/front_right/rear_left/rear_right).
+- 센서 위치·방향은 `poli_description` 패키지(URDF)의 `ultrasonic_<이름>_link`에 들어 있다.
 
 ### 집게 서보 (DS3218)
 | 항목 | 연결 |

@@ -3,11 +3,11 @@
 
 // ---- SIM / REAL 스위치 -------------------------------------------------
 // 1 = 모의값 (부품 없이 테스트), 0 = 실제 하드웨어 사용
-#define SIM_ULTRASONIC 0   // 2026-09-29 실측 확인 (FL 1개). 센서 없는 자리는 0(실패)으로 전송
+#define SIM_ULTRASONIC 0   // 2026-09-29 실측 확인 (전방 1개). 센서 없는 자리는 0(실패)으로 전송
 #define SIM_GRIPPER    1   // 서보(DS3218) + 별도 전원 배선 후 0
 
 // ---- 초음파 핀 (TODO_MEASURE: 실제 배선 후 확정) -------------------------
-// 순서: 0=front_left, 1=front_right, 2=rear_left, 3=rear_right
+// 순서: 0=전방(front), 1=좌측(left), 2=우측(right), 3=후방(rear) -> ROS /range/<이름>
 constexpr uint8_t US_TRIG[4] = {22, 24, 26, 28};
 constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 

@@ -14,10 +14,10 @@
 ## Mega → Pi
 | 이름 | 형식 | 주기 | 설명 |
 |---|---|---|---|
-| RNG | `$RNG,seq,millis,fl,fr,rl,rr*CS` | 8 Hz | 초음파 4개 거리(mm). 0 = 측정 실패 또는 범위 밖 |
+| RNG | `$RNG,seq,millis,front,left,right,rear*CS` | 8 Hz | 초음파 4개 거리(mm). 0 = 측정 실패 또는 범위 밖 |
 | GST | `$GST,seq,millis,last_id,state,angle*CS` | 2 Hz + 명령 직후 | 집게 상태. state 0=열림, 1=닫힘, 2=이동 중. angle = 서보 각도(도). last_id = 마지막으로 처리한 GRIP 명령 id |
 
-- 초음파 순서: fl = front_left, fr = front_right, rl = rear_left, rr = rear_right
+- 초음파 순서: 전방(D22/23), 좌측(D24/25), 우측(D26/27), 후방(D28/29). 2026-09-30 이름 변경 (예전 fl/fr/rl/rr, 형식은 같음)
 - seq는 packet 종류별로 따로 증가 (누락 검출용), millis는 Mega 시각
 
 ## Pi → Mega
@@ -50,7 +50,7 @@ $GRIP,2,0*0E        ← 열기, id 2
 
 | 이름 | 종류 | 타입 | 내용 |
 |---|---|---|---|
-| `/range/front_left` 등 4개 | Topic | sensor_msgs/Range | RNG의 fl/fr/rl/rr (m). 0(실패)은 `+inf` (REP-117 "감지 없음") |
+| `/range/front`, `/range/left`, `/range/right`, `/range/rear` | Topic | sensor_msgs/Range | RNG의 4개 값 (m). frame `ultrasonic_<이름>_link`. 0(실패)은 `+inf` (REP-117 "감지 없음") |
 | `/gripper/state` | Topic | std_msgs/String | GST state: `open` / `closed` / `moving` |
 | `/gripper/command` | Topic (구독) | std_msgs/String | `"open"` = 열기(GRIP 0), `"grab"` = 닫아 잡기(GRIP 1). 들어 올리기 없음. GST의 last_id로 수신 확인, 0.5초마다 최대 3번 전송 |
 

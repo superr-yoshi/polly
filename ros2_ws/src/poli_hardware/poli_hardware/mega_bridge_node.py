@@ -1,7 +1,7 @@
 """
 Arduino Mega <-> ROS 2 브리지 (프로토콜 v1.1, docs/serial_protocol.md).
 
-발행:  /range/front_left, /range/front_right, /range/rear_left, /range/rear_right
+발행:  /range/front, /range/left, /range/right, /range/rear
        (sensor_msgs/Range), /gripper/state (std_msgs/String: open|closed|moving)
 구독:  /gripper/command (std_msgs/String: "open" = 열기, "grab" = 닫아서 잡기)
        들어 올리는 동작은 없다 (조원 A 결정).
@@ -25,10 +25,10 @@ MAX_GRIP_TRIES = 3
 
 # RANGE_ORDER 이름 -> URDF frame 이름
 RANGE_FRAMES = {
-    'front_left': 'ultrasonic_fl_link',
-    'front_right': 'ultrasonic_fr_link',
-    'rear_left': 'ultrasonic_rl_link',
-    'rear_right': 'ultrasonic_rr_link',
+    'front': 'ultrasonic_front_link',
+    'left': 'ultrasonic_left_link',
+    'right': 'ultrasonic_right_link',
+    'rear': 'ultrasonic_rear_link',
 }
 
 

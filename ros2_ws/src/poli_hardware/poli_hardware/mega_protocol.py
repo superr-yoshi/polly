@@ -11,8 +11,9 @@ from typing import Optional, Union
 # 타입 뒤 필드 수 (seq, millis 포함)
 FIELD_COUNT = {'RNG': 6, 'GST': 5}
 
-# RNG 거리값 순서. 토픽 이름과 1:1로 대응한다.
-RANGE_ORDER = ('front_left', 'front_right', 'rear_left', 'rear_right')
+# RNG 거리값 순서 (Mega 센서 0~3 = D22/23, D24/25, D26/27, D28/29). 토픽 /range/<이름>과 1:1.
+# 좌측만 낮게, 나머지는 지면에서 약 14 cm (docs/pin_map.md).
+RANGE_ORDER = ('front', 'left', 'right', 'rear')
 
 GRIP_OPEN = 0
 GRIP_CLOSE = 1

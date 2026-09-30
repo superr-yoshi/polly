@@ -27,12 +27,12 @@ def test_make_grip_command_matches_doc():
         make_grip_command(3, 2)
 
 
-# 1. RNG 4개 순서가 front_left/front_right/rear_left/rear_right와 일치
+# 1. RNG 4개 순서가 front/left/right/rear (배선 D22~D29 순서)와 일치
 def test_rng_order():
-    assert RANGE_ORDER == ('front_left', 'front_right', 'rear_left', 'rear_right')
+    assert RANGE_ORDER == ('front', 'left', 'right', 'rear')
     pkt = parse_line('$RNG,5,640,1000,1500,2000,800*63\r\n')
     assert pkt == RngPacket(5, 640, (1000, 1500, 2000, 800))
-    assert dict(zip(RANGE_ORDER, pkt.mm))['rear_left'] == 2000
+    assert dict(zip(RANGE_ORDER, pkt.mm))['right'] == 2000
 
 
 def test_gst_parse():

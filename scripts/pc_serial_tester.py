@@ -68,7 +68,7 @@ def reader(ser, stats):
         if kind == "RNG":
             rng_count += 1
             if rng_count % 8 == 1:
-                print(f"[RNG] fl={v[2]} fr={v[3]} rl={v[4]} rr={v[5]} (mm, 0=실패)")
+                print(f"[RNG] 전방={v[2]} 좌측={v[3]} 우측={v[4]} 후방={v[5]} (mm, 0=실패)")
         elif kind == "GST":
             print(f"[GST] last_cmd_id={v[2]} state={STATE.get(v[3], v[3])} angle={v[4]}")
 
