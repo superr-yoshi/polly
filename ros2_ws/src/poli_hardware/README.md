@@ -56,7 +56,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard   # 키보드 주행
 ## 단위 테스트 (ROS 없이도 가능)
 ```bash
 pip install pytest
-python -m pytest ros2_ws/src/poli_hardware/test -q     # Mega·RRC 프로토콜 + 차동구동 계산
+cd ros2_ws/src/poli_hardware && python -m pytest test -q   # 프로토콜·차동구동·보정 계산 (스타일 검사는 ROS에서만)
 ```
 
 ## 설정

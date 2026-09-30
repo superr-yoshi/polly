@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ament_copyright.main import main
 import pytest
+
+main = pytest.importorskip('ament_copyright.main').main
 
 
 # Remove the `skip` decorator once the source file(s) have a copyright header

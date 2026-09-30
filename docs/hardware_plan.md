@@ -1,5 +1,7 @@
 # POLI Hardware Plan
 
+> 부품별 상세 사양·치수·핀맵: `docs/hardware_reference.md` (원본: `docs/product-spec-claude/`)
+
 ## 1. Main Computer
 - Raspberry Pi 5
 - Role: ROS 2, navigation, camera processing, LiDAR processing
@@ -21,16 +23,17 @@
   - Send range / gripper state to Raspberry Pi, receive gripper commands
 
 ## 4. LiDAR
-- SLAMTEC RPLIDAR C1
-- Connection: USB → Raspberry Pi 5
+- SLAMTEC RPLIDAR C1 (360°, 10 Hz, 0.05~12 m, 5 V 최대 260 mA)
+- Connection: USB 어댑터 보드 → Raspberry Pi 5
+- 레이저 높이: 장착면 + 29.8 mm → 외벽·장애물(200 mm)보다 낮게 장착
 - Role:
   - Obstacle detection
   - SLAM
   - Navigation
 
 ## 5. Camera
-- Raspberry Pi AI Camera (Sony IMX500)
-- Connection: CSI → Raspberry Pi 5
+- Raspberry Pi AI Camera (Sony IMX500, 수평 시야각 66.3°, 수동 초점 20 cm~∞)
+- Connection: CSI → Raspberry Pi 5 **CAM0**
 - Role:
   - Red rescue target detection
   - Visual alignment
@@ -53,8 +56,8 @@
   - ROS 2 /range/front_left, /range/front_right, /range/rear_left, /range/rear_right
 
 ## 8. Gripper
-- Byte Robot Black Composite Claw
-- Servo: DS3218 × 1 (확정, Mega D9 신호 / XL4015 6V 별도 전원). 들어 올리기 없음
+- Byte Robot Black Composite Claw 125mm (최대 개폐 125 mm, 파지력 500 g, 140 g)
+- Servo: DS3218 × 1 (확정, Mega D9 신호 / XL4015 6V 별도 전원, 사양 4.8~6.8 V, PWM 500~2500 µs). 들어 올리기 없음
 - Role:
   - Open / close gripper
   - Rescue object handling
@@ -63,6 +66,7 @@
 - Battery: XEON 6S 22.2V 5200mAh LiPo
 - DC-DC Converter: Daygreen B20-24-12
 - RRC Lite motor power: 12V
+- Raspberry Pi 5: 5 V / 5 A 필요. 결선도상 XL4015 5 V → GPIO 5 V 핀 공급 → USB 장치 전원 부족 여부 실기 확인 (TODO_MEASURE)
 
 ## 10. Software Interface Plan
 - /cmd_vel → motor command

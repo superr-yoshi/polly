@@ -14,7 +14,7 @@ static unsigned long g_tStep = 0;
 
 void gripperBegin() {
 #if !SIM_GRIPPER
-  g_servo.attach(GRIPPER_PIN);
+  g_servo.attach(GRIPPER_PIN, SERVO_MIN_US, SERVO_MAX_US);
   g_servo.write(g_angle);
 #endif
 }

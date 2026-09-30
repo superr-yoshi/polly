@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ament_pep257.main import main
 import pytest
+
+# ROS(ament)가 없는 PC에서 pytest만 돌릴 때는 건너뛴다. colcon test에서는 항상 검사한다.
+main = pytest.importorskip('ament_pep257.main').main
 
 
 @pytest.mark.linter
