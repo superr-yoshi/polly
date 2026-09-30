@@ -78,3 +78,19 @@ def test_wheel_to_motor_rps():
     for w, s, t in [(3.0, -1.0, 1980.0), (-5.0, 1.0, 1320.0)]:
         rps = rp.wheel_to_motor_rps(w, s, t, 99.0)
         assert rp.motor_rps_to_wheel(rps, s, t) == pytest.approx(w)
+
+
+def test_encoder_report_roundtrip():
+    # POLI 패치 펌웨어 PacketReportEncoderTypeDef: sub 0x10, int32 x4, float x4 (33 bytes)
+    data = struct.pack('<B4i4f', 0x10, 100, -200, 0, 2 ** 31 - 1, 1.5, -1.0, 0.0, 0.25)
+    frame = rp.build_frame(rp.FUNC_MOTOR, data)
+    [(func, payload)] = rp.FrameParser().feed(frame)
+    counts, rps = rp.parse_encoder_report(payload)
+    assert func == rp.FUNC_MOTOR
+    assert counts == (100, -200, 0, 2 ** 31 - 1)
+    assert rps == pytest.approx((1.5, -1.0, 0.0, 0.25))
+
+
+def test_encoder_report_rejects_other_motor_frames():
+    assert rp.parse_encoder_report(bytes([0x10]) + bytes(31)) is None       # 길이 틀림
+    assert rp.parse_encoder_report(bytes([0x01]) + bytes(32)) is None       # 다른 서브 명령

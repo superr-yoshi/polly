@@ -24,6 +24,8 @@ FUNC_NONE = 12  # 펌웨어는 이 값 이상의 func를 버린다
 MOTOR_SET_MULTI = 1
 MOTOR_STOP_MULTI = 3
 MOTOR_SET_TYPE = 5
+# RRC -> Pi 엔코더 보고. 제조사 펌웨어에는 없고 POLI 패치 펌웨어(firmware/rrc_lite_patch)만 보낸다.
+MOTOR_REPORT_ENCODER = 0x10
 
 # 모터 종류 (motors_param.h). 부팅 직후 기본값은 JGA27 파라미터라서 반드시 설정해야 한다.
 MOTOR_TYPE_JGB520 = 0
@@ -91,6 +93,18 @@ def parse_imu(data: bytes) -> Optional[Tuple[float, ...]]:
     ax, ay, az, gx, gy, gz = struct.unpack('<6f', data)
     d2r = math.pi / 180.0
     return ax * G, ay * G, az * G, gx * d2r, gy * d2r, gz * d2r
+
+
+def parse_encoder_report(data: bytes) -> Optional[Tuple[tuple, tuple]]:
+    """
+    POLI 패치 펌웨어의 엔코더 보고 (func 3, sub 0x10, 50 Hz).
+
+    -> ((count0..3: int32 누적 tick), (rps0..3: 출력축 rev/s, 펌웨어 ticks_per_circle 기준)).
+    """
+    if len(data) != 33 or data[0] != MOTOR_REPORT_ENCODER:
+        return None
+    values = struct.unpack('<4i4f', data[1:])
+    return values[:4], values[4:]
 
 
 def parse_battery_mv(data: bytes) -> Optional[int]:

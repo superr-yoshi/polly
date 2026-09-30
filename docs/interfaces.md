@@ -113,9 +113,9 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   실측값을 URDF 한 곳에서만 고치면 됩니다. 지금 URDF 값은 둘 다 0 (TODO_MEASURE).
 
 ### 4-6. 주의할 점
-- **`/odom_raw`는 엔코더 값이 아닙니다.** RRC Lite 제조사 펌웨어가 엔코더 값을 Pi로 보내지 않아서,
-  보낸 속도 명령으로 추정한 값입니다. 바퀴가 미끄러지거나 막혀도 모릅니다.
-  대각선 1697mm 주행 거리는 IMU·LiDAR 벽 거리 등으로 보정하는 것을 권장합니다. (자세한 내용: `docs/rrc_protocol.md`)
+- **`/odom_raw`는 RRC 펌웨어에 따라 다릅니다.** 공장 펌웨어는 엔코더 값을 Pi로 보내지 않아 보낸 속도 명령으로 추정한 값이고
+  (바퀴가 미끄러지거나 막혀도 모름), 조원 A의 **POLI 패치 펌웨어**(`firmware/rrc_lite_patch/`, 실기 시험 전)를 구우면 엔코더 실측 기반이 됩니다.
+  토픽·형식은 같습니다. 어느 쪽인지는 노드 로그("엔코더 기반" / "명령 기반")로 보입니다. (자세한 내용: `docs/rrc_protocol.md`)
 - **`/battery_state`는 LiPo 잔량이 아닙니다** (RRC 입력 = 12V 컨버터 출력). 저전압 판단에 쓰면 안 됩니다.
 - `poli_navigation/fake_odom.py`도 `/odom_raw`를 발행하므로 `hardware.launch.py`와 **동시에 실행하면 안 됩니다.**
   fake 테스트는 `hardware.launch.py`(기본 fake 모드)만 켜도 조원 A 토픽이 전부 나옵니다.

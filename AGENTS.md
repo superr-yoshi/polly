@@ -27,6 +27,7 @@
 | `ros2_ws/src/poli_hardware/` | RRC 주행 어댑터, Mega 브리지, fake 하드웨어, 보정 도구 `drive_test` | 조원 A |
 | `ros2_ws/src/poli_description/` | 로봇 위치 모델 URDF (센서 frame: `laser`, `imu_link`, `camera_link`, `ultrasonic_*_link`) | 조원 A |
 | `firmware/mega_sensor_controller/` | Mega 펌웨어 (초음파 4개, 집게 서보 1개) | 조원 A |
+| `firmware/rrc_lite_patch/` | RRC Lite 펌웨어 패치 (명령 끊김 정지 + 엔코더 보고). Keil MDK Community로 빌드 | 조원 A |
 | (예정) 카메라 / `/vision/target` | 빨간 대상 탐지 | 조원 B |
 | `firmware/nucleo_controller/` | 옛 NUCLEO 계획. 사용하지 않음 | — |
 
@@ -35,10 +36,12 @@
 ## 4. 꼭 지킬 결정 (바꾸지 말 것)
 1. **집게는 절대 대상을 들어 올리지 않는다.** 잡은 채로 끌고 간다. `/gripper/command`는 `"open"`(열기), `"grab"`(닫아 잡기) 두 가지뿐이다.
    들어 올리기·리프트 기능을 요청받아도 만들지 않는다. 서보는 DS3218 **1개** (Mega D9).
-2. **`/odom_raw`는 엔코더 값이 아니다.** RRC Lite 제조사 펌웨어가 엔코더 값을 Pi로 보내지 않아 "보낸 속도 명령" 기반 추정이다. 정밀 거리가 필요하면 IMU·LiDAR로 보정한다.
+2. **`/odom_raw`의 출처는 RRC 펌웨어에 따라 다르다.** 공장 펌웨어 = "보낸 속도 명령" 기반 추정 (엔코더를 Pi로 안 보냄),
+   POLI 패치 펌웨어(`firmware/rrc_lite_patch/`) = 엔코더 실측. Pi 코드는 둘 다 자동 대응한다. 정밀 거리가 필요하면 IMU·LiDAR로 보정한다.
 3. **`/battery_state`는 LiPo 잔량이 아니다.** RRC Lite 입력 전압(12 V 컨버터 출력)이다.
-4. **안전**: RRC Lite는 명령이 끊겨도 스스로 멈추지 않는다.
-   `poli_hardware`의 `/cmd_vel` 0.3초 timeout과 `node_runner.py`(Ctrl+C·SIGTERM 때 모터 정지 보장)를 지우거나 우회하지 않는다. 물리 E-stop 필수.
+4. **안전**: 공장 펌웨어의 RRC Lite는 명령이 끊겨도 스스로 멈추지 않는다 (POLI 패치 펌웨어는 500 ms 뒤 정지).
+   `poli_hardware`의 `/cmd_vel` 0.3초 timeout, 25 Hz 연속 모터 명령, `node_runner.py`(Ctrl+C·SIGTERM 때 모터 정지 보장)를
+   지우거나 우회하지 않는다. 물리 비상정지(배터리 바로 뒤, 전체 전원 차단) 필수.
 5. `poli_navigation/fake_odom.py`와 `poli_hardware`의 `hardware.launch.py`는 둘 다 `/odom_raw`를 발행하므로 **동시에 실행하지 않는다.**
    fake 테스트는 `ros2 launch poli_hardware hardware.launch.py`(기본 fake 모드)만 켜면 조원 A 토픽이 전부 나온다.
 6. odom → base_link TF는 robot_localization(EKF)만 발행한다. 하드웨어 노드는 TF를 발행하지 않는다.

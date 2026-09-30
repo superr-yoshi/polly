@@ -11,7 +11,7 @@
 - Motor: JGB37-520 Encoder DC Motor × 2
 - Role:
   - Left / right wheel control
-  - Encoder feedback (STM32 내부 속도 PID용, Pi로는 보내지 않음)
+  - Encoder feedback (공장 펌웨어는 STM32 내부 PID에만 사용, POLI 패치 펌웨어는 Pi로 50 Hz 보고)
   - Built-in 6-axis IMU data
 
 ## 3. Sensor MCU
@@ -67,11 +67,12 @@
 - Battery: XEON 6S 22.2V 5200mAh LiPo
 - DC-DC Converter: Daygreen B20-24-12
 - RRC Lite motor power: 12V
+- **비상정지: 배터리 바로 뒤 전체 전원 차단 스위치** (docs/pin_map.md 4장)
 - Raspberry Pi 5: 5 V / 5 A 필요. 결선도상 XL4015 5 V → GPIO 5 V 핀 공급 → USB 장치 전원 부족 여부 실기 확인 (TODO_MEASURE)
 
 ## 10. Software Interface Plan
 - /cmd_vel → motor command
-- /odom_raw → RRC Lite odometry (제조사 펌웨어가 엔코더를 보내지 않아 명령 기반 추정)
+- /odom_raw → RRC Lite odometry (공장 펌웨어 = 명령 기반 추정, POLI 패치 펌웨어 = 엔코더 실측)
 - /imu/data → RRC Lite built-in 6-axis IMU
 - /range/front, /range/left, /range/right, /range/rear → 초음파 (전방·좌측·우측·후방)
 - /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Arduino Mega)

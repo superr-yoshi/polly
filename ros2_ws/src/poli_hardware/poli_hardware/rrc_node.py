@@ -48,10 +48,13 @@ class RrcTransport:
     """
     RRC Lite USB Serial (docs/rrc_protocol.md).
 
-    제조사 펌웨어는 엔코더 값을 Pi로 보내지 않는다. 그래서 read_wheel_speeds()는
-    마지막으로 보낸 명령(=STM32 PID 목표값)을 돌려준다. /odom_raw는 명령 기반 추정이고,
-    회전은 EKF에서 IMU gyro로 보정한다.
+    바퀴 속도(read_wheel_speeds -> /odom_raw):
+      - POLI 패치 펌웨어(firmware/rrc_lite_patch)면 50 Hz 엔코더 보고를 쓴다 (실측).
+      - 공장 펌웨어는 엔코더를 보내지 않으므로 마지막으로 보낸 명령을 쓴다 (추정).
+    엔코더 보고가 ENCODER_TIMEOUT 넘게 끊기면 자동으로 명령 기반으로 돌아간다.
     """
+
+    ENCODER_TIMEOUT = 0.2  # s. 보고 주기 20 ms의 10배
 
     def __init__(self, node):
         self._log = node.get_logger()
@@ -82,13 +85,15 @@ class RrcTransport:
         self._sent = (0.0, 0.0)
         self._supply_mv = None
         self._supply_t = 0.0
+        self._enc_rps = None
+        self._enc_t = 0.0
+        self._odom_source = None
         self._stop = False
         self._write(rrc_protocol.motor_type_frame(g('motor_type').value))
         self._write(rrc_protocol.motor_stop_frame())
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
         self._log.info(f'RRC Lite connected: {port}')
-        self._log.warn('RRC 펌웨어는 엔코더를 보내지 않음 -> /odom_raw는 명령 기반 추정')
 
     def _write(self, frame):
         try:
@@ -110,6 +115,10 @@ class RrcTransport:
                     imu = rrc_protocol.parse_imu(data)
                     if imu is not None:
                         self._imu, self._imu_t = imu, time.monotonic()
+                elif func == rrc_protocol.FUNC_MOTOR:
+                    enc = rrc_protocol.parse_encoder_report(data)
+                    if enc is not None:
+                        self._enc_rps, self._enc_t = enc[1], time.monotonic()
                 elif func == rrc_protocol.FUNC_SYS:
                     mv = rrc_protocol.parse_battery_mv(data)
                     if mv is not None:
@@ -123,7 +132,19 @@ class RrcTransport:
                            for r, s in zip(rps, self._signs))
 
     def read_wheel_speeds(self):
-        return self._sent
+        fresh = (self._enc_rps is not None
+                 and time.monotonic() - self._enc_t < self.ENCODER_TIMEOUT)
+        source = 'encoder' if fresh else 'command'
+        if source != self._odom_source:
+            if fresh:
+                self._log.info('RRC 엔코더 보고 수신 -> /odom_raw 엔코더 기반')
+            else:
+                self._log.warn('RRC 엔코더 보고 없음 (공장 펌웨어?) -> /odom_raw는 명령 기반 추정')
+            self._odom_source = source
+        if not fresh:
+            return self._sent
+        return tuple(rrc_protocol.motor_rps_to_wheel(self._enc_rps[i], s, self._ticks)
+                     for i, s in zip(self._ids, self._signs))
 
     def read_imu(self):
         if self._imu is None or time.monotonic() - self._imu_t > self._imu_timeout:
