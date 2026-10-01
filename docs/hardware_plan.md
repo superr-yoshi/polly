@@ -11,7 +11,7 @@
 - Motor: JGB37-520 Encoder DC Motor × 2
 - Role:
   - Left / right wheel control
-  - Encoder feedback (공장 펌웨어는 STM32 내부 PID에만 사용, POLI 패치 펌웨어는 Pi로 50 Hz 보고)
+  - Encoder feedback (STM32 내부 속도 PID에만 사용, Pi로는 보내지 않음. 공장 펌웨어 그대로 사용)
   - Built-in 6-axis IMU data
 
 ## 3. Sensor MCU
@@ -72,7 +72,7 @@
 
 ## 10. Software Interface Plan
 - /cmd_vel → motor command
-- /odom_raw → RRC Lite odometry (공장 펌웨어 = 명령 기반 추정, POLI 패치 펌웨어 = 엔코더 실측)
+- /odom_raw → RRC Lite odometry (공장 펌웨어라 엔코더 없이 명령 기반 추정)
 - /imu/data → RRC Lite built-in 6-axis IMU
 - /range/front, /range/left, /range/right, /range/rear → 초음파 (전방·좌측·우측·후방)
 - /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Arduino Mega)

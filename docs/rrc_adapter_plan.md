@@ -12,8 +12,7 @@
 | `wheel_radius`, `wheel_separation` | 직선 1~2 m, 제자리 360° 시험 |
 
 ## 순서
-0. (권장) RRC Lite에 **POLI 패치 펌웨어**를 굽는다: `firmware/rrc_lite_patch/README.md`
-   (명령 끊김 500 ms 정지 + 엔코더 보고). 공장 펌웨어로도 아래 순서는 그대로 된다.
+0. RRC Lite는 **공장 펌웨어 그대로** 쓴다 (2026-10-01 결정). 패치 펌웨어(`firmware/rrc_lite_patch/`)는 보류.
 1. Pi에 연결 후 udev 별칭 `/dev/robot_rrc` 설정 (`docs/udev_template.md`)
 2. **바퀴를 띄운 상태**에서 실행:
    ```bash

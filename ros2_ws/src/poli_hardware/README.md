@@ -26,7 +26,7 @@
 - odom → base_link **TF는 발행하지 않는다** (robot_localization EKF 소유).
 - `/cmd_vel`이 `cmd_timeout`(0.3 s) 이상 끊기면 0 속도.
 - `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = RRC 내장 IMU 가속도·자이로 3축, fake = z축 각속도만(휠 각속도 복사).
-- `/odom_raw`: RRC가 **POLI 패치 펌웨어**면 엔코더 실측, 공장 펌웨어면 **명령 기반 추정** (자동 전환, 로그로 표시). `firmware/rrc_lite_patch/`
+- `/odom_raw`: RRC 공장 펌웨어라 **명령 기반 추정**이다 (엔코더 값이 안 옴). 보류된 패치 펌웨어(`firmware/rrc_lite_patch/`)를 구우면 자동으로 엔코더 기반이 된다.
 - `/battery_state`: RRC Lite가 보고하는 자기 입력 전압. RRC는 12V 컨버터 뒤에 있어서 LiPo 잔량이 아니다. fake는 12.0 V.
 - `/gripper/holding`: 없음. 잡힘 감지 센서 추가 후 제공 예정 (TODO).
 - 기준: `docs/interfaces.md` (담당 1과 약속한 토픽). `/cmd_vel` timeout 0.3 s (약속: 0.5 s 이내).

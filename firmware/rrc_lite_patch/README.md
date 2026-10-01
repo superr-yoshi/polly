@@ -1,4 +1,8 @@
-# RRC Lite 펌웨어 POLI 패치 (조원 A)
+# RRC Lite 펌웨어 POLI 패치 (조원 A) — ⏸ 보류
+
+> **2026-10-01 결정: 사용하지 않는다. RRC Lite는 공장 펌웨어 그대로 쓴다.**
+> 조원 A가 다시 결정하기 전에는 이 펌웨어를 빌드·굽기 하지 않는다. 필요해질 때를 위해 남겨 둔 자료다.
+> 공장 펌웨어의 한계(명령이 끊겨도 안 멈춤, 엔코더 미보고)는 `docs/rrc_protocol.md` 참고. 대비책은 물리 비상정지 스위치.
 
 제조사(Hiwonder) RRC Lite 펌웨어 `RosRobotControllerLite_ros_250811`(공장 hex `..._250814.hex`)에 두 기능을 더한다.
 
@@ -101,3 +105,4 @@ ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false
 | 날짜 | 내용 | 결과 |
 |---|---|---|
 | 2026-09-30 | 패치 작성, GCC 문법 검사 (132개 파일) | 오류 없음. Keil 빌드·실기 시험 전 |
+| 2026-10-01 | 보류 결정 (공장 펌웨어 사용) | — |
