@@ -24,7 +24,8 @@ from tf2_ros import TransformBroadcaster
 # 바퀴 미끄러짐, 가속 시간 등은 없다. 실제 /odom_raw는 조원 A가 제공한다.
 # 집게도 흉내 낸다: /gripper/command를 받아 /gripper/holding을 보낸다.
 # 카메라도 흉내 낸다: 경기장 중앙의 빨간 대상을 보고 /vision/target을 보낸다.
-# LiDAR도 흉내 낸다: 외벽(임무 1은 장애물도)까지 거리를 /scan으로 보낸다.
+# LiDAR도 흉내 낸다: 임무 1에서만 외벽과 장애물까지 거리를 /scan으로 보낸다.
+# (광선 계산이 무거워 다른 타이머를 늦추므로, 쓰지 않는 임무 2에서는 끈다)
 # 파라미터 mission(1 또는 2)으로 출발 위치와 경기장을 고른다.
 # fake_odom과 같은 토픽을 보내므로 동시에 실행하지 않는다.
 SIM_ONLY_ODOM_FRAME_ID = 'odom'
@@ -142,8 +143,11 @@ class FakeRobot(Node):
             TargetDetection, '/vision/target', 10
         )
 
-        self.scan_publisher = self.create_publisher(LaserScan, '/scan', 10)
-        self.create_timer(SIM_ONLY_SCAN_PERIOD, self.publish_scan)
+        if self.mission == 1:
+            self.scan_publisher = self.create_publisher(
+                LaserScan, '/scan', 10
+            )
+            self.create_timer(SIM_ONLY_SCAN_PERIOD, self.publish_scan)
 
         # SIM_ONLY: 실제 로봇에서는 odom -> base_link TF를
         # robot_localization이 보낸다. 이 노드와 동시에 실행하지 않는다.
