@@ -6,18 +6,26 @@ from poli_navigation.mission2_logic import (
     ARENA_SIZE_M,
     CENTER_M,
     distance_to_danger_line,
+    HOLD,
+    Mission2Logic,
     Observation,
+    RETREAT,
     START_POSE,
 )
 from poli_navigation.scan_to_grid import point_to_cell
-from poli_navigation.sim_world import simulate_scan
+from poli_navigation.sim_world import (
+    simulate_empty_arena_scan,
+    simulate_scan,
+)
 from poli_navigation.wall_localizer import (
     estimate_position,
     farthest_cluster,
     find_wall_distances,
+    MAX_ANGULAR_SPEED_FOR_SCAN,
     MINUS_X,
     PLUS_X,
     PLUS_Y,
+    WallCorrection,
 )
 import pytest
 
@@ -156,3 +164,108 @@ def test_small_yaw_error_gives_small_position_error():
 
         assert x == pytest.approx(true_pose[0], abs=0.05)
         assert y == pytest.approx(true_pose[1], abs=0.05)
+
+
+# ---------------------------------------------------------------
+# odom 보정 (WallCorrection)
+# ---------------------------------------------------------------
+
+def test_correction_is_zero_when_odom_is_right():
+    correction = WallCorrection()
+    scan = simulate_scan(arena(), START_POSE)
+
+    assert correction.update(scan, START_POSE, 0.0) is True
+
+    x, y, yaw = correction.apply(START_POSE)
+    assert x == pytest.approx(START_POSE[0], abs=TOLERANCE_M)
+    assert y == pytest.approx(START_POSE[1], abs=TOLERANCE_M)
+    assert yaw == START_POSE[2]
+
+
+def test_correction_follows_push_and_keeps_it():
+    # 중앙에서 +x로 0.4m 밀렸지만 odom은 모른다.
+    correction = WallCorrection()
+    odom_pose = (*CENTER_M, 0.0)
+    true_pose = (CENTER_M[0] + 0.4, CENTER_M[1], 0.0)
+
+    correction.update(simulate_scan(arena(), true_pose), odom_pose, 0.0)
+    x, y, _ = correction.apply(odom_pose)
+    assert x == pytest.approx(true_pose[0], abs=TOLERANCE_M)
+    assert y == pytest.approx(true_pose[1], abs=TOLERANCE_M)
+
+    # 그 뒤 odom으로 0.1m 더 움직이면 보정값을 유지한 채 따라간다.
+    odom_pose = (CENTER_M[0], CENTER_M[1] + 0.1, 0.0)
+    x, y, _ = correction.apply(odom_pose)
+    assert x == pytest.approx(true_pose[0], abs=TOLERANCE_M)
+    assert y == pytest.approx(CENTER_M[1] + 0.1, abs=TOLERANCE_M)
+
+
+def test_correction_ignores_scan_while_turning_fast():
+    correction = WallCorrection()
+    odom_pose = (*CENTER_M, 0.0)
+    true_pose = (CENTER_M[0] + 0.4, CENTER_M[1], 0.0)
+    scan = simulate_scan(arena(), true_pose)
+
+    updated = correction.update(
+        scan, odom_pose, MAX_ANGULAR_SPEED_FOR_SCAN * 2.0
+    )
+
+    assert updated is False
+    assert correction.apply(odom_pose) == odom_pose
+
+
+def test_correction_keeps_last_value_without_walls():
+    correction = WallCorrection()
+    odom_pose = (*CENTER_M, 0.0)
+    true_pose = (CENTER_M[0] + 0.2, CENTER_M[1], 0.0)
+    correction.update(simulate_scan(arena(), true_pose), odom_pose, 0.0)
+
+    empty = SimpleNamespace(
+        angle_min=-math.pi,
+        angle_increment=2.0 * math.pi / 360,
+        range_min=0.05,
+        range_max=12.0,
+        ranges=[float('inf')] * 360,
+    )
+    assert correction.update(empty, odom_pose, 0.0) is False
+
+    x, _, _ = correction.apply(odom_pose)
+    assert x == pytest.approx(true_pose[0], abs=TOLERANCE_M)
+
+
+def test_pushed_during_hold_triggers_retreat_only_with_correction():
+    # 중앙에서 확보 중에 +x 쪽 노란 선 근처(x = 3.1)까지 밀렸다.
+    # odom만 믿으면 아직 중앙에 있다고 생각해서 그대로 있는다.
+    odom_pose = (*CENTER_M, 0.0)
+    true_pose = (3.1, CENTER_M[1], 0.0)
+    scan = simulate_scan(arena(), true_pose)
+
+    without = Mission2Logic()
+    without.state = HOLD
+    without.state_started_at = 0.0
+    without.gripper_opened = True
+    without.step(Observation(*odom_pose, now=0.0, holding=True))
+    assert without.state == HOLD
+
+    correction = WallCorrection()
+    correction.update(scan, odom_pose, 0.0)
+    with_correction = Mission2Logic()
+    with_correction.state = HOLD
+    with_correction.state_started_at = 0.0
+    with_correction.gripper_opened = True
+    with_correction.step(
+        Observation(*correction.apply(odom_pose), now=0.0, holding=True)
+    )
+    assert with_correction.state == RETREAT
+
+
+def test_empty_arena_scan_matches_ray_marching():
+    # fake_robot용 빠른 계산이 광선 따라가기와 같은 값을 내야 한다.
+    for pose in [START_POSE, (*CENTER_M, 0.7), (0.5, 3.0, -2.5)]:
+        fast = simulate_empty_arena_scan(pose)
+        slow = simulate_scan(arena(), pose)
+
+        assert fast.angle_min == slow.angle_min
+        assert fast.angle_increment == slow.angle_increment
+        for a, b in zip(fast.ranges, slow.ranges):
+            assert a == pytest.approx(b, abs=0.01)

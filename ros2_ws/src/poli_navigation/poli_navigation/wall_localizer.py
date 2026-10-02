@@ -43,6 +43,11 @@ WALL_PAIR_TOLERANCE_M = 0.1
 # (스캔은 0.1초마다 오므로 그 사이에 이만큼 밀리기는 어렵다)
 MAX_CORRECTION_M = 0.3
 
+# 로봇이 이보다 빨리 돌고 있으면 스캔으로 위치를 보정하지 않는다. (rad/s)
+# 스캔 한 바퀴(0.1초) 동안 방향이 바뀌어 벽이 휘어 보이기 때문이다.
+# TODO_MEASURE: RPLIDAR C1 회전 주기와 실제 회전 속도를 보고 조정
+MAX_ANGULAR_SPEED_FOR_SCAN = 0.3
+
 PLUS_X = '+x'
 MINUS_X = '-x'
 PLUS_Y = '+y'
@@ -155,3 +160,39 @@ def estimate_position(scan, guess_pose):
     x = None if laser_x is None else laser_x - offset_x
     y = None if laser_y is None else laser_y - offset_y
     return x, y
+
+
+class WallCorrection:
+    """
+    Odom 위치에 벽으로 잰 위치와의 차이(보정값)를 더해서 쓴다.
+
+    밀려서 odom이 틀어지면 스캔이 올 때마다 보정값이 바뀌어 따라잡는다.
+    스캔이 오지 않거나 벽을 못 찾으면 마지막 보정값을 그대로 쓴다.
+    """
+
+    def __init__(self):
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+
+    def apply(self, odom_pose):
+        """Odom으로 계산한 경기장 좌표 -> 보정한 경기장 좌표."""
+        x, y, yaw = odom_pose
+        return x + self.offset_x, y + self.offset_y, yaw
+
+    def update(self, scan, odom_pose, angular_speed):
+        """
+        스캔으로 보정값을 갱신한다. 한 축이라도 갱신했으면 True.
+
+        빨리 도는 중에 찍힌 스캔은 벽이 휘어 보이므로 쓰지 않는다.
+        """
+        if abs(angular_speed) > MAX_ANGULAR_SPEED_FOR_SCAN:
+            return False
+
+        odom_x, odom_y, _ = odom_pose
+        x, y = estimate_position(scan, self.apply(odom_pose))
+
+        if x is not None:
+            self.offset_x = x - odom_x
+        if y is not None:
+            self.offset_y = y - odom_y
+        return x is not None or y is not None

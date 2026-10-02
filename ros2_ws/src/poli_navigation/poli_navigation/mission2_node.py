@@ -9,9 +9,11 @@ from poli_navigation.mission2_logic import (
     Observation,
     START_POSE,
 )
+from poli_navigation.wall_localizer import WallCorrection
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 
 
@@ -50,7 +52,12 @@ class Mission2Node(Node):
         super().__init__('mission2')
 
         self.logic = Mission2Logic()
-        self.pose = None
+        # odom으로 계산한 위치와 회전 속도. 밀리면 실제 위치와 달라진다.
+        self.odom_pose = None
+        self.angular_speed = 0.0
+        # 외벽까지 거리(LiDAR)로 odom 위치를 보정한다. (wall_localizer.py)
+        self.wall_correction = WallCorrection()
+        self.wall_corrected = False
         self.holding = None
         self.vision = None
         self.vision_received_at = None
@@ -63,6 +70,7 @@ class Mission2Node(Node):
 
         # TODO: 실제 로봇에서는 /odometry/filtered (엔코더 + IMU) 사용 검토
         self.create_subscription(Odometry, '/odom_raw', self.odom_callback, 10)
+        self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.create_subscription(
             Bool, '/gripper/holding', self.holding_callback, 10
         )
@@ -78,7 +86,19 @@ class Mission2Node(Node):
     def odom_callback(self, msg):
         position = msg.pose.pose.position
         yaw = yaw_from_quaternion(msg.pose.pose.orientation)
-        self.pose = odom_to_arena(position.x, position.y, yaw)
+        self.odom_pose = odom_to_arena(position.x, position.y, yaw)
+        self.angular_speed = msg.twist.twist.angular.z
+
+    def scan_callback(self, msg):
+        if self.odom_pose is None:
+            return
+
+        corrected = self.wall_correction.update(
+            msg, self.odom_pose, self.angular_speed
+        )
+        if corrected and not self.wall_corrected:
+            self.get_logger().info('Wall correction active')
+            self.wall_corrected = True
 
     def holding_callback(self, msg):
         self.holding = msg.data
@@ -99,11 +119,11 @@ class Mission2Node(Node):
         return self.vision
 
     def control_step(self):
-        if self.pose is None:
+        if self.odom_pose is None:
             # 위치를 아직 모르면 움직이지 않는다.
             return
 
-        x, y, yaw = self.pose
+        x, y, yaw = self.wall_correction.apply(self.odom_pose)
         now = self.now_seconds()
 
         observation = Observation(
