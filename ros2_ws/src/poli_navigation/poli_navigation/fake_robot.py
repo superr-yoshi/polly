@@ -39,9 +39,9 @@ SIM_ONLY_BASE_FRAME_ID = 'base_link'
 SIM_ONLY_PUBLISH_PERIOD = 0.05
 
 # SIM_ONLY: "grab"을 받고 잡았다고 알릴 때까지 걸리는 시간 (초)
-# mission2_logic.GRASP_WAIT_S(1.0초)보다 짧아야 GRASP -> HOLD로 넘어간다.
-# 실제 집게 시간이 아니다. (TODO_MEASURE)
-SIM_ONLY_GRAB_TIME = 0.5
+# 조원 A 집게가 완전히 닫히는 시간(약 1.2초)에 맞춘다.
+# GRASP_WAIT_S(1.5초)보다 짧아야 GRASP -> HOLD로 넘어간다.
+SIM_ONLY_GRAB_TIME = 1.2
 
 # SIM_ONLY: 대상이 이 거리 안에 있을 때 "grab"을 받아야 잡는 데 성공한다 (m)
 SIM_ONLY_GRAB_REACH_M = 0.3
@@ -196,6 +196,10 @@ class FakeRobot(Node):
 
     def gripper_callback(self, msg):
         if msg.data == GRIPPER_GRAB:
+            if self.grab_started_at is not None:
+                # 이미 닫는 중이거나 닫혀 있다. (임무 노드가 명령을 다시 보냄)
+                # Mega도 같은 명령은 목표 각도만 다시 정하므로 아무 일도 없다.
+                return
             x, y = self.true_xy()
             distance = math.hypot(self.target[0] - x, self.target[1] - y)
             if distance > SIM_ONLY_GRAB_REACH_M:
@@ -207,6 +211,8 @@ class FakeRobot(Node):
                 return
             self.grab_started_at = self.now_seconds()
         elif msg.data == GRIPPER_OPEN:
+            if self.grab_started_at is None:
+                return
             self.grab_started_at = None
         else:
             self.get_logger().warn(f'Unknown gripper command: {msg.data}')

@@ -52,8 +52,9 @@ ALIGN_TOLERANCE = 0.1
 # TODO_MEASURE: 이 크기 이상으로 보이면 집을 수 있는 거리로 판단 (카메라 픽셀 면적)
 GRAB_AREA = 15000.0
 
-# TODO_MEASURE: 집게가 닫히는 데 걸리는 시간
-GRASP_WAIT_S = 1.0
+# 집게가 닫히는 데 걸리는 시간 (조원 A: 약 1.2초, 서보 40->120도, 1도/15ms)
+# TODO_MEASURE: 서보 각도가 실측 후 바뀌면 다시 확인
+GRASP_WAIT_S = 1.5
 
 GRIPPER_OPEN = 'open'
 GRIPPER_GRAB = 'grab'

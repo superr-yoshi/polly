@@ -69,7 +69,8 @@ def test_open_gripper_is_not_holding():
 
 def test_grab_takes_time():
     assert is_holding(10.0, 10.0 + SIM_ONLY_GRAB_TIME / 2) is False
-    assert is_holding(10.0, 10.0 + SIM_ONLY_GRAB_TIME) is True
+    # 1e-6: 10.0 + 1.2 - 10.0이 1.2보다 조금 작게 계산되는 오차
+    assert is_holding(10.0, 10.0 + SIM_ONLY_GRAB_TIME + 1e-6) is True
 
 
 def test_grab_finishes_before_mission2_checks():

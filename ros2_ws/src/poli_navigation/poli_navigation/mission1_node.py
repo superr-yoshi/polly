@@ -26,6 +26,11 @@ CONTROL_PERIOD = 0.05
 # TODO_MEASURE: RPLIDAR C1 실제 전송 주기 (보통 10Hz)
 SCAN_TIMEOUT = 0.2
 
+# 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
+# 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
+# Mega는 같은 명령을 다시 받아도 목표 각도만 다시 정하므로 안전하다.
+GRIPPER_RESEND_PERIOD = 1.0
+
 
 class Mission1Node(Node):
 
@@ -47,6 +52,8 @@ class Mission1Node(Node):
         self.gripper_publisher = self.create_publisher(
             String, '/gripper/command', 10
         )
+        self.gripper_command = None
+        self.create_timer(GRIPPER_RESEND_PERIOD, self.resend_gripper)
 
         # TODO: 실제 로봇에서는 /odometry/filtered (엔코더 + IMU) 사용 검토
         self.create_subscription(Odometry, '/odom_raw', self.odom_callback, 10)
@@ -125,8 +132,7 @@ class Mission1Node(Node):
         self.cmd_vel_publisher.publish(twist)
 
         if command.gripper is not None:
-            self.gripper_publisher.publish(String(data=command.gripper))
-            self.get_logger().info(f'Gripper: {command.gripper}')
+            self.send_gripper(command.gripper)
 
         if self.logic.phase != self.last_phase:
             self.get_logger().info(f'Phase: {self.logic.phase}')
@@ -139,6 +145,15 @@ class Mission1Node(Node):
         if self.logic.path != self.last_path:
             self.get_logger().info(f'Path: {self.logic.path}')
             self.last_path = self.logic.path
+
+    def send_gripper(self, command):
+        self.gripper_command = command
+        self.gripper_publisher.publish(String(data=command))
+        self.get_logger().info(f'Gripper: {command}')
+
+    def resend_gripper(self):
+        if self.gripper_command is not None:
+            self.gripper_publisher.publish(String(data=self.gripper_command))
 
     def stop(self):
         self.cmd_vel_publisher.publish(Twist())

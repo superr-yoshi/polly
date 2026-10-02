@@ -70,9 +70,10 @@ ALIGN_TOLERANCE = 0.1
 # TODO_MEASURE: 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리
 GRAB_AREA = 15000.0
 
-# TODO_MEASURE: 집게가 닫히는 시간, 열리는 시간
-GRASP_WAIT_S = 1.0
-RELEASE_WAIT_S = 1.0
+# 집게가 닫히는 시간, 열리는 시간 (조원 A: 약 1.2초, 서보 40<->120도, 1도/15ms)
+# TODO_MEASURE: 서보 각도가 실측 후 바뀌면 다시 확인
+GRASP_WAIT_S = 1.5
+RELEASE_WAIT_S = 1.5
 
 # 갈 길이 없을 때 다시 스캔하기 전까지 기다리는 시간
 STUCK_RETRY_S = 1.0
