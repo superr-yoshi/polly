@@ -4,9 +4,14 @@ from poli_navigation.fake_robot import (
     arena_to_odom,
     integrate_pose,
     is_holding,
+    odom_to_arena_pose,
+    SIM_ONLY_DRAG_OFFSET_M,
     SIM_ONLY_GRAB_REACH_M,
     SIM_ONLY_GRAB_TIME,
+    sim_world_grid,
 )
+from poli_navigation.grid_map import RULE_EXAMPLE_BLOCKED
+from poli_navigation.mission1_logic import GRIPPER_REACH_M
 from poli_navigation.mission2_logic import (
     CENTER_M,
     GRAB_AREA,
@@ -14,6 +19,7 @@ from poli_navigation.mission2_logic import (
     START_POSE,
 )
 from poli_navigation.mission2_node import odom_to_arena
+from poli_navigation.scan_to_grid import START_POSE as MISSION1_START_POSE
 from poli_navigation.sim_world import sim_camera, SIM_ONLY_AREA_SCALE
 import pytest
 
@@ -112,3 +118,24 @@ def test_grab_area_is_within_grab_reach():
     grab_distance = math.sqrt(SIM_ONLY_AREA_SCALE / GRAB_AREA)
 
     assert grab_distance < SIM_ONLY_GRAB_REACH_M
+
+
+def test_mission1_start_pose_round_trip():
+    # 임무 1 출발 위치 기준으로 바꿨다가 되돌리면 같은 위치
+    x, y = arena_to_odom(1.8, 1.8, MISSION1_START_POSE)
+    arena_x, arena_y, arena_yaw = odom_to_arena_pose(
+        x, y, 0.0, MISSION1_START_POSE
+    )
+
+    assert (arena_x, arena_y) == pytest.approx((1.8, 1.8))
+    assert arena_yaw == pytest.approx(MISSION1_START_POSE[2])
+
+
+def test_mission1_world_has_obstacles_mission2_does_not():
+    assert not sim_world_grid(1).is_passable(RULE_EXAMPLE_BLOCKED[0])
+    assert sim_world_grid(2).is_passable(RULE_EXAMPLE_BLOCKED[0])
+
+
+def test_drag_offset_matches_mission1_release_point():
+    # mission1은 큐브가 GRIPPER_REACH_M 앞에 있다고 보고 놓을 위치를 정한다.
+    assert SIM_ONLY_DRAG_OFFSET_M == pytest.approx(GRIPPER_REACH_M)

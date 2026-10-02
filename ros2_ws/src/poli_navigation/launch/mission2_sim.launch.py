@@ -12,7 +12,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     return LaunchDescription([
         # SIM_ONLY: /cmd_vel, /gripper/command를 받아
-        # /odom_raw, /gripper/holding, /vision/target을 보낸다.
+        # /odom_raw, /scan, /gripper/holding, /vision/target을 보낸다.
         Node(
             package='poli_navigation',
             executable='fake_robot',
