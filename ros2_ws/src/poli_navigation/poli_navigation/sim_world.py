@@ -10,7 +10,7 @@ import math
 from types import SimpleNamespace
 
 from poli_navigation.grid_map import BLOCKED
-from poli_navigation.scan_to_grid import point_to_cell
+from poli_navigation.scan_to_grid import ARENA_SIZE_M, point_to_cell
 
 
 # SIM_ONLY: 가짜 LiDAR
@@ -49,6 +49,41 @@ def simulate_scan(true_grid, pose):
                 break
 
         ranges.append(distance)
+
+    return SimpleNamespace(
+        angle_min=angle_min,
+        angle_increment=increment,
+        range_min=SIM_ONLY_RANGE_MIN,
+        range_max=SIM_ONLY_RANGE_MAX,
+        ranges=ranges,
+    )
+
+
+def simulate_empty_arena_scan(pose):
+    """
+    장애물 없는 경기장에서 외벽까지 거리로 가짜 LaserScan을 만든다.
+
+    simulate_scan과 같은 형식이지만 광선을 한 걸음씩 따라가지 않고
+    벽까지 거리를 바로 계산하므로 훨씬 빠르다. (임무 2 fake_robot용)
+    """
+    x0, y0, yaw = pose
+    increment = 2.0 * math.pi / SIM_ONLY_NUM_RAYS
+    angle_min = -math.pi + increment / 2.0
+    ranges = []
+
+    for i in range(SIM_ONLY_NUM_RAYS):
+        angle = yaw + angle_min + i * increment
+        dx, dy = math.cos(angle), math.sin(angle)
+        distances = []
+        if dx > 0.0:
+            distances.append((ARENA_SIZE_M - x0) / dx)
+        elif dx < 0.0:
+            distances.append(-x0 / dx)
+        if dy > 0.0:
+            distances.append((ARENA_SIZE_M - y0) / dy)
+        elif dy < 0.0:
+            distances.append(-y0 / dy)
+        ranges.append(max(0.0, min(distances)))
 
     return SimpleNamespace(
         angle_min=angle_min,

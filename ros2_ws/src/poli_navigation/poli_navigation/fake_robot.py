@@ -1,6 +1,6 @@
 import math
 
-from geometry_msgs.msg import TransformStamped, Twist
+from geometry_msgs.msg import TransformStamped, Twist, Vector3
 from nav_msgs.msg import Odometry
 from poli_interfaces.msg import TargetDetection
 from poli_navigation.grid_map import GridMap, RULE_EXAMPLE_BLOCKED
@@ -11,7 +11,11 @@ from poli_navigation.mission2_logic import (
     START_POSE,
 )
 from poli_navigation.scan_to_grid import START_POSE as MISSION1_START_POSE
-from poli_navigation.sim_world import sim_camera, simulate_scan
+from poli_navigation.sim_world import (
+    sim_camera,
+    simulate_empty_arena_scan,
+    simulate_scan,
+)
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -24,9 +28,11 @@ from tf2_ros import TransformBroadcaster
 # 바퀴 미끄러짐, 가속 시간 등은 없다. 실제 /odom_raw는 조원 A가 제공한다.
 # 집게도 흉내 낸다: /gripper/command를 받아 /gripper/holding을 보낸다.
 # 카메라도 흉내 낸다: 경기장 중앙의 빨간 대상을 보고 /vision/target을 보낸다.
-# LiDAR도 흉내 낸다: 임무 1에서만 외벽과 장애물까지 거리를 /scan으로 보낸다.
-# (광선 계산이 무거워 다른 타이머를 늦추므로, 쓰지 않는 임무 2에서는 끈다)
+# LiDAR도 흉내 낸다: 외벽(임무 1은 장애물도)까지 거리를 /scan으로 보낸다.
 # 파라미터 mission(1 또는 2)으로 출발 위치와 경기장을 고른다.
+# 밀림도 흉내 낸다: /sim/push(경기장 좌표 dx, dy m)를 받으면 실제 위치만
+# 옮기고 odom은 그대로 둔다. (바퀴가 돌지 않고 밀린 경우)
+#   예: ros2 topic pub --once /sim/push geometry_msgs/msg/Vector3 "{x: 0.5}"
 # fake_odom과 같은 토픽을 보내므로 동시에 실행하지 않는다.
 SIM_ONLY_ODOM_FRAME_ID = 'odom'
 SIM_ONLY_BASE_FRAME_ID = 'base_link'
@@ -76,6 +82,14 @@ def arena_to_odom(x, y, start_pose=START_POSE):
     )
 
 
+def arena_vector_to_odom(dx, dy, start_pose=START_POSE):
+    """경기장 좌표의 이동량 -> odom 좌표의 이동량 (방향만 바꾼다)."""
+    start_yaw = start_pose[2]
+    cos_s = math.cos(start_yaw)
+    sin_s = math.sin(start_yaw)
+    return dx * cos_s + dy * sin_s, -dx * sin_s + dy * cos_s
+
+
 def odom_to_arena_pose(x, y, yaw, start_pose):
     """Odom 좌표 -> 경기장 좌표 (arena_to_odom의 반대, 방향 포함)."""
     start_x, start_y, start_yaw = start_pose
@@ -113,6 +127,9 @@ class FakeRobot(Node):
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
+        # SIM_ONLY: 밀려서 생긴 odom과 실제 위치의 차이 (odom 좌표)
+        self.push_x = 0.0
+        self.push_y = 0.0
         self.linear = 0.0
         self.angular = 0.0
         self.grab_started_at = None
@@ -143,11 +160,10 @@ class FakeRobot(Node):
             TargetDetection, '/vision/target', 10
         )
 
-        if self.mission == 1:
-            self.scan_publisher = self.create_publisher(
-                LaserScan, '/scan', 10
-            )
-            self.create_timer(SIM_ONLY_SCAN_PERIOD, self.publish_scan)
+        self.scan_publisher = self.create_publisher(LaserScan, '/scan', 10)
+        self.create_timer(SIM_ONLY_SCAN_PERIOD, self.publish_scan)
+
+        self.create_subscription(Vector3, '/sim/push', self.push_callback, 10)
 
         # SIM_ONLY: 실제 로봇에서는 odom -> base_link TF를
         # robot_localization이 보낸다. 이 노드와 동시에 실행하지 않는다.
@@ -166,11 +182,22 @@ class FakeRobot(Node):
         self.linear = msg.linear.x
         self.angular = msg.angular.z
 
+    def push_callback(self, msg):
+        push_x, push_y = arena_vector_to_odom(msg.x, msg.y, self.start_pose)
+        self.push_x += push_x
+        self.push_y += push_y
+        self.get_logger().info(
+            f'Pushed ({msg.x:.2f}, {msg.y:.2f}) m, odom does not know'
+        )
+
+    def true_xy(self):
+        """밀린 것까지 포함한 실제 위치 (odom 좌표)."""
+        return self.x + self.push_x, self.y + self.push_y
+
     def gripper_callback(self, msg):
         if msg.data == GRIPPER_GRAB:
-            distance = math.hypot(
-                self.target[0] - self.x, self.target[1] - self.y
-            )
+            x, y = self.true_xy()
+            distance = math.hypot(self.target[0] - x, self.target[1] - y)
             if distance > SIM_ONLY_GRAB_REACH_M:
                 # 집게는 닫히지만 잡은 것이 없다.
                 self.grab_started_at = None
@@ -201,22 +228,28 @@ class FakeRobot(Node):
         holding = is_holding(self.grab_started_at, self.now_seconds())
         self.holding_publisher.publish(Bool(data=holding))
 
+        x, y = self.true_xy()
         if holding:
             self.target = (
-                self.x + SIM_ONLY_DRAG_OFFSET_M * math.cos(self.yaw),
-                self.y + SIM_ONLY_DRAG_OFFSET_M * math.sin(self.yaw),
+                x + SIM_ONLY_DRAG_OFFSET_M * math.cos(self.yaw),
+                y + SIM_ONLY_DRAG_OFFSET_M * math.sin(self.yaw),
             )
 
         detected, x_offset, area = sim_camera(
-            self.x, self.y, self.yaw, self.target
+            x, y, self.yaw, self.target
         )
         self.vision_publisher.publish(
             TargetDetection(detected=detected, x_offset=x_offset, area=area)
         )
 
     def publish_scan(self):
-        pose = odom_to_arena_pose(self.x, self.y, self.yaw, self.start_pose)
-        scan = simulate_scan(self.true_grid, pose)
+        pose = odom_to_arena_pose(*self.true_xy(), self.yaw, self.start_pose)
+        if self.mission == 1:
+            scan = simulate_scan(self.true_grid, pose)
+        else:
+            # 임무 2는 장애물이 없으므로 빠른 계산을 쓴다.
+            # (광선 계산은 무거워서 odom, 집게 타이머를 늦춘다)
+            scan = simulate_empty_arena_scan(pose)
 
         msg = LaserScan()
         msg.header.stamp = self.get_clock().now().to_msg()

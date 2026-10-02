@@ -2,6 +2,7 @@ import math
 
 from poli_navigation.fake_robot import (
     arena_to_odom,
+    arena_vector_to_odom,
     integrate_pose,
     is_holding,
     odom_to_arena_pose,
@@ -139,3 +140,20 @@ def test_mission1_world_has_obstacles_mission2_does_not():
 def test_drag_offset_matches_mission1_release_point():
     # mission1은 큐브가 GRIPPER_REACH_M 앞에 있다고 보고 놓을 위치를 정한다.
     assert SIM_ONLY_DRAG_OFFSET_M == pytest.approx(GRIPPER_REACH_M)
+
+
+def test_push_vector_in_mission2_odom():
+    # 임무 2 출발 시 정면이 경기장 +y. 경기장 +x(오른쪽)로 밀리면 odom -y.
+    dx, dy = arena_vector_to_odom(0.5, 0.0)
+
+    assert dx == pytest.approx(0.0)
+    assert dy == pytest.approx(-0.5)
+
+
+def test_push_vector_matches_arena_to_odom_difference():
+    x0, y0 = arena_to_odom(1.0, 1.0, MISSION1_START_POSE)
+    x1, y1 = arena_to_odom(1.3, 0.8, MISSION1_START_POSE)
+
+    dx, dy = arena_vector_to_odom(0.3, -0.2, MISSION1_START_POSE)
+
+    assert (dx, dy) == pytest.approx((x1 - x0, y1 - y0))
