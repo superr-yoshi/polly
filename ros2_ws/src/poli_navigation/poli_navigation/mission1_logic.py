@@ -283,7 +283,8 @@ class Mission1Logic:
         return Command(linear=linear, angular=angular)
 
     def _stuck(self, obs):
-        # TODO: 상대 로봇을 장애물로 잘못 표시하면 지도에서 지워지지 않아 계속 막힌다.
+        # 상대 로봇이 길을 막고 있을 수 있다. 기다렸다가 다시 스캔한다.
+        # (상대가 떠났으면 update_grid_from_scan이 지도에서 지운다)
         if obs.now - self.state_started_at < STUCK_RETRY_S:
             return Command()
 

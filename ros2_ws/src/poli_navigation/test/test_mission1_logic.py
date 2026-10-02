@@ -1,7 +1,9 @@
 import math
 
 from poli_navigation.grid_map import (
+    BLOCKED,
     cell_center_m,
+    FREE,
     GridMap,
     MISSION1_START,
     RULE_EXAMPLE_BLOCKED,
@@ -24,6 +26,7 @@ from poli_navigation.mission1_logic import (
     RETURN,
     SCAN,
     SEARCH,
+    STUCK,
 )
 from poli_navigation.scan_to_grid import point_to_cell, START_POSE
 from poli_navigation.sim_world import sim_camera, simulate_scan
@@ -66,6 +69,10 @@ class SimRobot:
             self._scan_pose = pose
             self._scan = simulate_scan(self.true_grid, (self.x, self.y, self.yaw))
         return self._scan
+
+    def forget_scan(self):
+        # 경기장이 바뀌면 (상대 로봇이 움직임) 지난 스캔을 다시 쓰지 않는다.
+        self._scan_pose = None
 
     def observe(self, with_scan=True):
         detected, x_offset, area = sim_camera(
@@ -247,6 +254,28 @@ def test_dropped_while_returning_grabs_again():
 
     run(logic, robot, until=DONE)
     assert logic.state == DONE
+    assert distance_to_start(robot.cube) < 0.1
+
+
+def test_opponent_blocking_exit_then_leaving():
+    # 규정 예시 배치에서 출발 구역의 유일한 출구는 (9, 4)다.
+    # 상대 로봇이 거기 서 있으면 장애물로 보이고 갈 길이 없다.
+    true_grid = example_grid()
+    true_grid.cells[(9, 4)] = BLOCKED
+    logic = Mission1Logic()
+    robot = SimRobot(true_grid)
+
+    run(logic, robot, max_seconds=5.0, until=STUCK)
+    assert logic.state == STUCK
+    assert logic.grid.get((9, 4)) == BLOCKED
+
+    # 상대가 떠나면 다시 스캔할 때 지도에서 지우고 출발한다.
+    true_grid.cells[(9, 4)] = FREE
+    robot.forget_scan()
+    run(logic, robot, until=DONE)
+
+    assert logic.state == DONE
+    assert logic.grid.get((9, 4)) != BLOCKED
     assert distance_to_start(robot.cube) < 0.1
 
 

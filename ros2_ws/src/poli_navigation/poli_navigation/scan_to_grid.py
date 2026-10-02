@@ -45,6 +45,14 @@ MIN_HITS_PER_CELL = 2
 FREE_STEP_M = 0.1
 FREE_STOP_BEFORE_HIT_M = 0.1
 
+# 막힘으로 표시된 격자를 광선 여러 개가 뚫고 지나가면 장애물이 없는 것이다.
+# (상대 로봇을 장애물로 잘못 표시한 경우. 상대가 떠나면 지도에서 지운다.)
+# 격자 가장자리에서 CORE_MARGIN_M 안쪽을 지나간 광선만 센다.
+# 위치 오차로 장애물 면을 스치는 광선을 잘못 세지 않기 위해서다.
+# TODO_MEASURE: 실제 위치 오차를 보고 조정
+CORE_MARGIN_M = 0.1
+MIN_SEE_THROUGH_RAYS = 3
+
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
     """Odom 좌표(출발 지점 기준, x = 출발 시 정면) -> 경기장 좌표."""
@@ -102,6 +110,26 @@ def scan_to_cells(scan, robot_pose):
     robot_pose: 경기장 좌표 (x, y, yaw)
     반환: (blocked_cells, free_cells) 두 개의 set
     """
+    blocked_cells, free_cells, _ = _trace_scan(scan, robot_pose)
+    return blocked_cells, free_cells
+
+
+def is_in_cell_core(x, y):
+    """격자 가장자리에서 CORE_MARGIN_M보다 안쪽인지."""
+    in_x = x % CELL_SIZE_M
+    in_y = y % CELL_SIZE_M
+    return (
+        CORE_MARGIN_M <= in_x <= CELL_SIZE_M - CORE_MARGIN_M
+        and CORE_MARGIN_M <= in_y <= CELL_SIZE_M - CORE_MARGIN_M
+    )
+
+
+def _trace_scan(scan, robot_pose):
+    """
+    스캔 광선을 따라가며 막힌 격자, 빈 격자, 격자별 관통 광선 수를 구한다.
+
+    반환: (blocked_cells, free_cells, see_through_counts)
+    """
     robot_x, robot_y, robot_yaw = robot_pose
     cos_r = math.cos(robot_yaw)
     sin_r = math.sin(robot_yaw)
@@ -112,6 +140,7 @@ def scan_to_cells(scan, robot_pose):
 
     hit_counts = {}
     free_cells = set()
+    see_through_counts = {}
 
     for i, distance in enumerate(scan.ranges):
         if not math.isfinite(distance):
@@ -125,11 +154,19 @@ def scan_to_cells(scan, robot_pose):
 
         # 광선이 지나간 곳은 비어 있다.
         step = FREE_STEP_M
+        see_through = set()
         while step < distance - FREE_STOP_BEFORE_HIT_M:
-            cell = point_to_cell(laser_x + dir_x * step, laser_y + dir_y * step)
+            x = laser_x + dir_x * step
+            y = laser_y + dir_y * step
+            cell = point_to_cell(x, y)
             if cell is not None:
                 free_cells.add(cell)
+                if is_in_cell_core(x, y):
+                    see_through.add(cell)
             step += FREE_STEP_M
+
+        for cell in see_through:
+            see_through_counts[cell] = see_through_counts.get(cell, 0) + 1
 
         # 광선이 맞은 곳
         hit_x = laser_x + dir_x * distance
@@ -150,22 +187,31 @@ def scan_to_cells(scan, robot_pose):
     }
     free_cells -= blocked_cells
 
-    return blocked_cells, free_cells
+    return blocked_cells, free_cells, see_through_counts
 
 
 def update_grid_from_scan(grid, scan, robot_pose):
     """
     스캔 결과를 격자 지도에 반영한다.
 
-    이미 막힘으로 표시된 격자는 빈 격자로 바꾸지 않는다.
-    (장애물은 고정되어 있으므로, 한 번 막힘이면 계속 막힘으로 본다.)
-
-    TODO: 상대 로봇도 막힘으로 인식될 수 있다. (움직이는 장애물 처리 필요)
+    막힘으로 표시된 격자는 광선이 가장자리를 스치는 정도로는 바꾸지 않는다.
+    광선 여러 개가 격자 안쪽을 뚫고 지나가면 장애물이 없는 것이므로 지운다.
+    (상대 로봇을 장애물로 잘못 표시했다가 상대가 떠난 경우)
+    지울 때는 점대칭인 격자도 같이 지운다.
     """
-    blocked_cells, free_cells = scan_to_cells(scan, robot_pose)
+    blocked_cells, free_cells, see_through_counts = _trace_scan(
+        scan, robot_pose
+    )
 
     for cell in blocked_cells:
         grid.mark_blocked(cell)
+
+    for cell, count in see_through_counts.items():
+        if count < MIN_SEE_THROUGH_RAYS or grid.get(cell) != BLOCKED:
+            continue
+        if cell in blocked_cells or grid.mirror(cell) in blocked_cells:
+            continue
+        grid.mark_free(cell)
 
     for cell in free_cells:
         if grid.get(cell) != BLOCKED and grid.get(grid.mirror(cell)) != BLOCKED:

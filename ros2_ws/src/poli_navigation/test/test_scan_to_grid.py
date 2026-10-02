@@ -113,7 +113,8 @@ def test_update_grid_uses_symmetry():
     assert grid.get((3, 9)) == BLOCKED
 
 
-def test_update_grid_keeps_blocked_cells():
+def test_update_grid_clears_cell_when_rays_pass_through():
+    # 상대 로봇을 (9, 3)에서 장애물로 봤는데, 지금은 떠나서 광선이 지나간다.
     true_grid = GridMap()
     scan = simulate_scan(true_grid, START_POSE)
     grid = GridMap()
@@ -121,8 +122,33 @@ def test_update_grid_keeps_blocked_cells():
 
     update_grid_from_scan(grid, scan, START_POSE)
 
-    assert grid.get((9, 3)) == BLOCKED
-    assert grid.get((9, 2)) == FREE
+    assert grid.get((9, 3)) == FREE
+    # 점대칭으로 같이 막혔던 격자도 지운다.
+    assert grid.get((1, 7)) == FREE
+
+
+def test_update_grid_keeps_obstacles_with_small_pose_error():
+    # 위치를 5cm, 방향을 3도 틀리게 알고 있어도 진짜 장애물은 지우지 않는다.
+    true_grid = make_true_grid()
+    error_m = 0.05
+    error_rad = math.radians(3.0)
+
+    for cell in [(9, 2), (8, 4), (6, 2), (4, 8), (6, 6)]:
+        x, y = cell_center_m(cell)
+        scan = simulate_scan(true_grid, (x, y, math.pi / 2))
+        for dx, dy, dyaw in [
+            (error_m, error_m, error_rad),
+            (-error_m, error_m, -error_rad),
+            (error_m, -error_m, -error_rad),
+            (-error_m, -error_m, error_rad),
+        ]:
+            grid = make_true_grid()
+            update_grid_from_scan(
+                grid, scan, (x + dx, y + dy, math.pi / 2 + dyaw)
+            )
+
+            lost = [c for c in RULE_EXAMPLE_BLOCKED if grid.get(c) != BLOCKED]
+            assert not lost, f'lost {lost} at {cell} error {dx, dy, dyaw}'
 
 
 def test_hit_near_corner_stays_in_obstacle_cell():
@@ -143,6 +169,7 @@ def explore_to_center(true_grid, max_moves=40):
     grid = GridMap()
     current = MISSION1_START
     trail = [current]
+    found = set()
 
     for _ in range(max_moves):
         pose = (*cell_center_m(current), math.pi / 2)
@@ -153,6 +180,13 @@ def explore_to_center(true_grid, max_moves=40):
             if state == BLOCKED and true_grid.get(cell) != BLOCKED
         ]
         assert not wrong, f'wrongly blocked at {current}: {wrong}'
+
+        # 한 번 찾은 진짜 장애물은 다시 지워지면 안 된다.
+        lost = [cell for cell in found if grid.get(cell) != BLOCKED]
+        assert not lost, f'lost obstacles at {current}: {lost}'
+        found |= {
+            cell for cell, state in grid.cells.items() if state == BLOCKED
+        }
 
         if current == CENTER:
             break
