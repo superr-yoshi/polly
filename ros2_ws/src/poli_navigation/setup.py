@@ -31,6 +31,7 @@ setup(
             'fake_scan = poli_navigation.fake_scan:main',
             'fake_odom = poli_navigation.fake_odom:main',
             'fake_robot = poli_navigation.fake_robot:main',
+            'mission1 = poli_navigation.mission1_node:main',
             'mission2 = poli_navigation.mission2_node:main',
         ],
     },
