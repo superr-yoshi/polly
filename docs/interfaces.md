@@ -72,8 +72,9 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 
 ## 3. 확인 필요 (TODO)
 
-- [ ] 조원 B: `/vision/target` 필드와 `x_offset` 부호(음수 = 왼쪽) 괜찮은지
-- [ ] 조원 B: 보낼 수 있는 주기
+- [x] 조원 B: `/vision/target` 필드와 `x_offset` 부호(음수 = 왼쪽) 괜찮은지 → `camera_vision`이 그대로 구현 (2026-10-05). 실제 카메라 좌우 반전은 실측 필요 (`CAMERA_HFLIP`)
+- [x] 조원 B: 보낼 수 있는 주기 → 20Hz
+- [ ] 조원 B: 집게로 집을 수 있는 거리일 때의 `area` (640×480 기준). 지금 `mission2_logic.GRAB_AREA = 15000`은 임시값
 - [x] 조원 A: `/gripper/command` 값 (`"open"`, `"grab"`) 괜찮은지 → 그대로 사용. 단 grab = 잡기만 (들어 올리지 않음)
 - [ ] 조원 A: 집게가 잡았는지 알 수 있는지 (`/gripper/holding`) → 센서 추가 예정, 지금은 없음
 - [x] 팀: 전용 메시지 패키지 `poli_interfaces` 만들지 → 만들었음 (의견 있으면 알려주세요)
@@ -128,3 +129,16 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
 - mission2는 `"open"`을 시작할 때 한 번만 보냅니다. Mega는 켜질 때 열림 상태라 괜찮지만,
   조원 A 노드가 mission2보다 늦게 켜지면 그 메시지는 받지 못합니다.
 - `docs/mission_strategy.md`의 "잡고 들어 올림" 문구를 위 결정에 맞게 "잡음 (들어 올리지 않음)"으로 고쳤습니다.
+
+## 5. 담당 1 답변 (2026-10-05) — 조원 A 답변 반영
+
+- **4-2 집게 대기:** `mission2_logic.GRASP_WAIT_S`를 1.5초로 늘렸습니다.
+- **4-6 집게 명령:** mission2(임무 1도)는 마지막 집게 명령(`"open"`/`"grab"`)을 **1초마다 다시 보냅니다.**
+  조원 A 노드가 늦게 켜져도 받을 수 있습니다. 같은 명령이 1초마다 들어오니 Mega 쪽에서 문제없는지만 봐 주세요.
+- **4-5 TF:** `scan_to_grid.py`의 `LASER_OFFSET_X/Y_M` 대신 TF(`base_link` → `laser`)를 읽습니다 (`poli_navigation/laser_tf.py`).
+  위치(x, y)와 방향(yaw, URDF `lidar_yaw`)을 모두 씁니다. 실측값은 **URDF에서만** 고치면 됩니다.
+  TF가 없으면(시뮬레이션) 기본값 0을 씁니다.
+- **4-4 통합 launch:** `ros2 launch poli_navigation mission2.launch.py` 추가
+  - 기본(fake): `hardware.launch.py`(fake) + mission2. 토픽·TF 연결 확인용
+  - `use_fake_hardware:=false`: 실제 하드웨어 + LiDAR(`sllidar_ros2`, `/dev/robot_lidar`, 460800) + 카메라(`camera_vision`) + mission2
+  - `mission2_sim.launch.py`(fake_robot)와 동시에 켜지 마세요 (`/odom_raw` 겹침).
