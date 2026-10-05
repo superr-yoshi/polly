@@ -1,0 +1,53 @@
+# POLI 하드웨어 계층 파라미터 (조원 A)
+# TODO_MEASURE = 조립 후 실측 필수, SIM_ONLY = 시뮬레이션용 임시값 (실기에 그대로 쓰지 말 것)
+# 이 파일 변경은 코드 변경과 같은 수준으로 리뷰한다.
+
+# fake_rrc_node / rrc_adapter_node 공통 (주행 계층)
+/**:
+  ros__parameters:
+    wheel_radius: 0.0325       # 65 mm 바퀴 기준. 직선 1~2 m 주행으로 보정 (TODO_MEASURE)
+    wheel_separation: 0.18     # SIM_ONLY: 좌우 바퀴 중심 간 거리 실측 필수 (외형 폭 0.22 쓰지 말 것)
+    max_linear: 0.25           # m/s, 초기 실내 제한 (무부하 이론 최고 약 1.12 m/s)
+    max_angular: 1.0           # rad/s
+    max_wheel_rpm: 330.0       # JGB37-520 정격
+    cmd_timeout: 0.3           # s, /cmd_vel 끊기면 0 속도 (권장 0.2~0.5)
+    odom_rate: 25.0            # Hz
+    imu_rate: 50.0             # Hz
+    odom_frame: odom
+    base_frame: base_link
+    imu_frame: imu_link
+
+rrc_adapter_node:
+  ros__parameters:
+    port: /dev/robot_rrc       # udev 별칭 (docs/udev_template.md)
+    baud: 1000000              # 제조사 펌웨어 USART1 설정 (docs/rrc_protocol.md)
+    motor_type: 1              # 1 = JGB37 (부팅 기본값은 JGA27이라 반드시 설정)
+    motor_ticks_per_rev: 1320.0  # JGB37-520 12V 330RPM = 30:1 x 11PPR x 4. 펌웨어는 1980(45:1) 가정 -> Pi가 비율 보정
+                               # TODO_MEASURE: 10초 1rev/s 명령 -> 바퀴 10바퀴인지 확인 (PPR 12 변형이면 1440)
+    max_motor_rps: 3.0         # 펌웨어 JGB37 제한과 동일. 펌웨어 명령 경로는 제한을 안 걸어서 Pi가 제한
+    left_motor_id: 0           # M1 (0부터 시작)
+    right_motor_id: 1          # M2
+    left_sign: -1.0            # TODO_MEASURE: 제조사 탱크 차체 규칙 기준. 바퀴 띄우고 전진 명령으로 확인
+    right_sign: 1.0            # TODO_MEASURE
+    imu_timeout: 0.5           # s
+
+mega_bridge_node:
+  ros__parameters:
+    port: /dev/robot_mega      # udev 별칭
+    baud: 115200               # docs/serial_protocol.md v1.1
+    open_delay: 2.0            # 포트 열면 Mega 자동 리셋
+    stale_timeout: 1.0         # s, RNG 끊김 경고
+    ack_timeout: 0.5           # s, 집게 명령 응답 대기
+    median_window: 3           # 초음파 중간값 필터 (홀수, 1 = 끔). 튀는 값 제거, 지연 약 0.125 s
+    field_of_view: 0.26        # rad, HC-SR04 약 15도
+    min_range: 0.02
+    max_range: 4.0
+
+fake_mega_node:
+  ros__parameters:
+    fake_range: 2.0            # SIM_ONLY
+    range_rate: 8.0
+    move_time: 1.2             # SIM_ONLY
+    field_of_view: 0.26
+    min_range: 0.02
+    max_range: 4.0
