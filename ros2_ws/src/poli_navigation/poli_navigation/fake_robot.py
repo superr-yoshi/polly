@@ -1,4 +1,5 @@
 import math
+import signal
 
 from geometry_msgs.msg import TransformStamped, Twist, Vector3
 from nav_msgs.msg import Odometry
@@ -314,6 +315,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # Ctrl+C는 터미널과 launch에서 두 번 올 수 있다.
+        # 정리하는 도중에 두 번째 신호로 끊기지 않게 이후 신호는 무시한다.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         node.destroy_node()
 
         if rclpy.ok():

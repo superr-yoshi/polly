@@ -186,6 +186,11 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # Ctrl+C는 터미널과 launch에서 두 번 올 수 있다.
+        # 정리하는 도중에 두 번째 신호로 끊기지 않게 이후 신호는 무시한다.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
         # 종료할 때 로봇을 멈춘다.
         node.stop()
         node.destroy_node()
