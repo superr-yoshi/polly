@@ -3,7 +3,7 @@
 자율 구조 로봇 POLI (Raspberry Pi 5 · RRC Lite · Arduino Mega 2560 · ROS 2 Jazzy)
 
 > AI 코딩 도구(Claude Code, Codex)로 작업할 때는 `AGENTS.md`(= `CLAUDE.md`)를 먼저 읽는다.
-> 부품 사양: `docs/hardware_reference.md` · 팀 토픽 약속: `docs/interfaces.md`
+> 부품 사양: `docs/hardware_reference.md` · 팀 토픽 약속: `docs/interfaces.md` · 부품 도착 후 순서: `docs/bringup_checklist.md`
 
 ## 구조
 | 경로 | 내용 | 담당 |
