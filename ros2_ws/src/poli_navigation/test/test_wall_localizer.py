@@ -12,7 +12,7 @@ from poli_navigation.mission2_logic import (
     RETREAT,
     START_POSE,
 )
-from poli_navigation.scan_to_grid import point_to_cell
+from poli_navigation.scan_to_grid import point_to_cell, set_laser_mount
 from poli_navigation.sim_world import (
     simulate_empty_arena_scan,
     simulate_scan,
@@ -80,6 +80,31 @@ def test_estimate_works_when_robot_is_rotated():
 
     x, y = estimate_position(scan, pose)
 
+    assert x == pytest.approx(1.3, abs=TOLERANCE_M)
+    assert y == pytest.approx(2.1, abs=TOLERANCE_M)
+
+
+@pytest.fixture
+def mounted_laser():
+    """LiDAR가 중심 앞 0.1m, 뒤를 보게(180도) 달렸다. 끝나면 기본값으로 되돌린다."""
+    set_laser_mount(0.1, 0.0, math.pi)
+    yield 0.1, math.pi
+    set_laser_mount(0.0, 0.0, 0.0)
+
+
+def test_estimate_uses_laser_mount(mounted_laser):
+    offset_x, laser_yaw = mounted_laser
+    pose = (1.3, 2.1, math.radians(37.0))
+    laser_pose = (
+        pose[0] + offset_x * math.cos(pose[2]),
+        pose[1] + offset_x * math.sin(pose[2]),
+        pose[2] + laser_yaw,
+    )
+    scan = simulate_scan(arena(), laser_pose)
+
+    x, y = estimate_position(scan, pose)
+
+    # LiDAR 위치가 아니라 로봇 중심을 돌려준다.
     assert x == pytest.approx(1.3, abs=TOLERANCE_M)
     assert y == pytest.approx(2.1, abs=TOLERANCE_M)
 

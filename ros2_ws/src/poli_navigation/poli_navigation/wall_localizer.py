@@ -23,8 +23,9 @@ ROS2와 무관한 순수 Python 모듈이다.
 
 import math
 
+# LiDAR 장착값은 노드가 실행 중에 TF로 바꾸므로 모듈째 가져와서 매번 읽는다.
+from poli_navigation import scan_to_grid
 from poli_navigation.mission2_logic import ARENA_SIZE_M, normalize_angle
-from poli_navigation.scan_to_grid import LASER_OFFSET_X_M, LASER_OFFSET_Y_M
 
 
 # 벽을 찾을 때 쓰는 방향 범위: 벽에 수직인 방향에서 좌우 이 각도까지
@@ -92,7 +93,7 @@ def find_wall_distances(scan, yaw):
         if not scan.range_min <= distance <= scan.range_max:
             continue
 
-        ray_angle = yaw + scan.angle_min + i * scan.angle_increment
+        ray_angle = yaw + scan_to_grid.LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
 
         for axis, axis_angle in AXIS_ANGLES.items():
             diff = normalize_angle(ray_angle - axis_angle)
@@ -145,8 +146,10 @@ def estimate_position(scan, guess_pose):
     sin_r = math.sin(yaw)
 
     # 벽까지 거리는 LiDAR 위치 기준이다.
-    offset_x = LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
-    offset_y = LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    laser_x = scan_to_grid.LASER_OFFSET_X_M
+    laser_y = scan_to_grid.LASER_OFFSET_Y_M
+    offset_x = laser_x * cos_r - laser_y * sin_r
+    offset_y = laser_x * sin_r + laser_y * cos_r
 
     walls = find_wall_distances(scan, yaw)
 

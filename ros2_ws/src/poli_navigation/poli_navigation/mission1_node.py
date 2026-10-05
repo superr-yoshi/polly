@@ -3,6 +3,7 @@ import signal
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from poli_interfaces.msg import TargetDetection
+from poli_navigation.laser_tf import LaserMountFromTf
 from poli_navigation.mission1_logic import Mission1Logic, Observation
 from poli_navigation.mission2_node import (
     raise_keyboard_interrupt,
@@ -64,6 +65,9 @@ class Mission1Node(Node):
         self.create_subscription(
             TargetDetection, '/vision/target', self.vision_callback, 10
         )
+
+        # LiDAR 장착 위치는 TF(base_link -> laser)에서 읽는다. (laser_tf.py)
+        self.laser_mount = LaserMountFromTf(self)
 
         self.create_timer(CONTROL_PERIOD, self.control_step)
 

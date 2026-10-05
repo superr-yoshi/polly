@@ -4,6 +4,7 @@ import signal
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from poli_interfaces.msg import TargetDetection
+from poli_navigation.laser_tf import LaserMountFromTf, yaw_from_quaternion
 from poli_navigation.mission2_logic import (
     Mission2Logic,
     Observation,
@@ -29,13 +30,6 @@ VISION_TIMEOUT = 0.5
 # 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
 # Mega는 같은 명령을 다시 받아도 목표 각도만 다시 정하므로 안전하다.
 GRIPPER_RESEND_PERIOD = 1.0
-
-
-def yaw_from_quaternion(q):
-    return math.atan2(
-        2.0 * (q.w * q.z + q.x * q.y),
-        1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-    )
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
@@ -85,6 +79,9 @@ class Mission2Node(Node):
         self.create_subscription(
             TargetDetection, '/vision/target', self.vision_callback, 10
         )
+
+        # LiDAR 장착 위치는 TF(base_link -> laser)에서 읽는다. (laser_tf.py)
+        self.laser_mount = LaserMountFromTf(self)
 
         self.create_timer(CONTROL_PERIOD, self.control_step)
 

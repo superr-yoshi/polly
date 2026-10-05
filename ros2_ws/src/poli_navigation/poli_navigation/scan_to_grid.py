@@ -27,9 +27,13 @@ ARENA_SIZE_M = GRID_SIZE * CELL_SIZE_M
 # TODO_MEASURE: 실제로 로봇이 출발 격자 중심에 정확히 놓이는지 확인
 START_POSE = (*cell_center_m(MISSION1_START), math.pi / 2)
 
-# TODO_MEASURE: 로봇 중심(base_link) 기준 LiDAR 장착 위치. 현재 중심에 있다고 가정.
+# 로봇 중심(base_link) 기준 LiDAR 장착 위치와 방향.
+# 임무 노드가 켜지면 TF(base_link -> laser, poli_description URDF)에서 읽어
+# set_laser_mount()로 바꾼다. TF가 없을 때(시뮬레이션)는 아래 기본값을 쓴다.
+# 실측값은 URDF(lidar_x, lidar_y, lidar_yaw) 한 곳에서만 고친다.
 LASER_OFFSET_X_M = 0.0
 LASER_OFFSET_Y_M = 0.0
+LASER_YAW_RAD = 0.0
 
 # 외벽에서 이 거리 안쪽의 점은 벽으로 보고 무시한다. (TODO: 실측 후 조정)
 WALL_MARGIN_M = 0.05
@@ -114,6 +118,14 @@ def scan_to_cells(scan, robot_pose):
     return blocked_cells, free_cells
 
 
+def set_laser_mount(offset_x, offset_y, yaw):
+    """로봇 기준 LiDAR 장착 위치(m)와 방향(rad)을 바꾼다. wall_localizer.py도 이 값을 쓴다."""
+    global LASER_OFFSET_X_M, LASER_OFFSET_Y_M, LASER_YAW_RAD
+    LASER_OFFSET_X_M = offset_x
+    LASER_OFFSET_Y_M = offset_y
+    LASER_YAW_RAD = yaw
+
+
 def is_in_cell_core(x, y):
     """격자 가장자리에서 CORE_MARGIN_M보다 안쪽인지."""
     in_x = x % CELL_SIZE_M
@@ -148,7 +160,7 @@ def _trace_scan(scan, robot_pose):
         if not scan.range_min <= distance <= scan.range_max:
             continue
 
-        ray_angle = robot_yaw + scan.angle_min + i * scan.angle_increment
+        ray_angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
         dir_x = math.cos(ray_angle)
         dir_y = math.sin(ray_angle)
 
