@@ -25,6 +25,7 @@
 5. 바퀴 1회전 속도 확인: `ros2 run poli_hardware drive_test wheel --revs 10` → 센 바퀴 수 입력
    → `motor_ticks_per_rev` 계산값 반영.
 6. IMU 축 확인: 정지 시 az ≈ +9.8, 좌회전 시 gz > 0. 다르면 URDF의 imu_link 회전으로 맞춘다.
+   → 2026-10-06 보드 단독으로 확인 완료 (아래 기록). 로봇에 장착한 뒤 보드 방향이 바뀌면 다시 확인한다.
 7. `drive_test straight --distance 1.0`, `drive_test rotate --angle 360`으로 `wheel_radius`,
    `wheel_separation` 보정 → `docs/calibration.md`에 날짜와 기록.
 
@@ -41,6 +42,7 @@
 | 2026-10-06 | IMU 정지 상태 | 가속도 z = +10.06 m/s² (위쪽 +, ROS 축과 일치). 자이로 정지 오차 약 1~2 °/s |
 
 | 2026-10-06 | 입력 전압 (서플라이 12.0 V) | 11.98 V 보고 → `/battery_state` 정상 |
+| 2026-10-06 | IMU 회전 방향 (보드를 손에 들고 위에서 봤을 때 반시계 90° → 정지 → 시계 90°) | 반시계 **+82.7°**, 시계 **−93.6°** → z축 반시계 = + (ROS 규칙과 일치). URDF `imu_yaw` 등 변경 불필요. 정지 오차 약 −0.1 °/s, 15 s 누적 1.8° |
 
 - 주의: **RRC 전원 스위치가 꺼져 있어도 USB가 꽂혀 있으면 보드가 USB 전원으로 켜진다** (IMU·통신은 되지만 모터는 안 돎).
   이때 입력 전압 보고가 약 4.1 V로 나온다. 모터 시험 전 `/battery_state`가 약 12 V인지 확인한다.

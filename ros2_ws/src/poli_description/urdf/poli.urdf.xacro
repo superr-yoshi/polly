@@ -38,7 +38,7 @@
   <xacro:property name="imu_x" value="0.0"/>                 <!-- RRC Lite 보드 위치 (TODO_MEASURE) -->
   <xacro:property name="imu_y" value="0.0"/>                 <!-- TODO_MEASURE -->
   <xacro:property name="imu_h" value="0.05"/>                <!-- SIM_ONLY -->
-  <xacro:property name="imu_yaw" value="0.0"/>               <!-- 보드 방향. 좌회전 시 gz > 0 이 되게 (TODO_MEASURE) -->
+  <xacro:property name="imu_yaw" value="0.0"/>               <!-- 보드 방향. 2026-10-06 보드 단독: 반시계 = +gz 확인. 장착 방향에 따라 재확인 (TODO_MEASURE) -->
 
   <!-- ===== 카메라 (Raspberry Pi AI Camera, CAM0) ===== -->
   <xacro:property name="camera_x" value="0.09"/>             <!-- SIM_ONLY -->
