@@ -142,3 +142,11 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   - 기본(fake): `hardware.launch.py`(fake) + mission2. 토픽·TF 연결 확인용
   - `use_fake_hardware:=false`: 실제 하드웨어 + LiDAR(`sllidar_ros2`, `/dev/robot_lidar`, 460800) + 카메라(`camera_vision`) + mission2
   - `mission2_sim.launch.py`(fake_robot)와 동시에 켜지 마세요 (`/odom_raw` 겹침).
+
+### 5-1. 조원 A 확인 (2026-10-06) — 집게 명령 1초마다 재전송
+- **실제 Mega: 문제없습니다.** 펌웨어는 같은 목표 각도면 그대로 두므로, 움직이던 중이면 계속 움직이고 다 닫혔으면 가만히 있습니다.
+  Mega가 리셋됐을 때도 다음 재전송으로 복구되니 오히려 좋습니다.
+- **fake Mega(`fake_mega_node`) 버그를 고쳤습니다.** 같은 명령이 올 때마다 이동 타이머(1.2초)를 다시 시작해서,
+  1초마다 재전송하면 `/gripper/state`가 `moving`에서 `closed`로 넘어가지 않았습니다. 지금은 같은 명령이면 무시합니다.
+  (확인: 1초마다 `grab` → 2초째 `closed`)
+- `mega_bridge_node` 로그는 명령이 바뀔 때만 찍습니다 (1초마다 같은 로그가 쌓이지 않게).

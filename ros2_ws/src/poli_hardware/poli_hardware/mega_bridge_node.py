@@ -84,6 +84,7 @@ class MegaBridgeNode(Node):
         self._cmd_id = 0
         self._last_ack = 0      # 읽기 스레드가 GST의 last_id로 갱신
         self._pending = None    # [action, cmd_id, 보낸 시각, 보낸 횟수]
+        self._last_action = None
         self._last_rng = None
         self._stale_warned = False
         self._stop = False
@@ -152,7 +153,11 @@ class MegaBridgeNode(Node):
             self.get_logger().warn(
                 f'알 수 없는 집게 명령 "{msg.data}" (open / grab만 가능)')
             return
-        self.get_logger().info(f'gripper command: {msg.data}')
+        if action != self._last_action:
+            # mission 노드는 같은 명령을 1초마다 다시 보낸다 -> 바뀔 때만 로그
+            self.get_logger().info(f'gripper command: {msg.data}')
+            self._last_action = action
+        # 같은 명령도 Mega에 다시 보낸다 (Mega가 리셋됐을 때 복구). 펌웨어는 같은 목표면 그대로 둔다.
         self._send_grip(action, tries=1)
 
     def _send_grip(self, action, tries):

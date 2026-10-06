@@ -45,8 +45,13 @@ class FakeMegaNode(Node):
         if action is None:
             self.get_logger().warn(f'알 수 없는 집게 명령 "{msg.data}" (open / grab만 가능)')
             return
+        target = 'closed' if action == GRIP_CLOSE else 'open'
+        if target == self._target:
+            # mission 노드는 같은 명령을 1초마다 다시 보낸다. 진행 중인 이동을 다시 시작하지 않는다.
+            self._publish_state()
+            return
         self.get_logger().info(f'gripper command: {msg.data} (fake)')
-        self._target = 'closed' if action == GRIP_CLOSE else 'open'
+        self._target = target
         if self._done_timer is not None:
             self._done_timer.cancel()
         if self._state != self._target:

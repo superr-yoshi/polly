@@ -56,7 +56,7 @@ ros2 launch poli_navigation mission2.launch.py use_fake_hardware:=false
 ## 5. 다른 사람에게 확인할 것
 - [ ] 조원 B: Ubuntu 24.04에서 `python3 -c "import picamera2"` 되는지 (Raspberry Pi OS용 라이브러리라 안 될 수 있다)
 - [ ] 조원 B: 카메라 좌우 반전 (`CAMERA_HFLIP`) — 왼쪽 물체가 `x_offset` 음수인지
-- [ ] 조원 A: 같은 집게 명령이 1초마다 와도 Mega 쪽 문제없는지
+- [x] 조원 A: 같은 집게 명령이 1초마다 와도 Mega 쪽 문제없는지 → 문제없음 (2026-10-06, `docs/interfaces.md` 5-1)
 
 ## 기록
 | 날짜 | 항목 | 값 | 메모 |
