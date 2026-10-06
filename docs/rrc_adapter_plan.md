@@ -32,3 +32,12 @@
 - Topic 이름·타입·frame_id·parameter 이름을 바꾸지 않는다.
 - STM32는 명령이 끊겨도 스스로 멈추지 않는다 → **물리 E-stop 필수**, 시험은 바퀴를 띄우고 시작.
 - `/odom_raw`는 엔코더가 아니라 명령 기반 추정이다 (펌웨어 한계). EKF 설정 때 통합 담당에게 알린다.
+
+## 실기 확인 기록
+| 날짜 | 내용 | 결과 |
+|---|---|---|
+| 2026-10-06 | RRC Lite 단독 (모터 미연결, Windows COM8 수신만) | 프레임 152개 / 3 s, CRC 오류 0, IMU 50.0 Hz, 전압 보고 약 1 Hz → **프로토콜 분석 일치** |
+| 2026-10-06 | WSL `hardware.launch.py use_fake_hardware:=false` (RRC `/dev/ttyACM1` + Mega `/dev/ttyACM0`) | `/imu/data` 50 Hz, `/odom_raw` 25 Hz, `/range/*` 8.8 Hz, `/gripper/state` 2 Hz, `/battery_state` 1 Hz. cmd_vel 0.1 → odom 0.100, 끊으면 0. 종료 정상 |
+| 2026-10-06 | IMU 정지 상태 | 가속도 z = +10.06 m/s² (위쪽 +, ROS 축과 일치). 자이로 정지 오차 약 1~2 °/s |
+
+- 이날 RRC 입력 전압 보고는 4.16 V → 서플라이가 아니라 USB 전원으로만 켜진 상태였다. 모터 시험 전 12.0 V 입력을 확인한다.
