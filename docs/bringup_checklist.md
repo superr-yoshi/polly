@@ -10,6 +10,7 @@ cd ~/polly/ros2_ws && source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install && source install/setup.bash
 sudo usermod -aG dialout $USER   # 시리얼 권한. 다시 로그인해야 적용
 ```
+- [ ] 대회장용 핫스팟 Wi-Fi 추가 등록 (학교 Wi-Fi `CWNUWIFI-5G`로 접속돼 있을 때 미리 할 것). 대회 전에 핫스팟만 켠 상태로 노트북 → 파이 SSH 접속과 launch 실행을 시험
 - [ ] 빌드 성공 (`camera_vision`은 테스트가 없어 `colcon test`에서 실패로 나오지만 정상)
 
 ## 1. LiDAR 드라이버 (sllidar_ros2, RPLIDAR C1)
