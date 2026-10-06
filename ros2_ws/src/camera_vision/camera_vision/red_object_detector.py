@@ -104,7 +104,7 @@ class RedTargetDetector(Node):
         super().__init__('red_target_detector')
 
         # 모니터가 있을 때만 켠다. 대회(모니터 없음)에서는 반드시 False.
-        # 실행 예: ros2 run poli_vision red_target_detector
+        # 실행 예: ros2 run camera_vision red_object_detector
         #          --ros-args -p show_debug:=true
         self.declare_parameter('show_debug', False)
         self.show_debug = self.get_parameter('show_debug').value
