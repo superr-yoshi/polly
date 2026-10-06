@@ -40,4 +40,7 @@
 | 2026-10-06 | WSL `hardware.launch.py use_fake_hardware:=false` (RRC `/dev/ttyACM1` + Mega `/dev/ttyACM0`) | `/imu/data` 50 Hz, `/odom_raw` 25 Hz, `/range/*` 8.8 Hz, `/gripper/state` 2 Hz, `/battery_state` 1 Hz. cmd_vel 0.1 → odom 0.100, 끊으면 0. 종료 정상 |
 | 2026-10-06 | IMU 정지 상태 | 가속도 z = +10.06 m/s² (위쪽 +, ROS 축과 일치). 자이로 정지 오차 약 1~2 °/s |
 
-- 이날 RRC 입력 전압 보고는 4.16 V → 서플라이가 아니라 USB 전원으로만 켜진 상태였다. 모터 시험 전 12.0 V 입력을 확인한다.
+| 2026-10-06 | 입력 전압 (서플라이 12.0 V) | 11.98 V 보고 → `/battery_state` 정상 |
+
+- 주의: **RRC 전원 스위치가 꺼져 있어도 USB가 꽂혀 있으면 보드가 USB 전원으로 켜진다** (IMU·통신은 되지만 모터는 안 돎).
+  이때 입력 전압 보고가 약 4.1 V로 나온다. 모터 시험 전 `/battery_state`가 약 12 V인지 확인한다.
