@@ -31,7 +31,7 @@ fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
 
-if pgrep -f "poli_navigation mission[12].launch.py" > /dev/null; then
+if pgrep -f "[p]oli_navigation mission[12].launch.py" > /dev/null; then
   echo "이미 임무가 실행 중이다. 먼저 $HERE/stop_mission.sh" >&2
   exit 1
 fi
@@ -53,7 +53,9 @@ LOG_DIR="$HOME/poli_logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/mission${MISSION}_$(date +%Y%m%d_%H%M%S).log"
 
-setsid nohup ros2 launch poli_navigation "mission${MISSION}.launch.py" \
+# 백그라운드(&)로 띄우면 bash가 SIGINT를 무시 상태로 넘겨서 stop_mission.sh(Ctrl+C와 같은 SIGINT)로
+# 멈추지 않는다 (2026-10-07 Pi에서 확인). env --default-signal로 SIGINT를 되살린다 (coreutils 8.31+).
+setsid nohup env --default-signal=INT ros2 launch poli_navigation "mission${MISSION}.launch.py" \
   use_fake_hardware:=false > "$LOG" 2>&1 < /dev/null &
 echo "임무 ${MISSION} 시작 (PID $!), 로그: $LOG"
 
