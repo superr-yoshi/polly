@@ -1,6 +1,7 @@
 # POLI Hardware Plan
 
 > 부품별 상세 사양·치수·핀맵: `docs/hardware_reference.md` (원본: `docs/product-spec-claude/`)
+> 대회 규정 준수 점검표: `docs/competition/rules_compliance.md` (크기 지름 400 × 높이 300 mm 원기둥 안, 10 kg 이내, 빨간 부품 금지, 두 임무 같은 하드웨어)
 
 ## 1. Main Computer
 - Raspberry Pi 5
