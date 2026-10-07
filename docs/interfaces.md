@@ -107,7 +107,8 @@ ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false   # 실제
 ros2 launch poli_hardware hardware.launch.py                            # fake (테스트용, 기본)
 ```
 - 실제: `rrc_adapter_node` (`/cmd_vel` → 모터, `/odom_raw`, `/imu/data`, `/battery_state`),
-  `mega_bridge_node` (`/range/*`, `/gripper/command`, `/gripper/state`)
+  `/gripper/command`, `/gripper/state` (2026-10-07 Mega에서 이전),
+  `mega_bridge_node` (`/range/*`)
 - fake: `fake_rrc_node`, `fake_mega_node` — 토픽은 실제와 같습니다.
 - 대회 launch에서는 `IncludeLaunchDescription`으로 `poli_hardware/launch/hardware.launch.py`를 포함하면 됩니다.
 - `/cmd_vel`이 0.3초 넘게 안 오면 정지합니다 (약속 0.5초 이내). mission2의 20 Hz 발행이면 문제없습니다.
@@ -126,7 +127,7 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
 - **`/battery_state`는 LiPo 잔량이 아닙니다** (RRC 입력 = 12V 컨버터 출력). 저전압 판단에 쓰면 안 됩니다.
 - `poli_navigation/fake_odom.py`도 `/odom_raw`를 발행하므로 `hardware.launch.py`와 **동시에 실행하면 안 됩니다.**
   fake 테스트는 `hardware.launch.py`(기본 fake 모드)만 켜도 조원 A 토픽이 전부 나옵니다.
-- mission2는 `"open"`을 시작할 때 한 번만 보냅니다. Mega는 켜질 때 열림 상태라 괜찮지만,
+- mission2는 `"open"`을 시작할 때 한 번만 보냅니다. 집게는 켜질 때 열림 상태라 괜찮지만,
   조원 A 노드가 mission2보다 늦게 켜지면 그 메시지는 받지 못합니다.
 - `docs/mission_strategy.md`의 "잡고 들어 올림" 문구를 위 결정에 맞게 "잡음 (들어 올리지 않음)"으로 고쳤습니다.
 
@@ -150,3 +151,10 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   1초마다 재전송하면 `/gripper/state`가 `moving`에서 `closed`로 넘어가지 않았습니다. 지금은 같은 명령이면 무시합니다.
   (확인: 1초마다 `grab` → 2초째 `closed`)
 - `mega_bridge_node` 로그는 명령이 바뀔 때만 찍습니다 (1초마다 같은 로그가 쌓이지 않게).
+
+### 5-2. 조원 A 변경 (2026-10-07) — 집게 서보를 RRC Lite로 이전
+- 제품 사양서_E 연결 계획에 따라 집게 서보(DS3218)를 Mega D9에서 **RRC Lite PWM 서보 포트**로 옮겼습니다.
+- **토픽 약속은 그대로입니다.** `/gripper/command` (`"open"` / `"grab"`), `/gripper/state` (`open` / `closed` / `moving`, 2 Hz).
+  발행 노드만 `mega_bridge_node` → `rrc_adapter_node`(fake는 `fake_rrc_node`)로 바뀌었습니다. 담당 1 코드 수정 필요 없음.
+- 같은 명령 1초마다 재전송: 그대로 괜찮습니다 (같은 목표면 무시).
+- 이동 시간 `gripper_move_ms` 1.0 s → `GRASP_WAIT_S` 1.5 s 안에 `closed`가 됩니다.

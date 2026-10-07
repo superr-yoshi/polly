@@ -9,13 +9,19 @@
     wheel_separation: 0.18     # SIM_ONLY: 좌우 바퀴 중심 간 거리 실측 필수 (외형 폭 0.22 쓰지 말 것)
     max_linear: 0.25           # m/s, 초기 실내 제한 (무부하 이론 최고 약 1.12 m/s)
     max_angular: 1.0           # rad/s
-    max_wheel_rpm: 330.0       # JGB37-520 정격
+    max_wheel_rpm: 250.0       # JGB37-520 정격 부하 250 RPM (무부하 330). 제품 사양서_E: 연속 주행은 정격 부근
     cmd_timeout: 0.3           # s, /cmd_vel 끊기면 0 속도 (권장 0.2~0.5)
     odom_rate: 25.0            # Hz
     imu_rate: 50.0             # Hz
     odom_frame: odom
     base_frame: base_link
     imu_frame: imu_link
+    # 집게 DS3218 1개 -> RRC Lite PWM 서보 포트 (2026-10-07 Mega D9에서 이전, 제품 사양서_E)
+    # ⚠ RRC 서보 포트 전원 점퍼는 반드시 5V (입력 전압 12V 쪽이면 DS3218 최대 6.8V 초과로 파손)
+    gripper_servo_id: 1        # RRC PWM 서보 포트 1~4 (TODO_MEASURE: 실제 꽂은 포트)
+    gripper_open_us: 1500      # 열림. RRC가 전원을 켤 때 서보를 1500 us로 보내므로 맞춰 둠 → 전원 켤 때 집게가 안 움직임 (TODO_MEASURE)
+    gripper_close_us: 1833     # 닫아 잡기. 500~2500 us = 0~180도 (TODO_MEASURE: 대상 50 mm를 꽉 잡는 값)
+    gripper_move_ms: 1000      # 열기/닫기 이동 시간 (임무 노드 GRASP_WAIT_S 1.5 s 안)
 
 rrc_adapter_node:
   ros__parameters:
@@ -37,7 +43,6 @@ mega_bridge_node:
     baud: 115200               # docs/serial_protocol.md v1.1
     open_delay: 2.0            # 포트 열면 Mega 자동 리셋
     stale_timeout: 1.0         # s, RNG 끊김 경고
-    ack_timeout: 0.5           # s, 집게 명령 응답 대기
     median_window: 3           # 초음파 중간값 필터 (홀수, 1 = 끔). 튀는 값 제거, 지연 약 0.125 s
     field_of_view: 0.26        # rad, HC-SR04 약 15도
     min_range: 0.02
@@ -47,7 +52,6 @@ fake_mega_node:
   ros__parameters:
     fake_range: 2.0            # SIM_ONLY
     range_rate: 8.0
-    move_time: 1.2             # SIM_ONLY
     field_of_view: 0.26
     min_range: 0.02
     max_range: 4.0

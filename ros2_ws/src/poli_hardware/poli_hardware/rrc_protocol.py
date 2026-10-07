@@ -17,6 +17,7 @@ START = b'\xaa\x55'
 
 FUNC_SYS = 0
 FUNC_MOTOR = 3
+FUNC_PWM_SERVO = 4
 FUNC_IMU = 7
 FUNC_NONE = 12  # 펌웨어는 이 값 이상의 func를 버린다
 
@@ -84,6 +85,43 @@ def motor_speeds_frame(speeds: List[Tuple[int, float]]) -> bytes:
 
 def motor_stop_frame(mask: int = 0x0F) -> bytes:
     return build_frame(FUNC_MOTOR, struct.pack('<BB', MOTOR_STOP_MULTI, mask & 0x0F))
+
+
+# PWM 서보 (packet_handle.c packet_pwm_servo_handle). 집게 DS3218 1개를 RRC PWM 포트로 구동한다.
+PWM_SERVO_SET = 0x03    # Pi -> RRC: cmd, duration(ms, u16), servo_id(u8, 1~4), pulse(us, u16)
+PWM_SERVO_READ = 0x05   # Pi -> RRC: cmd, servo_id  /  RRC -> Pi: servo_id, 0x05, pulse(u16)
+PWM_SERVO_IDS = (1, 2, 3, 4)  # 펌웨어는 id-1로 배열을 쓰고 0을 검사하지 않는다 -> 여기서 막는다
+
+
+def pwm_servo_set_frame(servo_id: int, pulse_us: int, duration_ms: int) -> bytes:
+    """
+    PWM 서보를 pulse_us(500~2500 us)로 duration_ms 동안 서서히 움직인다.
+
+    펌웨어가 pulse는 500~2500, duration은 20~30000으로 자른다. 같은 범위로 미리 맞춘다.
+    """
+    if servo_id not in PWM_SERVO_IDS:
+        raise ValueError(f'servo_id must be 1..4, got {servo_id}')
+    pulse = max(500, min(2500, int(pulse_us)))
+    duration = max(20, min(30000, int(duration_ms)))
+    data = struct.pack('<BHBH', PWM_SERVO_SET, duration, servo_id, pulse)
+    return build_frame(FUNC_PWM_SERVO, data)
+
+
+def pwm_servo_read_frame(servo_id: int) -> bytes:
+    if servo_id not in PWM_SERVO_IDS:
+        raise ValueError(f'servo_id must be 1..4, got {servo_id}')
+    return build_frame(FUNC_PWM_SERVO, struct.pack('<BB', PWM_SERVO_READ, servo_id))
+
+
+def parse_pwm_servo_report(data: bytes) -> Optional[Tuple[int, int]]:
+    """
+    PWM 서보 위치 보고 -> (servo_id, 현재 펄스 us).
+
+    펌웨어가 서서히 움직이는 중인 '명령 위치'이며 서보의 실제 위치(피드백)는 아니다.
+    """
+    if len(data) != 4 or data[1] != PWM_SERVO_READ:
+        return None
+    return data[0], struct.unpack('<H', data[2:4])[0]
 
 
 def parse_imu(data: bytes) -> Optional[Tuple[float, ...]]:

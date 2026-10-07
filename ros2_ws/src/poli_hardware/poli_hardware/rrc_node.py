@@ -1,5 +1,8 @@
 """
-RRC Lite 주행 계층: /cmd_vel -> 바퀴, /odom_raw, 내장 IMU -> /imu/data, /battery_state.
+RRC Lite 주행 계층과 집게.
+
+/cmd_vel -> 바퀴, /odom_raw, 내장 IMU -> /imu/data, /battery_state,
+집게 (/gripper/command -> RRC PWM 서보, /gripper/state).
 
 - fake_rrc_node   : SimTransport (부품 도착 전, 바퀴가 명령을 그대로 따른다고 가정)
 - rrc_adapter_node: RrcTransport (RRC Lite USB Serial, docs/rrc_protocol.md)
@@ -16,9 +19,11 @@ from poli_hardware import rrc_protocol
 from poli_hardware.diff_drive import (
     CmdWatchdog, DiffDriveParams, OdomIntegrator, twist_to_wheels,
     wheels_to_twist, yaw_to_quaternion)
+from poli_hardware.gripper import GripperController
 from poli_hardware.node_runner import run_node
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState, Imu
+from std_msgs.msg import String
 
 
 class SimTransport:
@@ -39,6 +44,22 @@ class SimTransport:
 
     def read_supply_voltage(self):
         return 12.0  # SIM_ONLY
+
+    def set_servo(self, servo_id, pulse_us, duration_ms):
+        self._servo = (self.read_servo(servo_id) or pulse_us, pulse_us, time.monotonic(),
+                       duration_ms / 1000.0)
+
+    def request_servo(self, servo_id):
+        pass
+
+    def read_servo(self, servo_id):
+        """SIM_ONLY: RRC 펌웨어처럼 duration 동안 직선으로 움직인다."""
+        s = getattr(self, '_servo', None)
+        if s is None:
+            return None
+        start, target, t0, dur = s
+        k = min(1.0, (time.monotonic() - t0) / dur) if dur > 0 else 1.0
+        return target if k >= 1.0 else int(start + (target - start) * k)
 
     def close(self):
         pass
@@ -87,6 +108,7 @@ class RrcTransport:
         self._supply_t = 0.0
         self._enc_rps = None
         self._enc_t = 0.0
+        self._servo_us = {}
         self._odom_source = None
         self._stop = False
         self._write(rrc_protocol.motor_type_frame(g('motor_type').value))
@@ -119,6 +141,10 @@ class RrcTransport:
                     enc = rrc_protocol.parse_encoder_report(data)
                     if enc is not None:
                         self._enc_rps, self._enc_t = enc[1], time.monotonic()
+                elif func == rrc_protocol.FUNC_PWM_SERVO:
+                    rep = rrc_protocol.parse_pwm_servo_report(data)
+                    if rep is not None:
+                        self._servo_us[rep[0]] = rep[1]
                 elif func == rrc_protocol.FUNC_SYS:
                     mv = rrc_protocol.parse_battery_mv(data)
                     if mv is not None:
@@ -161,6 +187,15 @@ class RrcTransport:
             return None
         return self._supply_mv / 1000.0
 
+    def set_servo(self, servo_id, pulse_us, duration_ms):
+        self._write(rrc_protocol.pwm_servo_set_frame(servo_id, pulse_us, duration_ms))
+
+    def request_servo(self, servo_id):
+        self._write(rrc_protocol.pwm_servo_read_frame(servo_id))
+
+    def read_servo(self, servo_id):
+        return self._servo_us.get(servo_id)
+
     def close(self):
         self._write(rrc_protocol.motor_stop_frame())
         self._stop = True
@@ -186,6 +221,10 @@ class RrcNode(Node):
         p('imu_frame', 'imu_link')
         p('port', '/dev/robot_rrc')
         p('baud', 1000000)
+        p('gripper_servo_id', 1)        # RRC PWM 서보 포트 번호 1~4 (TODO_MEASURE: 실제 꽂은 포트)
+        p('gripper_open_us', 1500)      # 열림. RRC가 전원을 켤 때 1500 us로 보내므로 맞춰 둠 (TODO_MEASURE)
+        p('gripper_close_us', 1833)     # 닫아 잡기 (TODO_MEASURE)
+        p('gripper_move_ms', 1000)      # 열기/닫기 이동 시간
 
         g = self.get_parameter
         self.drive = DiffDriveParams(
@@ -212,6 +251,16 @@ class RrcNode(Node):
         self.create_timer(1.0 / g('odom_rate').value, self._on_control)
         self.create_timer(1.0 / g('imu_rate').value, self._on_imu)
         self.create_timer(1.0, self._on_battery)
+
+        # 집게: 첫 명령 전에는 서보 명령을 보내지 않는다 (규정 3.5.6)
+        self.gripper_id = g('gripper_servo_id').value
+        self.gripper = GripperController(g('gripper_open_us').value, g('gripper_close_us').value,
+                                         g('gripper_move_ms').value)
+        self._gripper_state = None
+        self.gripper_pub = self.create_publisher(String, '/gripper/state', 10)
+        self.create_subscription(String, '/gripper/command', self._on_gripper_command, 10)
+        self.create_timer(0.2, self._on_gripper_poll)
+        self.create_timer(0.5, self._publish_gripper_state)
 
         self.get_logger().info(
             f'{name} started: wheel_radius={self.drive.wheel_radius} '
@@ -307,6 +356,33 @@ class RrcNode(Node):
         msg.present = True
         msg.location = 'rrc_lite_input (12V converter output, not LiPo)'
         self.battery_pub.publish(msg)
+
+    def _on_gripper_command(self, msg):
+        try:
+            pulse = self.gripper.command(msg.data, self._now())
+        except ValueError:
+            self.get_logger().warn(f'알 수 없는 집게 명령 "{msg.data}" (open / grab만 가능)')
+            return
+        if pulse is None:
+            return      # 같은 명령 반복 (임무 노드는 1초마다 다시 보냄)
+        self.get_logger().info(f'gripper command: {msg.data} -> {pulse} us')
+        self.transport.set_servo(self.gripper_id, pulse, self.gripper.move_ms)
+        self._publish_gripper_state()
+
+    def _on_gripper_poll(self):
+        if self.gripper.target is None:
+            return
+        pulse = self.transport.read_servo(self.gripper_id)
+        if pulse is not None:
+            self.gripper.report(pulse)
+        if self.gripper.state(self._now()) == 'moving':
+            self.transport.request_servo(self.gripper_id)
+        elif self._gripper_state == 'moving':
+            self._publish_gripper_state()
+
+    def _publish_gripper_state(self):
+        self._gripper_state = self.gripper.state(self._now())
+        self.gripper_pub.publish(String(data=self._gripper_state))
 
     def stop(self):
         self.transport.set_wheel_speeds(0.0, 0.0)

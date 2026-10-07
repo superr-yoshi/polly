@@ -1,6 +1,9 @@
 # Mega ↔ Pi 시리얼 프로토콜 (v1.1, 조원 A 범위)
 
 팀 매뉴얼(21·21A장)의 v1 규칙을 기반으로 한다. **v1과 달라진 점은 맨 아래 "변경 사항" 참고.**
+
+> **2026-10-07: 집게는 RRC Lite PWM 서보 포트로 옮겼다** (제품 사양서_E). Pi는 더 이상 `$GRIP`을 보내지 않고
+> `$GST`는 받아도 버린다. 형식은 펌웨어 호환을 위해 그대로 두지만 **현재 사용하는 packet은 `$RNG`뿐이다.**
 이 문서를 바꾸면 Pi 쪽 담당(통합)에게 반드시 알린다.
 
 ## 공통 규칙
@@ -51,8 +54,8 @@ $GRIP,2,0*0E        ← 열기, id 2
 | 이름 | 종류 | 타입 | 내용 |
 |---|---|---|---|
 | `/range/front`, `/range/left`, `/range/right`, `/range/rear` | Topic | sensor_msgs/Range | RNG의 4개 값 (m). frame `ultrasonic_<이름>_link`. 0(실패)은 `+inf` (REP-117 "감지 없음") |
-| `/gripper/state` | Topic | std_msgs/String | GST state: `open` / `closed` / `moving` |
-| `/gripper/command` | Topic (구독) | std_msgs/String | `"open"` = 열기(GRIP 0), `"grab"` = 닫아 잡기(GRIP 1). 들어 올리기 없음. GST의 last_id로 수신 확인, 0.5초마다 최대 3번 전송 |
+
+- `/gripper/command`, `/gripper/state`는 2026-10-07부터 `rrc_adapter_node`가 맡는다 (`docs/rrc_protocol.md` PWM 서보).
 
 - `/battery_state`는 Mega가 아니라 RRC Lite 노드가 발행한다 (RRC 입력 전압). Mega 프로토콜에 `$BAT`는 없다.
 - 주의: 펌웨어는 20 mm 미만(너무 가까움)도 0으로 보내므로 `+inf`에 섞인다. 근접 정지는 LiDAR와 함께 판단한다.

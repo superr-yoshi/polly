@@ -1,11 +1,10 @@
 """
 Arduino Mega <-> ROS 2 브리지 (프로토콜 v1.1, docs/serial_protocol.md).
 
-발행:  /range/front, /range/left, /range/right, /range/rear
-       (sensor_msgs/Range), /gripper/state (std_msgs/String: open|closed|moving)
-구독:  /gripper/command (std_msgs/String: "open" = 열기, "grab" = 닫아서 잡기)
-       들어 올리는 동작은 없다 (조원 A 결정).
-TODO: 잡힘 감지 센서가 추가되면 /gripper/holding (std_msgs/Bool)을 여기서 발행한다.
+발행:  /range/front, /range/left, /range/right, /range/rear (sensor_msgs/Range)
+
+집게는 2026-10-07부터 RRC Lite PWM 서보 포트로 옮겼다 (rrc_node.py, 제품 사양서_E).
+Mega 펌웨어가 보내는 집게 상태 packet(GST)은 무시한다 (packet 형식은 그대로).
 
 시리얼 읽기는 별도 스레드, packet 해석은 mega_protocol(순수 모듈)이 담당한다.
 """
@@ -13,15 +12,11 @@ import threading
 import time
 
 from poli_hardware.mega_protocol import (
-    gripper_action, GstPacket, make_grip_command, MegaParser,
-    mm_to_range_m, RANGE_ORDER, RangeMedianFilter, RngPacket)
+    MegaParser, mm_to_range_m, RANGE_ORDER, RangeMedianFilter, RngPacket)
 from poli_hardware.node_runner import run_node
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Range
-from std_msgs.msg import String
-
-MAX_GRIP_TRIES = 3
 
 # RANGE_ORDER 이름 -> URDF frame 이름
 RANGE_FRAMES = {
@@ -62,29 +57,19 @@ class MegaBridgeNode(Node):
         self.declare_parameter('baud', 115200)
         self.declare_parameter('open_delay', 2.0)   # 포트를 열면 Mega가 자동 리셋된다
         self.declare_parameter('stale_timeout', 1.0)
-        self.declare_parameter('ack_timeout', 0.5)
         self.declare_parameter('median_window', 3)  # 1 = 필터 없음
         declare_range_params(self)
 
         self.port = self.get_parameter('port').value
         self.baud = self.get_parameter('baud').value
-        self.ack_timeout = self.get_parameter('ack_timeout').value
         self.stale_timeout = self.get_parameter('stale_timeout').value
 
         self.parser = MegaParser()
         self.range_filter = RangeMedianFilter(self.get_parameter('median_window').value)
         self.range_pubs = create_range_publishers(self)
-        self.state_pub = self.create_publisher(String, '/gripper/state', 10)
-        self.create_subscription(String, '/gripper/command', self._on_gripper_command, 10)
-        self.create_timer(0.1, self._on_gripper_retry)
         self.create_timer(1.0, self._on_health)
 
         self._ser = None
-        self._write_lock = threading.Lock()
-        self._cmd_id = 0
-        self._last_ack = 0      # 읽기 스레드가 GST의 last_id로 갱신
-        self._pending = None    # [action, cmd_id, 보낸 시각, 보낸 횟수]
-        self._last_action = None
         self._last_rng = None
         self._stale_warned = False
         self._stop = False
@@ -142,57 +127,6 @@ class MegaBridgeNode(Node):
             for name, mm in zip(RANGE_ORDER, self.range_filter.update(pkt.mm)):
                 self.range_pubs[name].publish(
                     make_range_msg(self, name, mm_to_range_m(mm, lo, hi)))
-        elif isinstance(pkt, GstPacket):
-            self.state_pub.publish(String(data=pkt.state_name))
-            self._last_ack = pkt.last_id
-
-    # ---- gripper --------------------------------------------------------
-    def _on_gripper_command(self, msg):
-        action = gripper_action(msg.data)
-        if action is None:
-            self.get_logger().warn(
-                f'알 수 없는 집게 명령 "{msg.data}" (open / grab만 가능)')
-            return
-        if action != self._last_action:
-            # mission 노드는 같은 명령을 1초마다 다시 보낸다 -> 바뀔 때만 로그
-            self.get_logger().info(f'gripper command: {msg.data}')
-            self._last_action = action
-        # 같은 명령도 Mega에 다시 보낸다 (Mega가 리셋됐을 때 복구). 펌웨어는 같은 목표면 그대로 둔다.
-        self._send_grip(action, tries=1)
-
-    def _send_grip(self, action, tries):
-        self._cmd_id += 1
-        if not self._write(make_grip_command(self._cmd_id, action)):
-            self.get_logger().warn('집게 명령 실패: Mega 연결 안 됨')
-            self._pending = None
-            return
-        self._pending = [action, self._cmd_id, time.monotonic(), tries]
-
-    def _on_gripper_retry(self):
-        """Mega가 GST로 받았다고 답할 때까지 최대 MAX_GRIP_TRIES번 보낸다."""
-        if self._pending is None:
-            return
-        action, cmd_id, sent_at, tries = self._pending
-        if self._last_ack == cmd_id:
-            self._pending = None
-        elif time.monotonic() - sent_at > self.ack_timeout:
-            if tries < MAX_GRIP_TRIES:
-                self._send_grip(action, tries + 1)
-            else:
-                self.get_logger().error('집게 명령: Mega 응답 없음')
-                self._pending = None
-
-    def _write(self, data):
-        ser = self._ser
-        if ser is None:
-            return False
-        try:
-            with self._write_lock:
-                ser.write(data)
-            return True
-        except Exception as e:  # noqa: BLE001
-            self.get_logger().error(f'Mega write error: {e}')
-            return False
 
     # ---- 진단 -----------------------------------------------------------
     def _on_health(self):

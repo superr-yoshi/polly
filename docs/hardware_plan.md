@@ -20,8 +20,8 @@
 - Connection: USB Serial → Raspberry Pi 5 (docs/serial_protocol.md v1.1)
 - Role:
   - HC-SR04 ultrasonic sensors × 4
-  - Gripper servo (D9)
-  - Send range / gripper state to Raspberry Pi, receive gripper commands
+  - Send range to Raspberry Pi
+  - (집게 서보는 2026-10-07 RRC Lite PWM 서보 포트로 이전. D9 사용 안 함)
 
 ## 4. LiDAR
 - SLAMTEC RPLIDAR C1 (360°, 10 Hz, 0.05~12 m, 5 V 최대 260 mA)
@@ -59,7 +59,8 @@
 
 ## 8. Gripper
 - Byte Robot Black Composite Claw 125mm (최대 개폐 125 mm, 파지력 500 g, 140 g)
-- Servo: DS3218 × 1 (확정, Mega D9 신호 / XL4015 6V 별도 전원, 사양 4.8~6.8 V, PWM 500~2500 µs). 들어 올리기 없음
+- Servo: DS3218 × 1 (확정, **RRC Lite PWM 서보 포트**, 서보 전원 점퍼 5V 필수, 사양 4.8~6.8 V, PWM 500~2500 µs). 들어 올리기 없음
+  - 2026-10-07 Mega D9에서 이전 (제품 사양서_E 연결 계획, `docs/pin_map.md` 2장)
 - Role:
   - Open / close gripper
   - Rescue object handling
@@ -69,14 +70,16 @@
 - DC-DC Converter: Daygreen B20-24-12
 - RRC Lite motor power: 12V
 - **비상정지: 배터리 바로 뒤 전체 전원 차단 스위치** (docs/pin_map.md 4장)
-- Raspberry Pi 5: 5 V / 5 A 필요. 결선도상 XL4015 5 V → GPIO 5 V 핀 공급 → USB 장치 전원 부족 여부 실기 확인 (TODO_MEASURE)
+- Raspberry Pi 5: 5 V / 5 A 필요. **공급 방법 미정** (2026-10-07):
+  결선도는 XL4015 5 V → GPIO 5 V 핀, 제품 사양서_E는 RRC Lite 5V 5A 출력 → Pi.
+  정해지면 이 문서와 `docs/pin_map.md`를 고치고, USB 장치 전원 부족 여부를 실기 확인 (TODO_MEASURE)
 
 ## 10. Software Interface Plan
 - /cmd_vel → motor command
 - /odom_raw → RRC Lite odometry (공장 펌웨어라 엔코더 없이 명령 기반 추정)
 - /imu/data → RRC Lite built-in 6-axis IMU
 - /range/front, /range/left, /range/right, /range/rear → 초음파 (전방·좌측·우측·후방)
-- /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Arduino Mega)
+- /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (RRC Lite PWM 서보)
 - /battery_state → RRC Lite 입력 전압 (LiPo 잔량 아님)
 - /scan → RPLIDAR C1 LaserScan
 - /odometry/filtered → robot_localization filtered odometry

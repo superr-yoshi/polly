@@ -16,8 +16,8 @@
 <robot name="poli" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <!-- ===== 차체 ===== -->
-  <xacro:property name="wheel_radius" value="0.0325"/>       <!-- 65 mm 바퀴. 주행 시험으로 보정 (TODO_MEASURE) -->
-  <xacro:property name="wheel_width" value="0.027"/>         <!-- SIM_ONLY -->
+  <xacro:property name="wheel_radius" value="0.0325"/>       <!-- 바퀴 Ø65 mm (제품 사양서_E). 주행 시험으로 보정 (TODO_MEASURE) -->
+  <xacro:property name="wheel_width" value="0.026"/>         <!-- 고무 바퀴 Ø65 × 26 mm (제품 사양서_E) -->
   <xacro:property name="wheel_separation" value="0.18"/>     <!-- 좌우 바퀴 중심 간 거리 (TODO_MEASURE, hardware.yaml과 같게) -->
   <xacro:property name="body_length" value="0.20"/>          <!-- 집게 제외 차체 길이 (TODO_MEASURE) -->
   <xacro:property name="body_width" value="0.22"/>           <!-- 외곽 폭 220 mm (집게 연 상태 제공값) -->

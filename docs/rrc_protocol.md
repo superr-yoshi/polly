@@ -19,8 +19,9 @@
 |---|---|---|
 | 0 | SYS | 수신: 배터리 전압 (sub 0x04, uint16 mV, 약 1 Hz) — 현재 발행 안 함 |
 | 3 | MOTOR | **송신: 모터 속도·정지·종류 설정** |
+| 4 | PWM_SERVO | **송신: 집게 서보 펄스 / 수신: 현재 펄스** (2026-10-07부터) |
 | 7 | IMU | **수신: 가속도·자이로 (약 50 Hz)** |
-| 1, 2, 4, 5, 6, 8~11 | LED, 부저, PWM 서보, 버스 서보, 버튼, 게임패드, SBUS, OLED, RGB | 사용 안 함 (집게는 Mega 담당) |
+| 1, 2, 5, 6, 8~11 | LED, 부저, 버스 서보, 버튼, 게임패드, SBUS, OLED, RGB | 사용 안 함 |
 
 ## 모터 (func 3)
 | sub | data | 뜻 |
@@ -36,6 +37,22 @@
   우리 모터(JGB37-520 330RPM)의 기어비가 다르면 실제 속도가 비율만큼 달라진다 → `motor_ticks_per_rev`로 보정.
 - 펌웨어 명령 경로는 rps 제한을 적용하지 않는다 → Pi에서 `max_motor_rps`로 제한.
 - 제조사 탱크 차체 규칙: M1 = 왼쪽(부호 반전), M2 = 오른쪽.
+
+## PWM 서보 (func 4) — 집게
+| sub | data (`<` little-endian) | 뜻 |
+|---|---|---|
+| 0x03 | `<BHBH` = `03, duration_ms(u16), servo_id(u8), pulse_us(u16)` | 서보 1개를 `duration_ms` 동안 `pulse_us`로 이동 |
+| 0x05 | `05, servo_id(u8)` | 현재 펄스 요청 → 보드가 `servo_id, 05, pulse_us(u16)` (func 4)로 응답 |
+
+- **servo_id는 1~4** (보드 인쇄 번호). 펌웨어가 0을 검사하지 않으므로 Pi에서 1~4만 보낸다.
+- 펄스 500~2500 µs (DS3218: 0~180°), 이동 시간 20~30000 ms로 Pi에서 제한한다.
+- **전원을 켜면 펌웨어가 4포트 모두 1500 µs를 낸다** (`pwm_servos_init`) → 열림 위치를 1500 µs로 맞췄다.
+  포트를 열어도 보드는 재부팅하지 않는다 (IMU가 끊기지 않고 50 Hz 유지 확인).
+- 서보 포트 전원은 보드 점퍼로 5V / 입력 전압(VIN) 중 고른다. **DS3218은 5V 필수** (`docs/pin_map.md` 2장).
+- 구현: `rrc_protocol.pwm_servo_set_frame`, `pwm_servo_read_frame`, `parse_pwm_servo_report`,
+  상태 판단은 `poli_hardware/gripper.py` (`GripperController`). 이동 중에는 0.2 s마다 현재 펄스를 요청해
+  목표에 닿으면 `closed`/`open`, 응답이 없어도 `move_ms + 0.5 s` 뒤에는 도착으로 본다.
+- 첫 `/gripper/command`를 받기 전에는 서보 명령을 보내지 않는다 (규정 3.5.6).
 
 ## IMU (func 7, 24 bytes)
 `ax, ay, az, gx, gy, gz` float32. 단위 **g, deg/s** → Pi에서 m/s², rad/s로 변환.

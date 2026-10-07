@@ -94,3 +94,21 @@ def test_encoder_report_roundtrip():
 def test_encoder_report_rejects_other_motor_frames():
     assert rp.parse_encoder_report(bytes([0x10]) + bytes(31)) is None       # 길이 틀림
     assert rp.parse_encoder_report(bytes([0x01]) + bytes(32)) is None       # 다른 서브 명령
+
+
+def test_pwm_servo_set_frame_layout():
+    f = rp.pwm_servo_set_frame(1, 1833, 1000)
+    assert (f[2], f[3]) == (rp.FUNC_PWM_SERVO, 6)
+    assert struct.unpack('<BHBH', f[4:10]) == (0x03, 1000, 1, 1833)
+    # 펌웨어와 같은 범위로 자른다
+    assert struct.unpack('<BHBH', rp.pwm_servo_set_frame(4, 9999, 5)[4:10]) == (0x03, 20, 4, 2500)
+    with pytest.raises(ValueError):
+        rp.pwm_servo_set_frame(0, 1500, 100)   # 0은 펌웨어 배열을 벗어남
+
+
+def test_pwm_servo_read_and_report():
+    assert rp.pwm_servo_read_frame(2)[2:6] == bytes([rp.FUNC_PWM_SERVO, 2, 0x05, 2])
+    frame = rp.build_frame(rp.FUNC_PWM_SERVO, struct.pack('<BBH', 1, 0x05, 1500))
+    [(func, data)] = rp.FrameParser().feed(frame)
+    assert func == rp.FUNC_PWM_SERVO and rp.parse_pwm_servo_report(data) == (1, 1500)
+    assert rp.parse_pwm_servo_report(bytes([1, 0x09, 0, 0])) is None

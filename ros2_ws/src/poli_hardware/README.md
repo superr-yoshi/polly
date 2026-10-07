@@ -6,9 +6,9 @@
 ## 노드
 | 노드 | 상태 | 역할 |
 |---|---|---|
-| `fake_rrc_node` | 사용 가능 | 부품 없이 /cmd_vel → /odom_raw, /imu/data (SIM_ONLY) |
-| `rrc_adapter_node` | 구현됨, 실기 미검증 | RRC Lite 실제 주행 (`docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`) |
-| `fake_mega_node` | 사용 가능 | 부품 없이 /range/*, 집게 서비스 (SIM_ONLY) |
+| `fake_rrc_node` | 사용 가능 | 부품 없이 /cmd_vel → /odom_raw, /imu/data, 집게 (SIM_ONLY) |
+| `rrc_adapter_node` | 구현됨, 실기 미검증 | RRC Lite 실제 주행 + 집게 서보(PWM 포트) (`docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`) |
+| `fake_mega_node` | 사용 가능 | 부품 없이 /range/* (SIM_ONLY) |
 | `mega_bridge_node` | 사용 가능 (실물 Mega 확인) | Arduino Mega 시리얼 v1.1 ↔ ROS |
 | `drive_test` | 사용 가능 | 보정용 주행 시험 (직진/회전/바퀴 N바퀴) → 새 파라미터 계산. `docs/calibration.md` |
 
@@ -28,6 +28,8 @@
 - `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = RRC 내장 IMU 가속도·자이로 3축, fake = z축 각속도만(휠 각속도 복사).
 - `/odom_raw`: RRC 공장 펌웨어라 **명령 기반 추정**이다 (엔코더 값이 안 옴). 보류된 패치 펌웨어(`firmware/rrc_lite_patch/`)를 구우면 자동으로 엔코더 기반이 된다.
 - `/battery_state`: RRC Lite가 보고하는 자기 입력 전압. RRC는 12V 컨버터 뒤에 있어서 LiPo 잔량이 아니다. fake는 12.0 V.
+- `/gripper/*`: 2026-10-07부터 RRC Lite PWM 서보 포트(`rrc_adapter_node`). 서보 포트 전원 점퍼 **5V 필수**.
+  첫 명령 전에는 서보 신호를 보내지 않는다 (RRC가 전원 켤 때 내는 1500 µs = 열림).
 - `/gripper/holding`: 없음. 잡힘 감지 센서 추가 후 제공 예정 (TODO).
 - 기준: `docs/interfaces.md` (담당 1과 약속한 토픽). `/cmd_vel` timeout 0.3 s (약속: 0.5 s 이내).
 
