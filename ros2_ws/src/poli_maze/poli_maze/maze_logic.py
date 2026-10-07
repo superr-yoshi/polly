@@ -1,4 +1,5 @@
-"""미로 탐색 알고리즘 (ROS 없이 동작하는 순수 로직).
+"""
+미로 탐색 알고리즘 (ROS 없이 동작하는 순수 로직).
 
 시뮬레이터(폴리 미로 시뮬레이터)와 같은 규칙을 쓴다.
 
@@ -50,7 +51,7 @@ def opposite(d):
 
 
 def step(cell, d):
-    """cell 에서 d 방향으로 한 칸 간 칸."""
+    """주어진 칸에서 d 방향으로 한 칸 간 칸."""
     return (cell[0] + DIRS[d][0], cell[1] + DIRS[d][1])
 
 
@@ -74,7 +75,7 @@ def how_to_move(facing, d):
 
 
 def facing_after(facing, d):
-    """d 방향으로 한 칸 간 뒤 보는 방향. 후진이면 그대로."""
+    """방향 d 로 한 칸 간 뒤 보는 방향. 후진이면 그대로."""
     return facing if d == opposite(facing) else d
 
 
@@ -93,7 +94,8 @@ class MazeState:
 
     # ----- 벽 -----
     def add_wall(self, cell):
-        """벽 칸을 기록한다. 새로 찾았으면 True.
+        """
+        벽 칸을 기록한다. 새로 찾았으면 True.
 
         지나간 칸, 시작 칸, 목표 칸은 벽일 수 없으므로 무시한다
         (라이다 노이즈로 잘못 찍힌 경우를 걸러낸다).
@@ -136,7 +138,7 @@ class MazeState:
         return best_d
 
     def move(self, d):
-        """d 방향으로 한 칸 이동했다고 기록하고, 도착 칸 방문 +10."""
+        """방향 d 로 한 칸 이동했다고 기록하고, 도착 칸 방문 +10."""
         how = how_to_move(self.facing, d)
         self.facing = facing_after(self.facing, d)
         self.cell = step(self.cell, d)
@@ -166,7 +168,8 @@ class MazeState:
 # 복귀
 # ---------------------------------------------------------------------------
 def build_return_map(visited, walls, start=START, n=N):
-    """올 때 지나간 칸에만, 시작점 1 부터 물결처럼 숫자를 매긴다.
+    """
+    올 때 지나간 칸에만, 시작점 1 부터 물결처럼 숫자를 매긴다.
 
     대기 줄(BFS): 맨 앞 칸을 꺼내서, 옆 칸이 지나간 칸이고 아직 숫자가
     없으면 '꺼낸 칸 숫자 + 1' 을 적고 줄 맨 뒤에 세운다.
@@ -202,7 +205,7 @@ def plan_return(cell, facing, return_map, start=START):
 
 
 def group_segments(dirs):
-    """같은 방향이 이어지는 구간으로 묶는다. [(방향, 칸 수), ...]"""
+    """같은 방향이 이어지는 구간으로 묶어 [(방향, 칸 수), ...] 로 돌려준다."""
     segments = []
     for d in dirs:
         if segments and segments[-1][0] == d:

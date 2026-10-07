@@ -1,4 +1,5 @@
-"""미로를 달려 목표에서 물건을 집고 시작점으로 돌아오는 노드.
+"""
+미로를 달려 목표에서 물건을 집고 시작점으로 돌아오는 노드.
 
 흐름 (플로우 차트와 같음)
   INIT     odom, scan 이 들어오면 잠깐 맵핑한 뒤 첫 방향을 정한다
@@ -112,7 +113,8 @@ class MazeRunner(Node):
         # DRIVE 용
         self.move_dir = None   # 달리는 경기장 방향
         self.queue = []        # [{'cell', 'dir', 'arrived'}]
-        self.after_stop = None # 멈춘 뒤 할 일: ('next', d) / ('grab',) / ('segment',) / ('done',) / ('redecide',)
+        # 멈춘 뒤 할 일: ('next', d) / ('grab',) / ('segment',) / ('done',) / ('redecide',)
+        self.after_stop = None
         self.mode = 'explore'  # 'explore' 또는 'return'
 
         # TURN 용
@@ -141,7 +143,7 @@ class MazeRunner(Node):
     # 센서
     # ------------------------------------------------------------------
     def odom_callback(self, msg):
-        """odom 을 출발 좌표계로 바꿔 저장한다."""
+        """받은 odom 을 출발 좌표계로 바꿔 저장한다."""
         p = msg.pose.pose.position
         yaw = yaw_from_quat(msg.pose.pose.orientation)
         # TODO_HW: 바퀴 odom 의 yaw 가 많이 틀어지면 /imu/data 의 yaw 를 대신 쓴다.
@@ -264,7 +266,8 @@ class MazeRunner(Node):
     # 움직임 시작
     # ------------------------------------------------------------------
     def begin_move(self, d, cells):
-        """d 방향으로 cells 를 달린다. 옆이면 먼저 90도 돈다.
+        """
+        방향 d 로 cells 를 달린다. 옆이면 먼저 90도 돈다.
 
         cells: [(칸, 방향, 이미 판단했는지)]
         """
@@ -308,7 +311,7 @@ class MazeRunner(Node):
     # 주행
     # ------------------------------------------------------------------
     def do_drive(self):
-        """queue 의 칸들을 따라 달린다."""
+        """대기 목록(queue)의 칸들을 따라 달린다."""
         x, y, yaw = self.pose
         ux, uy = self.frame.dir_vec(self.move_dir)
         reverse = self.move_dir == ml.opposite(self.phys_facing)

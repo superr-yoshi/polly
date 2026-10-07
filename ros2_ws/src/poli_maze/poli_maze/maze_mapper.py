@@ -1,4 +1,5 @@
-"""경기장 좌표 변환과 라이다 벽 맵핑 (ROS 없이 동작하는 순수 로직).
+"""
+경기장 좌표 변환과 라이다 벽 맵핑 (ROS 없이 동작하는 순수 로직).
 
 좌표계 ("출발 좌표계")
   - 원점: 시작 칸 중앙
@@ -93,7 +94,7 @@ class WallMapper:
 
     def scan_to_cells(self, pose, ranges, angle_min, angle_inc,
                       range_min=0.0, range_max=float('inf')):
-        """스캔 한 번에서 칸별 점 개수를 센다. {칸: 개수}"""
+        """스캔 한 번에서 칸별 점 개수를 세어 {칸: 개수} 로 돌려준다."""
         x, y, yaw = pose
         lyaw = yaw + LASER_YAW
         lx = x + LASER_X * math.cos(yaw) - LASER_Y * math.sin(yaw)
@@ -116,7 +117,8 @@ class WallMapper:
 
     def add_scan(self, pose, ranges, angle_min, angle_inc,
                  range_min=0.0, range_max=float('inf'), free_cells=()):
-        """스캔을 반영하고, 이번에 새로 확정된 벽 칸 목록을 돌려준다.
+        """
+        스캔을 반영하고, 이번에 새로 확정된 벽 칸 목록을 돌려준다.
 
         free_cells: 이미 지나가서 벽이 아닌 게 확실한 칸 (무시).
         경기장 밖(바깥 테두리 벽)에 찍힌 점은 칸 번호가 범위 밖이라 자동으로 빠진다.
