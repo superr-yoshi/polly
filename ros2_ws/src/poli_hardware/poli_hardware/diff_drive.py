@@ -14,6 +14,11 @@ class DiffDriveParams:
     max_linear: float          # m/s
     max_angular: float         # rad/s
     max_wheel_rpm: float       # 모터 정격 (JGB37-520 330 RPM)
+    min_wheel_speed: float = 0.0   # m/s, 바퀴 둘레 속도 하한. 0 = 끔 (아래 twist_to_wheels 참고)
+
+
+# 이 값(m/s)보다 느린 명령은 정지로 본다. 0에 가까운 잡음이 최소 속도로 튀지 않게 한다.
+STOP_SPEED = 0.005
 
 
 def clamp(v: float, limit: float) -> float:
@@ -26,6 +31,10 @@ def twist_to_wheels(p: DiffDriveParams, linear: float, angular: float):
 
     속도 제한 후, 한쪽 바퀴가 정격 RPM을 넘으면 두 바퀴를 같은 비율로 줄여
     회전 반경(곡률)을 유지한다.
+
+    min_wheel_speed > 0이면, 빠른 쪽 바퀴가 그보다 느릴 때 두 바퀴를 같은 비율로 키운다
+    (곡률 유지). RRC 공장 펌웨어가 PWM 25 % 미만을 꺼서 저속에서 울컥거리기 때문이다.
+    그래서 실제 속도는 명령보다 빠를 수 있다 (제자리 회전도 빨라진다).
     """
     v = clamp(linear, p.max_linear)
     w = clamp(angular, p.max_angular)
@@ -38,6 +47,13 @@ def twist_to_wheels(p: DiffDriveParams, linear: float, angular: float):
         scale = max_w / peak
         left *= scale
         right *= scale
+    peak_speed = max(abs(left), abs(right)) * p.wheel_radius
+    if STOP_SPEED < peak_speed < p.min_wheel_speed:
+        scale = p.min_wheel_speed / peak_speed
+        left *= scale
+        right *= scale
+    elif p.min_wheel_speed > 0 and peak_speed <= STOP_SPEED:
+        left = right = 0.0
     return left, right
 
 

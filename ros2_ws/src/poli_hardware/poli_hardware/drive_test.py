@@ -1,9 +1,9 @@
 """
 보정용 주행 시험 (조원 A). docs/rrc_adapter_plan.md의 실측 순서를 명령 하나로 실행한다.
 
-  ros2 run poli_hardware drive_test straight --distance 1.0 [--speed 0.15]
+  ros2 run poli_hardware drive_test straight --distance 1.0 [--speed 0.25]
   ros2 run poli_hardware drive_test rotate --angle 360 [--speed 0.6]
-  ros2 run poli_hardware drive_test wheel --revs 10 [--rps 1.0]     # 바퀴를 띄우고!
+  ros2 run poli_hardware drive_test wheel --revs 10 [--rps 1.22]    # 바퀴를 띄우고!
 
 끝나면 odom(명령 기반)과 IMU 적분값을 보여주고, 실제로 잰 값을 입력하면
 config/hardware.yaml에 넣을 새 값을 계산한다. (--measured로 미리 줘도 된다)
@@ -20,7 +20,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from poli_hardware.calibration import (
     corrected_ticks_per_rev, corrected_wheel_radius, corrected_wheel_separation)
-from poli_hardware.diff_drive import DiffDriveParams, wheels_to_twist
+from poli_hardware.diff_drive import DiffDriveParams, twist_to_wheels, wheels_to_twist
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
@@ -99,7 +99,8 @@ class DriveTest(Node):
 
 def load_current_params():
     """설치된 config/hardware.yaml에서 현재 값을 읽는다 (없으면 기본값)."""
-    cur = {'wheel_radius': 0.0325, 'wheel_separation': 0.18, 'motor_ticks_per_rev': 1320.0}
+    cur = {'wheel_radius': 0.0325, 'wheel_separation': 0.18, 'motor_ticks_per_rev': 1320.0,
+           'max_linear': 0.25, 'max_angular': 1.0, 'max_wheel_rpm': 330.0, 'min_wheel_speed': 0.0}
     try:
         share = get_package_share_directory('poli_hardware')
         path = os.path.join(share, 'config', 'hardware.yaml')
@@ -141,13 +142,14 @@ def parse_args(argv):
     sub = ap.add_subparsers(dest='mode', required=True)
     s = sub.add_parser('straight', help='직진 -> wheel_radius 보정')
     s.add_argument('--distance', type=float, default=1.0, help='m')
-    s.add_argument('--speed', type=float, default=0.15, help='m/s')
+    s.add_argument('--speed', type=float, default=0.25, help='m/s')
     r = sub.add_parser('rotate', help='제자리 회전 -> wheel_separation 보정')
     r.add_argument('--angle', type=float, default=360.0, help='도, +가 반시계(좌회전)')
     r.add_argument('--speed', type=float, default=0.6, help='rad/s')
     w = sub.add_parser('wheel', help='바퀴 띄우고 N바퀴 -> motor_ticks_per_rev 보정')
     w.add_argument('--revs', type=float, default=10.0)
-    w.add_argument('--rps', type=float, default=1.0, help='바퀴 초당 회전수')
+    w.add_argument('--rps', type=float, default=None,
+                   help='바퀴 초당 회전수 (기본: max_linear 속도에 해당하는 값)')
     for p in (s, r, w):
         p.add_argument('--measured', type=float, default=None,
                        help='실측값 (straight: m, rotate: 도, wheel: 센 바퀴 수). 없으면 끝나고 물어봄')
@@ -162,28 +164,36 @@ def parse_args(argv):
     a.wheel_radius = a.wheel_radius or cur['wheel_radius']
     a.wheel_separation = a.wheel_separation or cur['wheel_separation']
     a.ticks = a.ticks or cur['motor_ticks_per_rev']
+    a.drive = DiffDriveParams(a.wheel_radius, a.wheel_separation, cur['max_linear'],
+                              cur['max_angular'], cur['max_wheel_rpm'], cur['min_wheel_speed'])
     return a
 
 
+def effective_twist(p, linear, angular):
+    """노드가 실제로 내는 (linear, angular). 속도 제한·최소 바퀴 속도 보정을 같은 식으로 적용."""
+    return wheels_to_twist(p, *twist_to_wheels(p, linear, angular))
+
+
 def run(node, a):
+    # 시간은 노드가 실제로 낼 속도(제한·최소 속도 보정 후)로 계산한다
     if a.mode == 'straight':
-        speed = min(abs(a.speed), 0.25)
+        lin, ang = math.copysign(abs(a.speed), a.distance), 0.0
+        speed = abs(effective_twist(a.drive, lin, ang)[0])
         duration = abs(a.distance) / speed
-        lin, ang = math.copysign(speed, a.distance), 0.0
-        what = f'{a.distance:.2f} m 직진 ({speed} m/s, {duration:.1f} s)'
+        what = f'{a.distance:.2f} m 직진 ({speed:.3f} m/s, {duration:.1f} s)'
     elif a.mode == 'rotate':
-        rate = min(abs(a.speed), 1.0)
+        lin, ang = 0.0, math.copysign(abs(a.speed), a.angle)
+        rate = abs(effective_twist(a.drive, lin, ang)[1])
         duration = math.radians(abs(a.angle)) / rate
-        lin, ang = 0.0, math.copysign(rate, a.angle)
-        what = f'제자리 {a.angle:.0f}도 회전 ({rate} rad/s, {duration:.1f} s)'
+        what = f'제자리 {a.angle:.0f}도 회전 ({rate:.2f} rad/s, {duration:.1f} s)'
     else:
-        wheel_rad_s = a.rps * 2.0 * math.pi
-        p = DiffDriveParams(a.wheel_radius, a.wheel_separation, 10.0, 10.0, 1e9)
-        lin, ang = wheels_to_twist(p, wheel_rad_s, wheel_rad_s)
-        duration = a.revs / a.rps
-        what = f'바퀴 {a.revs:.0f}바퀴 ({a.rps} rps, {duration:.1f} s) — 바퀴를 띄웠는지 확인!'
-        if lin > 0.25:
-            print(f'  주의: {lin:.2f} m/s는 max_linear(0.25)에 잘려서 덜 돈다. --rps를 낮추세요.')
+        if a.rps is None:
+            a.rps = a.drive.max_linear / (2.0 * math.pi * a.wheel_radius)
+        lin, ang = a.rps * 2.0 * math.pi * a.wheel_radius, 0.0
+        actual_rps = effective_twist(a.drive, lin, ang)[0] / (2.0 * math.pi * a.wheel_radius)
+        duration = a.revs / actual_rps
+        what = (f'바퀴 {a.revs:.0f}바퀴 ({actual_rps:.3f} rps, {duration:.1f} s)'
+                ' — 바퀴를 띄웠는지 확인!')
 
     print(f'\n[drive_test] {what}')
     if not a.yes:

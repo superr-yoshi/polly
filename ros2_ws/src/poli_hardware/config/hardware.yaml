@@ -10,6 +10,9 @@
     max_linear: 0.25           # m/s, 초기 실내 제한 (무부하 이론 최고 약 1.12 m/s)
     max_angular: 1.0           # rad/s
     max_wheel_rpm: 250.0       # JGB37-520 정격 부하 250 RPM (무부하 330). 제품 사양서_E: 연속 주행은 정격 부근
+    min_wheel_speed: 0.25      # m/s. 이보다 느린 바퀴 명령은 두 바퀴를 같은 비율로 키움 (0 = 끔)
+                               # RRC 공장 펌웨어 PWM 25 % 미만 컷 -> 0.1·0.2 m/s 울컥, 0.25 부드러움 (2026-10-08, 모터 1개 실측)
+                               # 제자리 회전도 바퀴 0.25 m/s 이상이 되어 빨라진다 (약 2.8 rad/s). TODO_MEASURE: 두 모터·바닥에서 재확인
     cmd_timeout: 0.3           # s, /cmd_vel 끊기면 0 속도 (권장 0.2~0.5)
     odom_rate: 25.0            # Hz
     imu_rate: 50.0             # Hz

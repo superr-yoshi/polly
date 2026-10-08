@@ -213,6 +213,7 @@ class RrcNode(Node):
         p('max_linear', 0.25)
         p('max_angular', 1.0)
         p('max_wheel_rpm', 330.0)
+        p('min_wheel_speed', 0.0)        # m/s, 0 = 끔. 저속 울컥거림 방지 (hardware.yaml)
         p('cmd_timeout', 0.3)
         p('odom_rate', 25.0)
         p('imu_rate', 50.0)
@@ -232,7 +233,8 @@ class RrcNode(Node):
             wheel_separation=g('wheel_separation').value,
             max_linear=g('max_linear').value,
             max_angular=g('max_angular').value,
-            max_wheel_rpm=g('max_wheel_rpm').value)
+            max_wheel_rpm=g('max_wheel_rpm').value,
+            min_wheel_speed=g('min_wheel_speed').value)
         self.odom_frame = g('odom_frame').value
         self.base_frame = g('base_frame').value
         self.imu_frame = g('imu_frame').value

@@ -68,3 +68,35 @@ def test_watchdog():
     assert wd.command(1.2) == (0.2, 0.1)
     assert wd.command(1.31) == (0.0, 0.0)         # timeout 후 정지
     assert wd.expired(1.31)
+
+
+PMIN = DiffDriveParams(wheel_radius=0.0325, wheel_separation=0.18,
+                       max_linear=0.25, max_angular=1.0, max_wheel_rpm=330.0,
+                       min_wheel_speed=0.25)
+
+
+def test_min_speed_raises_slow_forward():
+    left, right = twist_to_wheels(PMIN, 0.1, 0.0)
+    assert left * PMIN.wheel_radius == pytest.approx(0.25)
+    assert right == pytest.approx(left)
+
+
+def test_min_speed_keeps_curvature_and_sign():
+    left, right = twist_to_wheels(PMIN, -0.05, 0.2)
+    l0, r0 = twist_to_wheels(P, -0.05, 0.2)
+    assert left / right == pytest.approx(l0 / r0)
+    assert max(abs(left), abs(right)) * PMIN.wheel_radius == pytest.approx(0.25)
+
+
+def test_min_speed_zero_stays_zero():
+    assert twist_to_wheels(PMIN, 0.0, 0.0) == (0.0, 0.0)
+    assert twist_to_wheels(PMIN, 0.001, 0.0) == (0.0, 0.0)
+
+
+def test_min_speed_off_by_default():
+    left, _ = twist_to_wheels(P, 0.1, 0.0)
+    assert left * P.wheel_radius == pytest.approx(0.1)
+
+
+def test_min_speed_does_not_touch_fast_commands():
+    assert twist_to_wheels(PMIN, 0.25, 0.0) == twist_to_wheels(P, 0.25, 0.0)
