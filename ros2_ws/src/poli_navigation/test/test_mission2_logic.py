@@ -1,5 +1,8 @@
+import collections
+import dataclasses
 import math
 
+from hw_model import actual_twist
 from poli_navigation.mission2_logic import (
     ALIGN,
     APPROACH,
@@ -67,9 +70,11 @@ class SimRobot:
         if command.gripper is not None:
             self.gripper_log.append(command.gripper)
 
-        self.yaw += command.angular * DT
-        self.x += command.linear * math.cos(self.yaw) * DT
-        self.y += command.linear * math.sin(self.yaw) * DT
+        # 실제 하드웨어처럼 느린 명령은 0.25 m/s 바퀴 속도로 커진다 (hw_model.py)
+        linear, angular = actual_twist(command.linear, command.angular)
+        self.yaw += angular * DT
+        self.x += linear * math.cos(self.yaw) * DT
+        self.y += linear * math.sin(self.yaw) * DT
         self.now += DT
 
 
@@ -227,3 +232,46 @@ def test_approach_lost_target_goes_to_search():
 
     assert logic.state == SEARCH
     assert command == Command()
+
+
+# ---------------------------------------------------------------
+# 지연이 있는 실제 로봇 (모터 0.2 s, 카메라 0.3 s)
+# 하드웨어 최소 속도 때문에 제자리 회전이 약 2.8 rad/s라서
+# 계속 돌면 카메라가 대상을 본 순간 이미 지나쳐 있다 (turn_pulse.py).
+# ---------------------------------------------------------------
+
+class LaggedSimRobot(SimRobot):
+    """명령이 늦게 반영되고 카메라 결과도 늦게 오는 로봇 (테스트 전용, SIM_ONLY)."""
+
+    def __init__(self, pose, motor_lag_s=0.2, camera_lag_s=0.3):
+        super().__init__(pose=pose)
+        self.commands = collections.deque([Command()] * round(motor_lag_s / DT))
+        self.camera_lag_steps = round(camera_lag_s / DT)
+        self.frames = collections.deque()
+
+    def observe(self):
+        obs = super().observe()
+        self.frames.append(dataclasses.replace(obs))
+        old = self.frames[0]
+        if len(self.frames) > self.camera_lag_steps:
+            self.frames.popleft()
+        obs.detected, obs.x_offset, obs.area = old.detected, old.x_offset, old.area
+        return obs
+
+    def apply(self, command):
+        self.commands.append(command)
+        super().apply(self.commands.popleft())
+
+
+def test_search_finds_target_with_latency_from_any_heading():
+    for start_deg in range(0, 360, 30):
+        logic = Mission2Logic()
+        logic.state = SEARCH
+        robot = LaggedSimRobot(
+            (CENTER_M[0] - 0.5, CENTER_M[1], math.radians(start_deg)))
+
+        states = run(logic, robot, max_seconds=20.0, until=HOLD)
+
+        assert logic.state == HOLD, (start_deg, states)
+        # 한 번 찾은 대상을 놓쳐서 다시 찾는 일(SEARCH로 되돌아감)이 없어야 한다.
+        assert SEARCH not in states[1:], (start_deg, states)

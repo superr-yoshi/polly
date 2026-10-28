@@ -38,6 +38,7 @@ from poli_navigation.mission2_logic import (
     heading_error_to,
 )
 from poli_navigation.scan_to_grid import point_to_cell, update_grid_from_scan
+from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPulse
 
 
 CENTER_M = cell_center_m(CENTER)
@@ -54,18 +55,22 @@ SCAN_SETTLE_S = 0.3
 ARRIVE_TOLERANCE_M = 0.03
 CELL_CENTER_TOLERANCE_M = 0.1
 
-# SIM_ONLY: 속도와 제어 값 (임무 2와 같은 값에서 시작, 실제 로봇에서 조정)
-DRIVE_SPEED = 0.2
-MIN_DRIVE_SPEED = 0.05
+# 속도와 제어 값 (임무 2와 같은 기준, turn_pulse.py 참고)
+# 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
+# 감속(MIN_DRIVE_SPEED)·느린 접근은 실제로는 0.25 m/s가 된다.
+DRIVE_SPEED = 0.25
+MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 SLOWDOWN_GAIN = 1.0
-APPROACH_SPEED = 0.08
+APPROACH_SPEED = HW_MIN_WHEEL_SPEED
 TURN_SPEED = 0.8
 SEARCH_SPEED = 0.6
 HEADING_GAIN = 1.5
 ALIGN_GAIN = 1.0
 
+# TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
-ALIGN_TOLERANCE = 0.1
+# x_offset 1.0 = 화면 끝 (약 33도) -> 0.15 = 약 5도
+ALIGN_TOLERANCE = 0.15
 
 # TODO_MEASURE: 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리
 GRAB_AREA = 15000.0
@@ -124,10 +129,12 @@ class Mission1Logic:
         self.delivering = False
         # 마지막으로 계산한 경로 (확인용)
         self.path = None
+        self.turn_pulse = TurnPulse()
 
     def _change_state(self, new_state, obs):
         self.state = new_state
         self.state_started_at = obs.now
+        self.turn_pulse.reset()
 
     def step(self, obs):
         if self.state_started_at is None:
@@ -253,6 +260,13 @@ class Mission1Logic:
         self._change_state(RELEASE, obs)
         return Command(gripper=GRIPPER_OPEN)
 
+    def _turn_toward(self, error, obs):
+        """제자리 회전. 멀면 계속 돌고, 가까우면 끊어서 돈다 (turn_pulse.py)."""
+        if abs(error) > FINE_TURN_RAD:
+            self.turn_pulse.reset()
+            return math.copysign(TURN_SPEED, error)
+        return self.turn_pulse.angular(error, TURN_SPEED, obs.now)
+
     def _turn(self, obs):
         error = heading_error_to(obs, self.target)
 
@@ -260,7 +274,7 @@ class Mission1Logic:
             self._change_state(DRIVE, obs)
             return self._drive(obs)
 
-        return Command(angular=math.copysign(TURN_SPEED, error))
+        return Command(angular=self._turn_toward(error, obs))
 
     def _drive(self, obs):
         distance = distance_to(obs, self.target)
@@ -303,7 +317,7 @@ class Mission1Logic:
             self._change_state(ALIGN if obs.detected else SEARCH, obs)
             return Command()
 
-        return Command(angular=math.copysign(TURN_SPEED, error))
+        return Command(angular=self._turn_toward(error, obs))
 
     def _search(self, obs):
         if obs.detected:
@@ -311,7 +325,8 @@ class Mission1Logic:
             return Command()
 
         # TODO: 큐브가 중앙에 없을 때 (상대가 먼저 가져감) 대응
-        return Command(angular=SEARCH_SPEED)
+        # 끊어서 돌아야 카메라가 멈춘 화면에서 대상을 찾는다.
+        return Command(angular=self.turn_pulse.angular(1.0, SEARCH_SPEED, obs.now))
 
     def _align(self, obs):
         if not obs.detected:
@@ -322,7 +337,9 @@ class Mission1Logic:
             self._change_state(APPROACH, obs)
             return Command()
 
-        return Command(angular=clamp(-ALIGN_GAIN * obs.x_offset, TURN_SPEED))
+        # 대상이 화면 안에 있으면 오차가 작으므로 항상 끊어서 돈다. x_offset 음수 = 왼쪽.
+        return Command(
+            angular=self.turn_pulse.angular(-obs.x_offset, TURN_SPEED, obs.now))
 
     def _approach(self, obs):
         if not obs.detected:
