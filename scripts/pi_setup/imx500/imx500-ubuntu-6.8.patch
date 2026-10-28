@@ -1,0 +1,68 @@
+--- /tmp/imx500.orig.c	2026-10-28 21:35:13.357231725 +0900
++++ imx500.c	2026-10-28 21:35:13.376924663 +0900
+@@ -24,6 +24,8 @@
+ #include <media/v4l2-fwnode.h>
+ #include <media/v4l2-mediabus.h>
+ 
++#include "imx500_cpio.inc"
++
+ /* Chip ID */
+ #define IMX500_REG_CHIP_ID CCI_REG16(0x0016)
+ #define IMX500_CHIP_ID 0x0500
+@@ -233,6 +235,10 @@
+ 
+ enum pad_types { IMAGE_PAD, METADATA_PAD, NUM_PADS };
+ 
++#ifndef V4L2_CID_USER_IMX500_BASE
++/* rpi 커널 uapi 값 (libcamera와 일치해야 함) */
++#define V4L2_CID_USER_IMX500_BASE (V4L2_CID_USER_BASE + 0x2000)
++#endif
+ #define V4L2_CID_USER_IMX500_INFERENCE_WINDOW (V4L2_CID_USER_IMX500_BASE + 0)
+ #define V4L2_CID_USER_IMX500_NETWORK_FW_FD (V4L2_CID_USER_IMX500_BASE + 1)
+ 
+@@ -1672,7 +1678,7 @@
+ 		return -EINVAL;
+ 
+ 	size = imx500_valid_fw_bytes(fw, fw_size);
+-	cd = find_cpio_data("imx500_regs", (void *)(fw + size),
++	cd = imx500_find_cpio_data("imx500_regs", (void *)(fw + size),
+ 			    fw_size - size, NULL);
+ 	if (!cd.data || cd.size % 7)
+ 		return -EINVAL;
+@@ -2105,8 +2111,7 @@
+ 	mutex_lock(&imx500->mutex);
+ 
+ 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+-		struct v4l2_mbus_framefmt *try_fmt = v4l2_subdev_get_try_format(
+-			&imx500->sd, sd_state, fmt->pad);
++		struct v4l2_mbus_framefmt *try_fmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
+ 		/* update the code which could change due to vflip or hflip */
+ 		try_fmt->code = fmt->pad == IMAGE_PAD ?
+ 					imx500_get_format_code(imx500) :
+@@ -2174,7 +2179,7 @@
+ 					      fmt->format.height);
+ 		imx500_update_image_pad_format(imx500, mode, fmt);
+ 		if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+-			framefmt = v4l2_subdev_get_try_format(sd, sd_state,
++			framefmt = v4l2_subdev_state_get_format(sd_state,
+ 							      fmt->pad);
+ 			*framefmt = fmt->format;
+ 		} else if (imx500->mode != mode) {
+@@ -2184,7 +2189,7 @@
+ 		}
+ 	} else {
+ 		if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+-			framefmt = v4l2_subdev_get_try_format(sd, sd_state,
++			framefmt = v4l2_subdev_state_get_format(sd_state,
+ 							      fmt->pad);
+ 			*framefmt = fmt->format;
+ 		} else {
+@@ -2204,7 +2209,7 @@
+ {
+ 	switch (which) {
+ 	case V4L2_SUBDEV_FORMAT_TRY:
+-		return v4l2_subdev_get_try_crop(&imx500->sd, sd_state, pad);
++		return v4l2_subdev_state_get_crop(sd_state, pad);
+ 	case V4L2_SUBDEV_FORMAT_ACTIVE:
+ 		return &imx500->mode->crop;
+ 	}

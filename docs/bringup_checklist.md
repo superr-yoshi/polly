@@ -55,9 +55,10 @@ ros2 launch poli_navigation mission2.launch.py use_fake_hardware:=false
 | `MAX_ANGULAR_SPEED_FOR_SCAN` | `wall_localizer.py` | 0.3 rad/s | 제자리 회전 중 `Wall correction` 위치가 튀는 속도 |
 | `CORE_MARGIN_M` | `scan_to_grid.py` | 0.1 | 임무 1 격자 지도가 실제와 맞는지 보고 조정 |
 | 속도·게인 (`SIM_ONLY`) | `mission2_logic.py`, `mission1_logic.py` | 시뮬레이션 값 | 실제 주행을 보고 조정 |
+| `PULSE_S`, `SETTLE_S` | `turn_pulse.py` | 0.05 s, 0.25 s | 바퀴를 띄우고 펄스 한 번에 도는 각도 측정. 회전 허용 오차(±5도)보다 작아야 멈출 수 있다 |
 
 ## 5. 다른 사람에게 확인할 것
-- [ ] 조원 B: Ubuntu 24.04에서 `python3 -c "import picamera2"` 되는지 (Raspberry Pi OS용 라이브러리라 안 될 수 있다)
+- [x] 조원 B: Ubuntu 24.04에서 `python3 -c "import picamera2"` 되는지 → 처음엔 안 됨 (커널 드라이버·libcamera 없음). 드라이버와 Pi 판 libcamera·Picamera2를 직접 설치해 해결 (2026-10-28, `scripts/pi_setup/imx500/README.md`). 카메라는 CAM/DISP 1
 - [ ] 조원 B: 카메라 좌우 반전 (`CAMERA_HFLIP`) — 왼쪽 물체가 `x_offset` 음수인지
 - [x] 조원 A: 같은 집게 명령이 1초마다 와도 Mega 쪽 문제없는지 → 문제없음 (2026-10-06, `docs/interfaces.md` 5-1)
 
