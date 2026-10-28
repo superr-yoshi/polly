@@ -22,6 +22,16 @@ Pi에 모니터가 없어도 노트북(WSL)의 RViz2 / rqt_image_view로 Pi의 R
 양쪽 모두 `ROS_DOMAIN_ID=0` (Pi `~/.bashrc`), `ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`.
 처음에 토픽이 안 보이면 `ros2 daemon stop` 후 `ros2 topic list --no-daemon --spin-time 8`.
 
+## 한 줄로 보기 (노트북 VS Code 터미널, 저장소 폴더에서)
+| 확인 | 명령 | 끝내기 |
+|---|---|---|
+| LiDAR | `bash scripts/laptop/view_lidar.sh` | RViz 창 닫기 (Pi LiDAR도 꺼짐) |
+| 카메라 영상 | `bash scripts/laptop/view_camera.sh` | 영상 창 닫기 (Pi 영상 발행도 꺼짐) |
+| 빨간 물체 인식 값 | `bash scripts/laptop/watch_target.sh` | Ctrl+C |
+
+Pi IP는 자동으로 찾는다. 못 찾으면 뒤에 IP를 붙인다: `bash scripts/laptop/view_lidar.sh 172.25.114.24`.
+카메라 스크립트는 Pi 저장소에 `scripts/camera_stream_test.py`가 있어야 한다 (Pi에서 `git pull`).
+
 ## LiDAR
 - Pi: LiDAR 켜기 (임무 launch를 켜면 같이 켜진다)
   ```bash
