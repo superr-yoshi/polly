@@ -23,9 +23,9 @@ git clone https://github.com/Slamtec/sllidar_ros2.git
 cd ~/lidar_ws && colcon build --symlink-install
 echo "source ~/lidar_ws/install/setup.bash" >> ~/.bashrc
 ```
-- [ ] LiDAR만 켜기: `ros2 launch sllidar_ros2 sllidar_c1_launch.py serial_port:=/dev/ttyUSB0`
-- [ ] `ros2 topic hz /scan` 약 10Hz → `mission1_node.SCAN_TIMEOUT`, `wall_localizer.MAX_ANGULAR_SPEED_FOR_SCAN` 확인
-- [ ] udev 별칭 `/dev/robot_lidar` 만들기 (`docs/udev_template.md`). 안 했으면 launch에 `lidar_port:=/dev/ttyUSB0`
+- [x] LiDAR만 켜기: `ros2 launch sllidar_ros2 sllidar_c1_launch.py serial_port:=/dev/ttyUSB0` (2026-10-28 OK, health OK, 펌웨어 1.02)
+- [x] `ros2 topic hz /scan` 약 10Hz (2026-10-28 실측 10.01~10.02 Hz) → `mission1_node.SCAN_TIMEOUT`, `wall_localizer.MAX_ANGULAR_SPEED_FOR_SCAN` 확인
+- [x] udev 별칭 `/dev/robot_lidar` 만들기 (`docs/udev_template.md`, 2026-10-28 RRC·Mega·LiDAR 규칙 설치, LiDAR 별칭으로 10 Hz 확인). 안 했으면 launch에 `lidar_port:=/dev/ttyUSB0`
 
 ## 2. LiDAR 장착값 (URDF 한 곳에서만 고친다)
 `ros2_ws/src/poli_description/urdf/poli.urdf.xacro`의 `lidar_x`, `lidar_y`, `lidar_yaw`.
