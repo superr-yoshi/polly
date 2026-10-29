@@ -13,7 +13,7 @@ ros2 launch poli_hardware hardware.launch.py             # 하드웨어 launch�
 |---|---|---|
 | `base_link` | 좌우 구동 바퀴 축의 가운데 | x 정면, y 왼쪽, z 위 |
 | `laser` | RPLIDAR C1 레이저 | sllidar_ros2 기본 frame 이름과 같음. 레이저 높이 < 0.20 m 이어야 함 |
-| `imu_link` | RRC Lite 내장 IMU | 보드 방향 실측 필요 |
+| `imu_link` | BNO085 (Mega I2C) | 보드 위치·방향 실측 필요 |
 | `camera_link` | AI Camera | 아래로 숙인 각 `camera_pitch` |
 | `ultrasonic_front_link` / `_left_link` / `_right_link` / `_rear_link` | HC-SR04 | +x = 센서가 보는 방향. 좌측만 낮게, 나머지 지면 약 14 cm |
 | `gripper_link` | 집게 | 들어 올리기 없음 |

@@ -1,8 +1,10 @@
 # POLI 하드웨어 계층 파라미터 (조원 A)
 # TODO_MEASURE = 조립 후 실측 필수, SIM_ONLY = 시뮬레이션용 임시값 (실기에 그대로 쓰지 말 것)
 # 이 파일 변경은 코드 변경과 같은 수준으로 리뷰한다.
+# 2026-10-29: RRC Lite -> MDD10 + Mega. 모터·엔코더·IMU 관련 값 일부(방향, 속도 제어 이득)는
+#             Mega 펌웨어 config.h에 있다 (firmware/mega_sensor_controller/config.h).
 
-# fake_rrc_node / rrc_adapter_node 공통 (주행 계층)
+# fake_mega_node / mega_bridge_node 공통
 /**:
   ros__parameters:
     wheel_radius: 0.0325       # 65 mm 바퀴 기준. 직선 1~2 m 주행으로 보정 (TODO_MEASURE)
@@ -10,51 +12,36 @@
     max_linear: 0.25           # m/s, 초기 실내 제한 (무부하 이론 최고 약 1.12 m/s)
     max_angular: 1.0           # rad/s
     max_wheel_rpm: 250.0       # JGB37-520 정격 부하 250 RPM (무부하 330). 제품 사양서_E: 연속 주행은 정격 부근
-    min_wheel_speed: 0.25      # m/s. 이보다 느린 바퀴 명령은 두 바퀴를 같은 비율로 키움 (0 = 끔)
-                               # RRC 공장 펌웨어 PWM 25 % 미만 컷 -> 0.1·0.2 m/s 울컥, 0.25 부드러움 (2026-10-08, 모터 1개 실측)
-                               # 제자리 회전도 바퀴 0.25 m/s 이상이 되어 빨라진다 (약 2.8 rad/s). TODO_MEASURE: 두 모터·바닥에서 재확인
-    cmd_timeout: 0.3           # s, /cmd_vel 끊기면 0 속도 (권장 0.2~0.5)
-    odom_rate: 25.0            # Hz
-    imu_rate: 50.0             # Hz
+    min_wheel_speed: 0.25      # m/s. 0 = 끔. 이보다 느린 바퀴 명령은 두 바퀴를 같은 비율로 키움
+                               # RRC 공장 펌웨어 PWM 25 % 미만 컷 때문에 도입 (2026-10-08). 제자리 회전도 약 2.8 rad/s
+                               # ⚠ poli_navigation turn_pulse.HW_MIN_WHEEL_SPEED와 같아야 한다 (담당 1)
+                               # TODO_MEASURE: MDD10 + Mega 속도 제어는 저속도 될 수 있다. 0.1·0.15 m/s가 부드러우면
+                               #   담당 1과 함께 값을 낮추거나 끈다 (이 파일만 바꾸지 말 것)
+    cmd_timeout: 0.3           # s, /cmd_vel 끊기면 0 속도 (권장 0.2~0.5). Mega 펌웨어도 0.3 s 뒤 스스로 정지
+    odom_rate: 25.0            # Hz, $DRV 전송 주기와 같다
+    imu_rate: 25.0             # Hz, Mega $IMU 주기와 같다
     odom_frame: odom
     base_frame: base_link
     imu_frame: imu_link
-    # 집게 DS3218 1개 -> RRC Lite PWM 서보 포트 (2026-10-07 Mega D9에서 이전, 제품 사양서_E)
-    # ⚠ RRC 서보 포트 전원 점퍼는 반드시 5V (입력 전압 12V 쪽이면 DS3218 최대 6.8V 초과로 파손)
-    gripper_servo_id: 1        # RRC PWM 서보 포트 1~4 (TODO_MEASURE: 실제 꽂은 포트)
-    gripper_open_us: 1500      # 열림. RRC가 전원을 켤 때 서보를 1500 us로 보내므로 맞춰 둠 → 전원 켤 때 집게가 안 움직임 (TODO_MEASURE)
-    gripper_close_us: 1833     # 닫아 잡기. 500~2500 us = 0~180도 (TODO_MEASURE: 대상 50 mm를 꽉 잡는 값)
-    gripper_move_ms: 1000      # 열기/닫기 이동 시간 (임무 노드 GRASP_WAIT_S 1.5 s 안)
-
-rrc_adapter_node:
-  ros__parameters:
-    port: /dev/robot_rrc       # udev 별칭 (docs/udev_template.md)
-    baud: 1000000              # 제조사 펌웨어 USART1 설정 (docs/rrc_protocol.md)
-    motor_type: 1              # 1 = JGB37 (부팅 기본값은 JGA27이라 반드시 설정)
-    motor_ticks_per_rev: 1320.0  # JGB37-520 12V 330RPM = 30:1 x 11PPR x 4. 펌웨어는 1980(45:1) 가정 -> Pi가 비율 보정
-                               # TODO_MEASURE: 10초 1rev/s 명령 -> 바퀴 10바퀴인지 확인 (PPR 12 변형이면 1440)
-    max_motor_rps: 3.0         # 펌웨어 JGB37 제한과 동일. 펌웨어 명령 경로는 제한을 안 걸어서 Pi가 제한
-    left_motor_id: 0           # M1 (0부터 시작)
-    right_motor_id: 1          # M2
-    left_sign: -1.0            # TODO_MEASURE: 제조사 탱크 차체 규칙 기준. 바퀴 띄우고 전진 명령으로 확인
-    right_sign: 1.0            # TODO_MEASURE
-    imu_timeout: 0.5           # s
-
-mega_bridge_node:
-  ros__parameters:
-    port: /dev/robot_mega      # udev 별칭
-    baud: 115200               # docs/serial_protocol.md v1.1
-    open_delay: 2.0            # 포트 열면 Mega 자동 리셋
-    stale_timeout: 1.0         # s, RNG 끊김 경고
     median_window: 3           # 초음파 중간값 필터 (홀수, 1 = 끔). 튀는 값 제거, 지연 약 0.125 s
     field_of_view: 0.26        # rad, HC-SR04 약 15도
     min_range: 0.02
     max_range: 4.0
 
+mega_bridge_node:
+  ros__parameters:
+    port: /dev/robot_mega      # udev 별칭 (docs/udev_template.md)
+    baud: 115200               # docs/serial_protocol.md v2.0
+    open_delay: 2.0            # 포트 열면 Mega 자동 리셋
+    stale_timeout: 1.0         # s, RNG 끊김 경고
+    motor_ticks_per_rev: 1320.0  # 바퀴 1회전 엔코더 tick = 30:1 x 11PPR x 4체배 (펌웨어가 4체배로 셈)
+                               # TODO_MEASURE: drive_test wheel --revs 10 (PPR 12 변형이면 1440)
+    encoder_timeout: 0.2       # s, $ENC(50 Hz)가 끊기면 바퀴 속도 0으로 봄
+    imu_timeout: 0.5           # s, $IMU가 끊기면 /imu/data는 휠 각속도로 대신
+    ack_timeout: 0.5           # s, $GRIP 응답 대기 (최대 3번 전송)
+
 fake_mega_node:
   ros__parameters:
     fake_range: 2.0            # SIM_ONLY
     range_rate: 8.0
-    field_of_view: 0.26
-    min_range: 0.02
-    max_range: 4.0
+    fake_gripper_move_s: 1.0   # SIM_ONLY: 집게 이동 시간 (임무 노드 GRASP_WAIT_S 1.5 s 안)

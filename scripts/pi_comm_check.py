@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Pi <-> RRC Lite / Mega 통신 확인 (듣기 전용).
+"""Pi <-> Mega 통신 확인 (듣기 전용).
 
-보드에 아무것도 보내지 않는다. 모터·서보가 움직이지 않는다.
-RRC Lite는 IMU(약 50 Hz)와 전압(약 1 Hz), Mega는 초음파 RNG(약 8 Hz)를 스스로 보내므로
-그것을 받아서 개수·오류·값을 보여 준다.
-
-꽂혀 있는 보드만 검사하고, 안 꽂힌 보드는 건너뛴다.
+보드에 아무것도 보내지 않는다. 모터·서보가 움직이지 않는다 (Mega는 첫 명령 전에는 모터를 돌리지 않음).
+Mega가 스스로 보내는 엔코더 ENC(약 50 Hz), IMU(BNO085 연결 시 약 25 Hz), 초음파 RNG(약 8 Hz)를
+받아서 개수·오류·값을 보여 준다. 2026-10-29부터 RRC Lite는 쓰지 않는다 (MDD10 + Mega).
 
 실행 (Pi에서):  python3 ~/polly/scripts/pi_comm_check.py           # 장치 자동 찾기, 각 5초
                python3 ~/polly/scripts/pi_comm_check.py --seconds 10
-               python3 ~/polly/scripts/pi_comm_check.py --rrc /dev/ttyACM0 --mega /dev/ttyACM1
+               python3 ~/polly/scripts/pi_comm_check.py --mega /dev/ttyACM0
 준비: pyserial (Ubuntu에 기본 설치됨), 사용자가 dialout 그룹.
 """
 import argparse
@@ -23,10 +21,9 @@ from serial.tools import list_ports
 # 패키지의 순수 프로토콜 모듈을 그대로 쓴다 (ROS 없이 import 가능)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 '..', 'ros2_ws', 'src', 'poli_hardware'))
-from poli_hardware import mega_protocol, rrc_protocol  # noqa: E402
+from poli_hardware import mega_protocol  # noqa: E402
 
 # docs/udev_template.md 확정값 (VID, PID)
-RRC_USB = ('1a86', '55d4')    # CH9102
 MEGA_USB = ('2341', '0042')   # 정품 Mega 2560
 MEGA_BAUD = 115200            # docs/serial_protocol.md
 
@@ -40,44 +37,12 @@ def find_port(alias, vid_pid):
     return None
 
 
-def check_rrc(port, seconds):
-    print(f'\n=== RRC Lite ({port}, {rrc_protocol.BAUD} baud) ===')
-    parser = rrc_protocol.FrameParser()
-    imu_n, last_imu, batt_mv = 0, None, None
-    with serial.Serial(port, rrc_protocol.BAUD, timeout=0.1) as ser:
-        ser.reset_input_buffer()
-        end = time.time() + seconds
-        while time.time() < end:
-            for func, data in parser.feed(ser.read(512)):
-                if func == rrc_protocol.FUNC_IMU:
-                    imu = rrc_protocol.parse_imu(data)
-                    if imu:
-                        imu_n += 1
-                        last_imu = imu
-                elif func == rrc_protocol.FUNC_SYS:
-                    mv = rrc_protocol.parse_battery_mv(data)
-                    if mv is not None:
-                        batt_mv = mv
-    print(f'정상 프레임 {parser.ok}, 오류 {parser.bad}')
-    print(f'IMU {imu_n}개 = {imu_n / seconds:.1f} Hz (기대 약 50 Hz)')
-    if last_imu:
-        ax, ay, az, gx, gy, gz = last_imu
-        print(f'  가속도 m/s^2 x={ax:+.2f} y={ay:+.2f} z={az:+.2f} '
-              '(평평하게 두면 z 약 +9.8)')
-        print(f'  자이로 rad/s x={gx:+.3f} y={gy:+.3f} z={gz:+.3f} (가만히 두면 약 0)')
-    if batt_mv is not None:
-        print(f'  입력 전압 {batt_mv / 1000:.2f} V (LiPo 잔량 아님. 12 V 스위치 꺼짐이면 낮게 나옴)')
-    else:
-        print('  전압 보고 없음 (1 Hz라 시간이 짧으면 못 받을 수 있음)')
-    ok = imu_n >= seconds * 30 and parser.bad <= max(2, parser.ok // 50)
-    print('결과:', 'PASS' if ok else 'FAIL')
-    return ok
-
-
 def check_mega(port, seconds):
     print(f'\n=== Mega ({port}, {MEGA_BAUD} baud) ===')
     parser = mega_protocol.MegaParser()
     rng_n, last = 0, None
+    enc_n, enc_first, enc_last = 0, None, None
+    imu_n, imu_last = 0, None
     with serial.Serial(port, MEGA_BAUD, timeout=0.2) as ser:
         print('포트를 열면 Mega가 재시작한다. 2초 기다림...')
         time.sleep(2.0)
@@ -91,19 +56,38 @@ def check_mega(port, seconds):
             if isinstance(pkt, mega_protocol.RngPacket):
                 rng_n += 1
                 last = pkt
+            elif isinstance(pkt, mega_protocol.EncPacket):
+                enc_n += 1
+                enc_first = enc_first or pkt
+                enc_last = pkt
+            elif isinstance(pkt, mega_protocol.ImuPacket):
+                imu_n += 1
+                imu_last = pkt
     print(f'정상 {parser.ok}, 오류 {parser.bad}, seq 누락 {parser.gap}')
     print(f'RNG {rng_n}개 = {rng_n / seconds:.1f} Hz (기대 약 8 Hz)')
     if last:
         vals = ', '.join(f'{n}={mm} mm' for n, mm in zip(mega_protocol.RANGE_ORDER, last.mm))
         print(f'  마지막 거리: {vals} (0 = 측정 실패/범위 밖)')
-    ok = rng_n >= seconds * 4 and parser.bad <= 2
+    print(f'ENC {enc_n}개 = {enc_n / seconds:.1f} Hz (기대 약 50 Hz)')
+    if enc_last:
+        print(f'  엔코더 tick: 왼쪽 {enc_first.left} -> {enc_last.left}, '
+              f'오른쪽 {enc_first.right} -> {enc_last.right} '
+              '(검사 중 바퀴를 손으로 앞으로 돌리면 둘 다 커져야 정상)')
+        print(f'  모터 상태: {enc_last.status_name} (명령을 안 보냈으니 idle이 정상)')
+    print(f'IMU {imu_n}개 = {imu_n / seconds:.1f} Hz (BNO085 연결 시 약 25 Hz, 없으면 0)')
+    if imu_last:
+        _, gyro, accel = imu_last.to_si()
+        print(f'  가속도 m/s^2 x={accel[0]:+.2f} y={accel[1]:+.2f} z={accel[2]:+.2f} '
+              '(평평하게 두면 z 약 +9.8)')
+        print(f'  자이로 rad/s x={gyro[0]:+.3f} y={gyro[1]:+.3f} z={gyro[2]:+.3f} (가만히 두면 약 0)')
+    ok = (rng_n >= seconds * 4 and enc_n >= seconds * 30 and parser.bad <= 2
+          and (enc_last is None or enc_last.status not in mega_protocol.MOTOR_FAULTS))
     print('결과:', 'PASS' if ok else 'FAIL')
     return ok
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Pi <-> RRC Lite / Mega 통신 확인 (듣기 전용)')
-    ap.add_argument('--rrc', help='RRC 포트 (기본: 자동)')
+    ap = argparse.ArgumentParser(description='Pi <-> Mega 통신 확인 (듣기 전용)')
     ap.add_argument('--mega', help='Mega 포트 (기본: 자동)')
     ap.add_argument('--seconds', type=float, default=5.0)
     args = ap.parse_args()
@@ -115,8 +99,7 @@ def main():
 
     results = {}
     for name, given, alias, usb, fn in (
-            ('RRC Lite', args.rrc, '/dev/robot_rrc', RRC_USB, check_rrc),
-            ('Mega', args.mega, '/dev/robot_mega', MEGA_USB, check_mega)):
+            ('Mega', args.mega, '/dev/robot_mega', MEGA_USB, check_mega),):
         port = given or find_port(alias, usb)
         if port is None:
             print(f'\n=== {name}: 연결 안 됨 -> 건너뜀 ===')

@@ -1,9 +1,9 @@
 """
 바퀴 시험 (Pi에서 실행): /cmd_vel로 정해진 짧은 동작만 보내고 멈춘다.
 
-rrc_adapter_node가 켜져 있어야 한다. ⚠️ 바퀴를 바닥에서 띄우고 한다.
+mega_bridge_node가 켜져 있어야 한다. ⚠️ 바퀴를 바닥에서 띄우고 한다.
 Ctrl+C나 SSH 끊김으로 이 프로그램이 멈추면 /cmd_vel이 끊기고,
-rrc_adapter_node가 0.3초 뒤 바퀴를 세운다 (cmd_timeout).
+mega_bridge_node가 0.3초 뒤 바퀴를 세운다 (cmd_timeout). 노드가 죽어도 Mega 펌웨어가 0.3초 뒤 멈춘다.
 """
 import time
 
@@ -11,7 +11,7 @@ from geometry_msgs.msg import Twist
 import rclpy
 
 RATE_HZ = 20.0
-# (설명, linear m/s, angular rad/s, 초). 0.25 m/s = 조원 A가 정한 주행 속도
+# (설명, linear m/s, angular rad/s, 초). 0.25 m/s = 조원 A가 정한 주행 속도 (RRC 때 기준)
 STEPS = [
     ('앞으로', 0.25, 0.0, 2.0),
     ('정지', 0.0, 0.0, 1.0),
@@ -28,7 +28,7 @@ def main():
     rclpy.init()
     node = rclpy.create_node('wheel_test')
     pub = node.create_publisher(Twist, '/cmd_vel', 10)
-    # rrc_adapter_node와 연결될 시간
+    # mega_bridge_node와 연결될 시간
     time.sleep(1.0)
     try:
         for name, linear, angular, seconds in STEPS:

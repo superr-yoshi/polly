@@ -19,7 +19,8 @@ setup(
     zip_safe=True,
     maintainer='수아',
     maintainer_email='teampolly33@gmail.com',
-    description='POLI hardware layer: RRC Lite adapter, Arduino Mega bridge, fake nodes',
+    description='POLI hardware layer: Arduino Mega bridge (MDD10 drive, encoders, IMU, '
+                'ultrasonic, gripper), fake node',
     license='TODO: License declaration',
     extras_require={
         'test': [
@@ -28,8 +29,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'fake_rrc_node = poli_hardware.rrc_node:main_fake',
-            'rrc_adapter_node = poli_hardware.rrc_node:main_real',
             'fake_mega_node = poli_hardware.fake_mega_node:main',
             'mega_bridge_node = poli_hardware.mega_bridge_node:main',
             'drive_test = poli_hardware.drive_test:main',
