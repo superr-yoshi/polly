@@ -1,5 +1,8 @@
 # RRC Lite ↔ Pi 시리얼 프로토콜 (제조사 펌웨어 분석)
 
+> **2026-10-29: RRC Lite를 쓰지 않는다** (모터 드라이버 Cytron MDD10 + Mega로 변경, `docs/pin_map.md`·`docs/serial_protocol.md` v2.0).
+> 이 문서는 RRC Lite 때의 기록이다. 구현 파일 `rrc_protocol.py`·`rrc_node.py`는 삭제했다 (git 기록에 남아 있음).
+
 - 대상: **Hiwonder RRC Lite Controller (STM32F407VET6)**. "ROS Robot Control Board"(별도 제품)가 아님
 - 출처: 제조사 자료실 `RosRobotControllerLite_ros_250814.zip` → `RosRobotControllerLite_ros_250811` 소스
   - RRC Lite 전용 확인 근거: `Doc/log.txt`에 "RRC의 IIC가 RRCLite의 IIC2, IMU 칩 QMI8658", `.ioc`의 MCU = STM32F407VET6

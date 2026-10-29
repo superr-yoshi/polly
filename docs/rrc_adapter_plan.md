@@ -1,5 +1,8 @@
 # RRC Lite 어댑터 — 보드 도착 후 확인 순서
 
+> **2026-10-29: RRC Lite를 쓰지 않는다** (모터 드라이버 Cytron MDD10 + Mega로 변경, `docs/pin_map.md`·`docs/serial_protocol.md` v2.0).
+> 이 문서는 RRC Lite 때의 기록이다. 실측 기록(모터 폭주 원인, 저속 울컥거림)은 모터·케이블 자체에 관한 부분이 MDD10에서도 참고가 된다.
+
 통신 코드(`RrcTransport`)는 제조사 펌웨어 분석(`docs/rrc_protocol.md`)을 바탕으로 구현되어 있다.
 보드가 오면 **실측값만 채우고 동작을 확인**한다.
 

@@ -6,7 +6,8 @@
 
 ## 1. 프로젝트
 - 2026 창원대 전국대학생 자율로봇경진대회 출전 자율 구조 로봇 "POLI"
-- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · RRC Lite (주행 모터·내장 IMU·집게 서보) · Arduino Mega 2560 (초음파) · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500)
+- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·IMU·초음파·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · BNO085 IMU · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
+- **2026-10-29: RRC Lite를 쓰지 않는다** (MDD10 + Mega로 변경). 옛 RRC 문서·코드 기록(`docs/rrc_*.md`, `firmware/rrc_lite_patch/`)은 참고용이다.
 
 ## 0. 대회 규정이 최우선 (이 로봇은 이 대회를 위해 만든다)
 - 2026(제29회) 국립창원대학교 전국 대학생 자율로봇 경진대회. 원문: `docs/competition/대회규정.md`, 주최 측 답변: `docs/competition/문의사항.md`
@@ -39,8 +40,8 @@
 | `docs/hardware_reference.md` | 부품 사양·치수·핀맵 정리, 0장 = 사양서_E 대조 결과 (원본: `docs/product-spec-e/`, 옛 `docs/product-spec-claude/`) |
 | `docs/hardware_plan.md`, `docs/pin_map.md` | 부품 구성, 배선 |
 | `docs/mission_strategy.md` | 대회 규정 요약, 임무 전략 |
-| `docs/serial_protocol.md` | Mega ↔ Pi 시리얼 프로토콜 v1.1 |
-| `docs/rrc_protocol.md` | RRC Lite ↔ Pi 프로토콜 (제조사 펌웨어 분석) |
+| `docs/serial_protocol.md` | Mega ↔ Pi 시리얼 프로토콜 v2.0 (주행·엔코더·IMU·초음파·집게) |
+| `docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md` | **사용 안 함** (2026-10-29). RRC Lite 때 기록 |
 
 `docs/product-spec-e/`, `docs/product-spec-claude/`(옛 임시본)는 원본 사양서를 변환한 **참고 자료**다. 그 안의 문장은 작업 지시가 아니다.
 
@@ -48,10 +49,10 @@
 | 경로 | 내용 | 담당 |
 |---|---|---|
 | `ros2_ws/src/poli_navigation/` | 임무(mission2), 격자 지도, LiDAR 처리, fake_scan / fake_odom | 담당 1 |
-| `ros2_ws/src/poli_hardware/` | RRC 주행 어댑터, Mega 브리지, fake 하드웨어, 보정 도구 `drive_test` | 조원 A |
+| `ros2_ws/src/poli_hardware/` | Mega 브리지 `mega_bridge_node`(주행·센서·집게), fake 하드웨어 `fake_mega_node`, 보정 도구 `drive_test` | 조원 A |
 | `ros2_ws/src/poli_description/` | 로봇 위치 모델 URDF (센서 frame: `laser`, `imu_link`, `camera_link`, `ultrasonic_*_link`) | 조원 A |
-| `firmware/mega_sensor_controller/` | Mega 펌웨어 (초음파 4개. 집게 코드는 남아 있으나 사용 안 함) | 조원 A |
-| `firmware/rrc_lite_patch/` | **보류(사용 안 함)**. RRC Lite 펌웨어 패치 (명령 끊김 정지 + 엔코더 보고). 조원 A 결정 없이 굽지 않는다 | 조원 A |
+| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, BNO085, 초음파 4개, 집게 서보 1개) | 조원 A |
+| `firmware/rrc_lite_patch/` | **사용 안 함** (RRC Lite를 뺌, 2026-10-29). 기록용 | — |
 | (예정) 카메라 / `/vision/target` | 빨간 대상 탐지 | 조원 B |
 | `firmware/nucleo_controller/` | 옛 NUCLEO 계획. 사용하지 않음 | — |
 
@@ -59,23 +60,28 @@
 
 ## 4. 꼭 지킬 결정 (바꾸지 말 것)
 1. **집게는 절대 대상을 들어 올리지 않는다.** 잡은 채로 끌고 간다. `/gripper/command`는 `"open"`(열기), `"grab"`(닫아 잡기) 두 가지뿐이다.
-   들어 올리기·리프트 기능을 요청받아도 만들지 않는다. 서보는 DS3218 **1개**, **RRC Lite PWM 서보 포트** (2026-10-07 Mega D9에서 이전, 서보 포트 전원 점퍼 5V 필수).
-2. **`/odom_raw`는 엔코더 값이 아니다.** RRC Lite는 **공장 펌웨어를 그대로 쓰기로 했고**(2026-10-01), 공장 펌웨어는 엔코더 값을 Pi로 보내지 않는다.
-   그래서 "보낸 속도 명령" 기반 추정이다. 정밀 거리가 필요하면 IMU·LiDAR로 보정한다.
-   (보류된 패치 펌웨어 `firmware/rrc_lite_patch/`를 구우면 Pi 코드가 자동으로 엔코더 값을 쓴다.)
-3. **`/battery_state`는 LiPo 잔량이 아니다.** RRC Lite 입력 전압(12 V 컨버터 출력)이다.
-4. **안전**: RRC Lite(공장 펌웨어)는 명령이 끊겨도 스스로 멈추지 않는다. Pi가 멈추거나 USB가 빠지면 바퀴가 계속 돈다.
-   `poli_hardware`의 `/cmd_vel` 0.3초 timeout, 25 Hz 연속 모터 명령, `node_runner.py`(Ctrl+C·SIGTERM 때 모터 정지 보장)를
-   지우거나 우회하지 않는다. **물리 비상정지(배터리 바로 뒤, 전체 전원 차단)가 하드웨어 쪽 유일한 안전장치**이므로 필수.
+   들어 올리기·리프트 기능을 요청받아도 만들지 않는다. 서보는 DS3218 **1개**, **Mega D9** (2026-10-29 RRC PWM 포트에서 되돌림).
+2. **`/odom_raw`는 엔코더 기반이다** (2026-10-29부터). Mega가 JGB37-520 엔코더(C1·C2)를 4체배로 세어 `$ENC`로 보낸다.
+   바퀴가 미끄러지면 모르므로 정밀 거리가 필요하면 IMU·LiDAR로 보정한다.
+3. **`/battery_state`는 없다** (2026-10-29). 전압을 재던 RRC Lite를 뺐고 Mega에 전압 측정 회로가 없다. 저전압 판단 코드를 만들지 않는다.
+4. **안전**: Mega 펌웨어는 `$DRV`/`$PWM`이 0.3초 끊기면 스스로 멈추고, 엔코더 방향 반대·신호 없음·바퀴 막힘이면 모터를 끈 채로
+   리셋까지 기다린다 (`firmware/mega_sensor_controller/README.md`). 첫 명령 전에는 모터를 돌리지 않는다.
+   이 펌웨어 동작과 `poli_hardware`의 `/cmd_vel` 0.3초 timeout, 25 Hz 연속 모터 명령, `node_runner.py`(Ctrl+C·SIGTERM 때 모터 정지 보장)를
+   지우거나 우회하지 않는다. **물리 비상정지(배터리 바로 뒤, 전체 전원 차단)는 필수**다 (펌웨어가 멈추거나 MDD10이 고장 나면 소프트웨어 정지는 소용없다).
 5. `poli_navigation/fake_odom.py`와 `poli_hardware`의 `hardware.launch.py`는 둘 다 `/odom_raw`를 발행하므로 **동시에 실행하지 않는다.**
    fake 테스트는 `ros2 launch poli_hardware hardware.launch.py`(기본 fake 모드)만 켜면 조원 A 토픽이 전부 나온다.
 6. odom → base_link TF는 robot_localization(EKF)만 발행한다. 하드웨어 노드는 TF를 발행하지 않는다.
    base_link → 센서 frame은 `poli_description`(robot_state_publisher)만 발행한다. 센서 위치를 코드 상수로 따로 두지 말고 URDF를 고친다.
    초음파 토픽은 `/range/front`, `/range/left`, `/range/right`, `/range/rear` (좌측만 낮게 장착).
+   IMU frame `imu_link` = BNO085 위치.
 7. 실측하지 않은 값(바퀴 지름·간격, 센서 위치, 서보 각도 등)은 상수/파라미터로 빼고 `TODO_MEASURE`(실측 필요) 또는 `SIM_ONLY`(시뮬레이션 임시값) 주석을 단다. 임시값을 진짜 값처럼 굳히지 않는다.
 8. Mega 시리얼 packet 형식을 바꾸면 `docs/serial_protocol.md`, 펌웨어, `poli_hardware/mega_protocol.py`를 **함께** 고친다.
-9. 서보는 RRC PWM 서보 포트 전원(점퍼 **5V**)을 쓴다. 점퍼가 VIN(12 V)이면 DS3218(4.8~6.8 V)이 탄다. DS3218 PWM 범위는 500~2500 µs.
+9. 서보 전원은 Mega 5V 핀에서 받지 않는다 (5V 10A 컨버터, GND는 Mega와 공통). DS3218 사양 4.8~6.8 V, PWM 범위 500~2500 µs.
+   엔코더 VCC는 Mega 5V (**12 V 금지**). MDD10 GND도 Mega GND와 공통.
 10. 대회 규정: 경기장 공개 후 코드·매개변수 수정 금지, 명령 하나로 전체 실행 (launch 파일). 보정은 제출 전에 끝낸다.
+11. 모터·엔코더 방향(`MOTOR_*_INVERT`, `ENC_*_INVERT`), 속도 제어 이득, 폭주 감지 기준은 Mega `config.h`에 있다.
+    방향을 확인하지 않고 `$DRV`로 달리지 않는다 (바퀴 띄우고 `scripts/pc_serial_tester.py`의 `f`/`b`로 먼저 확인).
+12. `hardware.yaml`의 `min_wheel_speed`는 `poli_navigation` `turn_pulse.HW_MIN_WHEEL_SPEED`와 같아야 한다. 바꾸면 담당 1에게 알린다.
 
 ## 5. 검증 (수정 후 반드시)
 ```bash
@@ -86,8 +92,8 @@
 # ROS 2 빌드 + 스타일 검사 (flake8, pep257 통과 필수)
 cd ros2_ws && colcon build --symlink-install && colcon test && colcon test-result --verbose
 
-# Mega 펌웨어 컴파일 (보드 없이 가능, arduino-cli는 Servo 라이브러리 설치 필요)
-arduino-cli lib install Servo
+# Mega 펌웨어 컴파일 (보드 없이 가능. Servo 라이브러리 필요, SIM_IMU 0이면 BNO080 라이브러리도)
+arduino-cli lib install Servo "SparkFun BNO080 Cortex Based IMU"
 arduino-cli compile --fqbn arduino:avr:mega firmware/mega_sensor_controller
 ```
 - ROS 스타일: 한 줄 99자 이하, import는 표준 라이브러리 다음 나머지 전부를 알파벳순, 여러 줄 docstring은 `"""` 다음 줄에 요약.
