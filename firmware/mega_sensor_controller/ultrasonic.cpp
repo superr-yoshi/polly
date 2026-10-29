@@ -28,7 +28,8 @@ void ultrasonicUpdate(uint8_t idx) {
   digitalWrite(US_TRIG[idx], LOW);  delayMicroseconds(2);
   digitalWrite(US_TRIG[idx], HIGH); delayMicroseconds(10);
   digitalWrite(US_TRIG[idx], LOW);
-  unsigned long us = pulseIn(US_ECHO[idx], HIGH, 24000UL);  // 최대 약 4 m
+  // pulseInLong: micros() 기반이라 엔코더 인터럽트가 끼어도 길이가 줄지 않는다 (pulseIn은 줄어듦)
+  unsigned long us = pulseInLong(US_ECHO[idx], HIGH, 24000UL);  // 최대 약 4 m
   long mm = (long)(us * 0.343f / 2.0f);                     // 음속 343 m/s
   g_mm[idx] = (us == 0 || mm < 20 || mm > 4000) ? 0 : mm;
 }
