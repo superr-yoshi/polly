@@ -10,6 +10,7 @@
 | `rrc_adapter_node` | 구현됨, 실기 미검증 | RRC Lite 실제 주행 + 집게 서보(PWM 포트) (`docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`) |
 | `fake_mega_node` | 사용 가능 | 부품 없이 /range/* (SIM_ONLY) |
 | `mega_bridge_node` | 사용 가능 (실물 Mega 확인) | Arduino Mega 시리얼 v1.1 ↔ ROS |
+| `imu_node` | 구현됨, 실기 미검증 (가짜 센서로 확인) | MPU6050(GY-521, 파이 I2C) → `/imu/data`. 시작 때 자이로 영점. 필요: `python3-smbus`, i2c 그룹 |
 | `drive_test` | 사용 가능 | 보정용 주행 시험 (직진/회전/바퀴 N바퀴) → 새 파라미터 계산. `docs/calibration.md` |
 
 ## 인터페이스 계약 (바꾸지 말 것)
@@ -25,7 +26,7 @@
 
 - odom → base_link **TF는 발행하지 않는다** (robot_localization EKF 소유).
 - `/cmd_vel`이 `cmd_timeout`(0.3 s) 이상 끊기면 0 속도.
-- `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = RRC 내장 IMU 가속도·자이로 3축, fake = z축 각속도만(휠 각속도 복사).
+- `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = MPU6050 가속도·자이로 3축 (`imu_node`, 2026-10-30부터. `rrc_adapter_node`는 `publish_imu: false`), fake = z축 각속도만(휠 각속도 복사).
 - `/odom_raw`: RRC 공장 펌웨어라 **명령 기반 추정**이다 (엔코더 값이 안 옴). 보류된 패치 펌웨어(`firmware/rrc_lite_patch/`)를 구우면 자동으로 엔코더 기반이 된다.
 - `/battery_state`: RRC Lite가 보고하는 자기 입력 전압. RRC는 12V 컨버터 뒤에 있어서 LiPo 잔량이 아니다. fake는 12.0 V.
 - `/gripper/*`: 2026-10-07부터 RRC Lite PWM 서보 포트(`rrc_adapter_node`). 서보 포트 전원 점퍼 **5V 필수**.

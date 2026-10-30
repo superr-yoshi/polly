@@ -44,4 +44,6 @@ def generate_launch_description():
         node('fake_mega_node', IfCondition(fake)),
         node('rrc_adapter_node', UnlessCondition(fake)),
         node('mega_bridge_node', UnlessCondition(fake)),
+        # 실제 로봇의 /imu/data는 MPU6050 (파이 I2C). rrc_adapter_node는 publish_imu: false
+        node('imu_node', UnlessCondition(fake)),
     ])

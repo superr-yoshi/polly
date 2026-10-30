@@ -217,6 +217,7 @@ class RrcNode(Node):
         p('cmd_timeout', 0.3)
         p('odom_rate', 25.0)
         p('imu_rate', 50.0)
+        p('publish_imu', True)          # 실제 로봇은 false: /imu/data는 imu_node(MPU6050)가 낸다
         p('odom_frame', 'odom')
         p('base_frame', 'base_link')
         p('imu_frame', 'imu_link')
@@ -248,10 +249,11 @@ class RrcNode(Node):
 
         self.create_subscription(Twist, '/cmd_vel', self._on_cmd_vel, 10)
         self.odom_pub = self.create_publisher(Odometry, '/odom_raw', 10)
-        self.imu_pub = self.create_publisher(Imu, '/imu/data', 10)
         self.battery_pub = self.create_publisher(BatteryState, '/battery_state', 10)
         self.create_timer(1.0 / g('odom_rate').value, self._on_control)
-        self.create_timer(1.0 / g('imu_rate').value, self._on_imu)
+        if g('publish_imu').value:
+            self.imu_pub = self.create_publisher(Imu, '/imu/data', 10)
+            self.create_timer(1.0 / g('imu_rate').value, self._on_imu)
         self.create_timer(1.0, self._on_battery)
 
         # 집게: 첫 명령 전에는 서보 명령을 보내지 않는다 (규정 3.5.6)

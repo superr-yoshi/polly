@@ -36,6 +36,10 @@
 - 포트 번호는 `config/hardware.yaml`의 `gripper_servo_id` (1~4)와 같아야 한다.
 - ⚠ **서보 포트 전원 점퍼를 반드시 5V로 둔다.** 점퍼가 입력 전압(VIN, 12V) 쪽이면 DS3218(최대 6.8V)이 탄다.
   꽂기 전에 멀티미터로 서보 포트 + / − 사이가 약 5V인지 확인한다.
+- 보드 실물 사진 (2026-10-28, 실측 전): 서보 포트는 `S3`(PA11), `S4`(PA12), `S5`(PC8), `S6`(PC9) 4개. 옆의 점퍼 `J2`, `J7`이
+  `5V | VBAT` 선택이며 사진에서는 **둘 다 VBAT 쪽**으로 보였다 → 5V 쪽으로 옮길 것. J2/J7이 각각 어느 포트를 맡는지,
+  펌웨어 서보 번호 1~4가 S3~S6 중 어디인지는 TODO_MEASURE (`scripts/pc_gripper_test.py --servo-id N`으로 확인).
+  위쪽의 `S + -` 흰 커넥터 2개는 12 V가 나온다고 확인됨 (조원 확인) → DS3218을 꽂지 않는다.
 - 사양서_E는 PWM 서보 포트 전압을 "5-12V"와 "5~8.4V" 두 가지로 적어 두었다 → 실물 점퍼로 확인 (TODO_MEASURE).
 - RRC는 **전원을 켜면 PWM 서보 4포트 모두 1500 µs(가운데)를 낸다** (공장 펌웨어 `pwm_servos_init`).
   그래서 열림 위치 `gripper_open_us`를 1500으로 두었다. 집게를 조립할 때 1500 µs에서 "열림"이 되게 혼을 끼운다
@@ -50,7 +54,30 @@
 | Arduino Mega 2560 | USB Serial | /dev/robot_mega |
 | RPLIDAR | USB (어댑터 보드) | /dev/robot_lidar |
 | 카메라 | CSI | — |
+| IMU MPU6050 (GY-521) | 소프트웨어 I2C 버스 3, 주소 0x68 | /dev/i2c-3 |
 | 전원 | XL4015 벅 컨버터 출력 5V → GPIO 5V/GND | — |
+
+### 파이 40핀 사용 현황 (2026-10-30 조원 확인)
+- 사용 중: **2, 3, 6, 7, 9, 18, 19, 30, 31번** (용도 기록 필요: TODO. 2·4·6번 = 전원 입력 계획과 관련)
+- 3번(하드웨어 I2C SDA)이 사용 중이라 IMU는 **소프트웨어 I2C(15·16번)**로 연결한다.
+  3번에 꽂힌 것이 I2C 장치로 확인되면 IMU를 3·5번에 함께 연결해도 된다 (그때 `i2c_bus: 1`).
+
+### IMU MPU6050 (GY-521) — 파이 GPIO 직접 연결 (2026-10-30, RRC Lite 내장 IMU 대체)
+| GY-521 | 파이 40핀 |
+|---|---|
+| VCC | **17번 3.3V** (5V 핀 금지: SDA/SCL이 5 V로 끌어올려질 수 있음) |
+| GND | **14번 GND** (9·30번은 사용 중) |
+| SDA | **15번 GPIO 22** |
+| SCL | **16번 GPIO 23** |
+| XDA, XCL, AD0, INT | 연결 안 함 (AD0 비움 = 주소 0x68) |
+
+- 파이 설정 (한 번, 팀 상의 후): `/boot/firmware/config.txt`에 `dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=22,i2c_gpio_scl=23` 추가 → 재부팅.
+  GY-521 모듈에 풀업 저항이 있어서 따로 달지 않는다.
+- 코드: `hardware.yaml` imu_node `i2c_bus: 3`.
+- 장착: 로봇 회전 중심 근처, 모듈의 **X 화살표 = 로봇 앞**, 칩이 위. 모터·드라이버·컨버터 옆은 피한다. 흔들리지 않게 고정.
+- 위치·방향은 URDF `imu_x`, `imu_y`, `imu_h`, `imu_yaw` (TODO_MEASURE). 코드에서 축을 돌리지 않는다.
+- 확인: `i2cdetect -y 3`에 `68`. 노드: `imu_node` (`hardware.launch.py` 실제 모드에서 자동 실행).
+- 전원 LED가 빨간색이면 가린다 (규정 Q6).
 
 ## 4. 전원
 - 배터리: XEON 6S 22.2V 5200mAh LiPo → XT60 → **비상정지 스위치** → 퓨즈(SZH-FU003, ATO 퓨즈 인라인 홀더) → WAGO 분배
