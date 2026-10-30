@@ -1,3 +1,4 @@
+import math
 import signal
 
 from geometry_msgs.msg import Twist
@@ -14,7 +15,7 @@ from poli_navigation.scan_to_grid import odom_to_arena
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import Bool, String
 
 
@@ -43,6 +44,17 @@ class Mission1Node(Node):
         self.pose = None
         self.odom_received_at = None
         self.require_laser_tf = self.declare_parameter('require_laser_tf', False).value
+        # 방향은 IMU 자이로(제자리 회전 때 바퀴가 미끄러져도 맞음), 거리는 엔코더로 위치를 계산한다.
+        # 2026-10-31 실기: 엔코더만 쓰면 90도 회전 때 실제로 더 돌아 사선으로 주행했다.
+        # IMU가 0.3초 넘게 안 오면 엔코더 방향을 쓴다 (시뮬레이션·fake도 그대로 동작).
+        self.use_imu_yaw = self.declare_parameter('use_imu_yaw', True).value
+        # 손으로 반시계 90도 돌렸을 때 +98도 (2026-10-31) -> +1. 칩을 뒤집어 달면 -1
+        self.imu_yaw_sign = self.declare_parameter('imu_yaw_sign', 1.0).value
+        self.imu_dyaw = 0.0
+        self.imu_stamp = None
+        self.imu_received_at = None
+        self.prev_odom = None
+        self.fused = None
         self.holding = None
         self.vision = None
         self.vision_received_at = None
@@ -62,6 +74,7 @@ class Mission1Node(Node):
         # TODO: 실제 로봇에서는 /odometry/filtered (엔코더 + IMU) 사용 검토
         self.create_subscription(Odometry, '/odom_raw', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.create_subscription(Imu, '/imu/data', self.imu_callback, 50)
         self.create_subscription(
             Bool, '/gripper/holding', self.holding_callback, 10
         )
@@ -76,11 +89,38 @@ class Mission1Node(Node):
 
         self.get_logger().info('POLI Mission 1 Started: poli_maze 한 칸 탐색 + 카메라 집기')
 
+    def imu_callback(self, msg):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.imu_stamp is not None and 0.0 < stamp - self.imu_stamp < 0.2:
+            self.imu_dyaw += self.imu_yaw_sign * msg.angular_velocity.z * (stamp - self.imu_stamp)
+        self.imu_stamp = stamp
+        self.imu_received_at = self.now_seconds()
+
     def odom_callback(self, msg):
         position = msg.pose.pose.position
-        yaw = yaw_from_quaternion(msg.pose.pose.orientation)
-        self.pose = odom_to_arena(position.x, position.y, yaw)
-        self.odom_received_at = self.now_seconds()
+        odom_yaw = yaw_from_quaternion(msg.pose.pose.orientation)
+        now = self.now_seconds()
+        if self.fused is None:
+            self.fused = [position.x, position.y, odom_yaw]
+        else:
+            prev_x, prev_y, prev_yaw = self.prev_odom
+            # 엔코더가 잰 앞뒤 이동 거리 (후진이면 음수)
+            ds = ((position.x - prev_x) * math.cos(prev_yaw)
+                  + (position.y - prev_y) * math.sin(prev_yaw))
+            imu_ok = (self.use_imu_yaw and self.imu_received_at is not None
+                      and now - self.imu_received_at < 0.3)
+            if imu_ok:
+                dyaw = self.imu_dyaw
+            else:
+                dyaw = math.atan2(math.sin(odom_yaw - prev_yaw), math.cos(odom_yaw - prev_yaw))
+            mid_yaw = self.fused[2] + dyaw / 2.0
+            self.fused[0] += ds * math.cos(mid_yaw)
+            self.fused[1] += ds * math.sin(mid_yaw)
+            self.fused[2] += dyaw
+        self.imu_dyaw = 0.0
+        self.prev_odom = (position.x, position.y, odom_yaw)
+        self.pose = odom_to_arena(*self.fused)
+        self.odom_received_at = now
 
     def scan_callback(self, msg):
         self.scan = msg

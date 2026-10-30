@@ -1,6 +1,7 @@
 import math
 
 from hw_model import actual_twist
+from poli_navigation import mission1_logic
 from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
@@ -396,7 +397,8 @@ def test_return_uses_only_visited_cells():
     assert logic.state == STUCK  # (9,2)를 방문하지 않아 연결된 복귀 경로가 없다.
 
 
-def test_new_obstacle_in_target_cell_stops_drive():
+def test_new_obstacle_in_target_cell_stops_drive(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'DRIVE_BLOCK_CHECK', True)
     logic = Mission1Logic()
     x, y, yaw = START_POSE
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
