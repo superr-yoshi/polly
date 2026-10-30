@@ -55,6 +55,7 @@ class DriveNode(Node):
         p('cmd_timeout', 0.3)
         p('odom_rate', 25.0)
         p('imu_rate', 25.0)
+        p('publish_imu', True)           # 실제 로봇은 false: /imu/data는 imu_node(MPU6050)가 낸다
         p('odom_frame', 'odom')
         p('base_frame', 'base_link')
         p('imu_frame', 'imu_link')
@@ -84,7 +85,6 @@ class DriveNode(Node):
         self._gripper_state = None
 
         self.odom_pub = self.create_publisher(Odometry, '/odom_raw', 10)
-        self.imu_pub = self.create_publisher(Imu, '/imu/data', 10)
         self.range_pubs = {n: self.create_publisher(Range, f'/range/{n}', 10)
                            for n in RANGE_ORDER}
         self.gripper_pub = self.create_publisher(String, '/gripper/state', 10)
@@ -94,7 +94,9 @@ class DriveNode(Node):
         self.create_subscription(Twist, '/cmd_vel', self._on_cmd_vel, 10)
         self.create_subscription(String, '/gripper/command', self._on_gripper_command, 10)
         self.create_timer(1.0 / g('odom_rate').value, self._on_control)
-        self.create_timer(1.0 / g('imu_rate').value, self._on_imu)
+        if g('publish_imu').value:
+            self.imu_pub = self.create_publisher(Imu, '/imu/data', 10)
+            self.create_timer(1.0 / g('imu_rate').value, self._on_imu)
         self.create_timer(0.1, self._on_gripper_poll)
         self.create_timer(0.5, self._publish_gripper_state)
 

@@ -38,7 +38,25 @@ mega_bridge_node:
                                # TODO_MEASURE: drive_test wheel --revs 10 (PPR 12 변형이면 1440)
     encoder_timeout: 0.2       # s, $ENC(50 Hz)가 끊기면 바퀴 속도 0으로 봄
     imu_timeout: 0.5           # s, $IMU가 끊기면 /imu/data는 휠 각속도로 대신
+    publish_imu: false         # /imu/data는 imu_node(MPU6050)가 발행 (2026-10-30). Mega $IMU·휠 각속도 대신 안 냄
     ack_timeout: 0.5           # s, $GRIP 응답 대기 (최대 3번 전송)
+
+# MPU6050 (GY-521) -> /imu/data. 파이 소프트웨어 I2C 버스 3 (15번 SDA, 16번 SCL), VCC 17번 3.3V
+# 3번 핀(하드웨어 I2C SDA)이 다른 용도로 사용 중이라서 (docs/pin_map.md 3장)
+# 필요: /boot/firmware/config.txt 에 dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=22,i2c_gpio_scl=23
+imu_node:
+  ros__parameters:
+    i2c_bus: 3
+    i2c_address: 104           # 0x68 (AD0 = GND). AD0을 3.3V에 연결하면 105 (0x69)
+    imu_rate: 50.0             # Hz
+    imu_frame: imu_link        # 장착 위치·방향은 URDF imu_x/imu_y/imu_h/imu_yaw (TODO_MEASURE)
+    gyro_range_dps: 500        # 제자리 회전 약 160 deg/s -> ±500 이면 여유
+    accel_range_g: 4
+    dlpf: 3                    # 내장 저역 필터 약 44 Hz
+    calib_samples: 100         # 시작 후 2 s 가만히 두는 동안 자이로 영점
+    calib_still_rad_s: 0.05    # 영점 중 이보다 크게 흔들리면 다시 잼
+    gyro_variance: 0.001       # SIM_ONLY: 정지 상태 분산 실측 후 교체 (TODO_MEASURE)
+    accel_variance: 0.01       # SIM_ONLY (TODO_MEASURE)
 
 fake_mega_node:
   ros__parameters:

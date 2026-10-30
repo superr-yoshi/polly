@@ -83,11 +83,12 @@
 
 - DS3218 정격 4.8~6.8 V → 5 V면 범위 안 (6 V보다 토크·속도 약 10~15% 낮음).
 - 열림/닫힘 각도: `config.h`의 `GRIP_OPEN_DEG`(90도 = 1500 µs) / `GRIP_CLOSE_DEG`(120도) (TODO_MEASURE, 실제 집게로 보정)
+  - 2026-10-30 실측 (`firmware/servo_test`): 열림 1500 µs, 빈 집게가 끝까지 닫히는 값 2000 µs(135도). 큐브를 잡는 값은 TODO_MEASURE
 - 첫 집게 명령 전에는 서보에 신호를 보내지 않는다 (규정 3.5.6).
 
 ## 2. RRC Lite — 사용 안 함 (2026-10-29)
 - MDD10 + Mega로 바꾸면서 RRC Lite를 뺐다. 옛 기록은 `docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`에 남겨 둔다.
-- RRC Lite가 맡던 것 → 지금: 주행 모터·엔코더 → MDD10 + Mega, 내장 IMU → BNO085, 집게 PWM 포트 → Mega D9, 입력 전압 보고(`/battery_state`) → 없음.
+- RRC Lite가 맡던 것 → 지금: 주행 모터·엔코더 → MDD10 + Mega, 내장 IMU → MPU6050 (파이 I2C, 2026-10-30), 집게 PWM 포트 → Mega D9, 입력 전압 보고(`/battery_state`) → 없음.
 
 ## 3. Raspberry Pi 5
 | 장치 | 연결 | udev 별칭 |
@@ -95,11 +96,34 @@
 | Arduino Mega 2560 | USB Serial | /dev/robot_mega |
 | RPLIDAR | USB (어댑터 보드) | /dev/robot_lidar |
 | 카메라 | CSI | — |
+| IMU MPU6050 (GY-521) | 소프트웨어 I2C 버스 3, 주소 0x68 | /dev/i2c-3 |
 | 전원 | 5V 10A 컨버터 출력 → USB-C | — |
 
 - ⚠ Pi 5는 USB-C로 5 V 5 A(USB PD) 협상을 못 하면 USB 포트 전체 전류를 600 mA로 제한한다. 일반 5 V 컨버터는 PD를 못 하므로
   LiDAR(최대 260 mA) + Mega(엔코더·초음파 포함)가 모자랄 수 있다. `/boot/firmware/config.txt`에 `usb_max_current_enable=1`을 넣고
   LiDAR·Mega가 끊기지 않는지 확인한다 (TODO_MEASURE).
+
+### 파이 40핀 사용 현황 (2026-10-30 조원 확인)
+- 사용 중: **2, 3, 6, 7, 9, 18, 19, 30, 31번** (용도 기록 필요: TODO. 2·4·6번 = 전원 입력 계획과 관련)
+- 3번(하드웨어 I2C SDA)이 사용 중이라 IMU는 **소프트웨어 I2C(15·16번)**로 연결한다.
+  3번에 꽂힌 것이 I2C 장치로 확인되면 IMU를 3·5번에 함께 연결해도 된다 (그때 `i2c_bus: 1`).
+
+### IMU MPU6050 (GY-521) — 파이 GPIO 직접 연결 (2026-10-30, RRC Lite 내장 IMU 대체)
+| GY-521 | 파이 40핀 |
+|---|---|
+| VCC | **17번 3.3V** (5V 핀 금지: SDA/SCL이 5 V로 끌어올려질 수 있음) |
+| GND | **14번 GND** (9·30번은 사용 중) |
+| SDA | **15번 GPIO 22** |
+| SCL | **16번 GPIO 23** |
+| XDA, XCL, AD0, INT | 연결 안 함 (AD0 비움 = 주소 0x68) |
+
+- 파이 설정 (한 번, 팀 상의 후): `/boot/firmware/config.txt`에 `dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=22,i2c_gpio_scl=23` 추가 → 재부팅.
+  GY-521 모듈에 풀업 저항이 있어서 따로 달지 않는다.
+- 코드: `hardware.yaml` imu_node `i2c_bus: 3`.
+- 장착: 로봇 회전 중심 근처, 모듈의 **X 화살표 = 로봇 앞**, 칩이 위. 모터·드라이버·컨버터 옆은 피한다. 흔들리지 않게 고정.
+- 위치·방향은 URDF `imu_x`, `imu_y`, `imu_h`, `imu_yaw` (TODO_MEASURE). 코드에서 축을 돌리지 않는다.
+- 확인: `i2cdetect -y 3`에 `68`. 노드: `imu_node` (`hardware.launch.py` 실제 모드에서 자동 실행).
+- 전원 LED가 빨간색이면 가린다 (규정 Q6).
 
 ## 4. 전원
 - 배터리: **12 V** (2026-10-29 변경, 예전 XEON 6S 22.2V LiPo). 종류·용량 TODO (3S LiPo면 완충 12.6 V)

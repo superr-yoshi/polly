@@ -65,7 +65,7 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 |---|---|---|---|
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | 담당 1 → 조원 A | `linear.x` 전진 m/s, `angular.z` 회전 rad/s (**양수 = 왼쪽 회전**) |
 | `/odom_raw` | `nav_msgs/msg/Odometry` | 조원 A → 담당 1 | 엔코더 odometry (2026-10-29부터 실제 엔코더, Mega `$ENC`) |
-| `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | BNO085 (Mega I2C, 2026-10-29 RRC Lite 내장 IMU에서 변경). 미연결이면 휠 각속도로 z축만 |
+| `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | MPU6050 (`imu_node`, 파이 I2C. 2026-10-30 RRC Lite 내장 IMU 대체). 형식·frame `imu_link`·50 Hz는 그대로. 시작 후 약 2초 가만히 있는 동안 자이로 영점을 잡고 나서 발행 |
 | `/range/front`, `/range/left`, `/range/right`, `/range/rear` | `sensor_msgs/msg/Range` | 조원 A → 담당 1 | 초음파, 단위 m. **2026-09-30 이름 변경** (예전 front_left 등, 조원 A 결정: 실제 장착이 전방·좌측·우측·후방). 좌측만 낮게, 나머지 지면 약 14 cm. 측정 실패는 `inf` |
 | ~~`/battery_state`~~ | `sensor_msgs/msg/BatteryState` | — | **2026-10-29 없앰.** 전압을 재던 RRC Lite를 뺐다. 필요하면 조원 A에게 요청 (분압 회로 추가 필요) |
 | `/scan` | `sensor_msgs/msg/LaserScan` | LiDAR 드라이버 → 담당 1 | RPLIDAR C1 |
