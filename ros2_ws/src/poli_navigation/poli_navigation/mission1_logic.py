@@ -57,7 +57,8 @@ CENTER_M = cell_center_m(CENTER)
 GRIPPER_REACH_M = 0.13
 
 # SIM_ONLY: 멈춘 뒤 스캔할 때까지 기다리는 시간 (움직이며 찍힌 스캔을 쓰지 않게)
-SCAN_SETTLE_S = 0.6  # 2026-10-31: 0.3이면 멈춘 직후 차체 흔들림이 남은 스캔으로 지도를 갱신했다 (실기)
+# TODO_MEASURE: 최소 안정 시간. 실물 노드는 정지 확인 후 이 시간이 지난 스캔만 쓴다.
+SCAN_SETTLE_S = 0.2
 # 주행 중 다음 칸이 막혀 보이는 스캔이 이만큼 연속이어야 멈춘다.
 # 출발 순간 차체가 숙여져 LiDAR가 바닥·장애물 윗변을 앞칸 장애물로 보는 것을 거른다 (2026-10-31 실기)
 DRIVE_BLOCK_SCANS = 3
@@ -161,6 +162,7 @@ class Mission1Logic:
         self._last_drive_scan = None
         self._drive_speed = 0.0
         self._drive_time = None
+        self._drive_heading = None
         self.stop_reason = None
 
     def _change_state(self, new_state, obs):
@@ -275,11 +277,13 @@ class Mission1Logic:
 
         self.path = path
         center = cell_center_m(current)
+        drive_origin = center
 
         if distance_to(obs, center) > CELL_CENTER_TOLERANCE_M:
             # 격자 가운데에서 벗어나 있으면 먼저 가운데로 돌아간다.
             # (옆 격자로 비스듬히 가다가 장애물 모서리에 걸리지 않게)
             self.target = center
+            drive_origin = (obs.x, obs.y)
             self.delivering = False
         elif self.phase == RETURN and path[1] == MISSION1_START:
             self.target = self._release_point(path[0], path[1])
@@ -293,6 +297,8 @@ class Mission1Logic:
                 self.phase == EXPLORE
                 and abs(heading_error_to(obs, self.target)) > 3 * math.pi / 4)
 
+        self._drive_heading = math.atan2(
+            self.target[1] - drive_origin[1], self.target[0] - drive_origin[0])
         self._change_state(TURN, obs)
         return Command()
 
@@ -372,9 +378,20 @@ class Mission1Logic:
         distance = distance_to(obs, self.target)
         error = self._travel_heading_error(obs)
 
+        # 목표 바로 앞에서는 작은 옆 오차가 큰 회전각으로 증폭된다.
+        # 마지막 구간은 계획한 진행축을 유지하고 앞뒤 거리로 도착을 판단한다.
+        near_endpoint = distance < CELL_CENTER_TOLERANCE_M and self._drive_heading is not None
+        endpoint_reached = False
+        if near_endpoint:
+            dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
+            along = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
+            endpoint_reached = along <= ARRIVE_TOLERANCE_M
+            desired_yaw = self._drive_heading + (math.pi if self.reverse else 0.0)
+            error = math.atan2(math.sin(desired_yaw - obs.yaw), math.cos(desired_yaw - obs.yaw))
+
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
-        if distance < ARRIVE_TOLERANCE_M or passed:
+        if distance < ARRIVE_TOLERANCE_M or passed or endpoint_reached:
             if self.delivering:
                 self._change_state(RELEASE, obs)
                 return Command(gripper=GRIPPER_OPEN)

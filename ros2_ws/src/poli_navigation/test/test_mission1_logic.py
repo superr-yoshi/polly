@@ -322,6 +322,42 @@ def test_camera_alignment_continues_and_stops_when_aligned():
     assert logic._align(obs) == Command()
 
 
+def test_near_cell_center_stops_instead_of_turning_towards_lateral_error():
+    """좌회전 후 다음 칸에 앞 2 cm·옆 5 cm 남으면 우회전하지 않고 정지한다."""
+    logic = Mission1Logic()
+    origin = Observation(x=3.4, y=1.4, yaw=math.pi, now=0.0)
+    logic.step(origin)
+    logic._plan(origin)
+    assert logic.target == cell_center_m((8, 4))
+    obs = Observation(x=3.02, y=1.35, yaw=math.pi, now=1.0)
+    assert logic._drive(obs) == Command()
+    assert logic.state == SCAN
+
+
+def test_final_forward_and_reverse_keep_planned_heading():
+    """마지막 구간의 작은 옆 오차로 전진·후진 방향을 크게 꺾지 않는다."""
+    for reverse, yaw in ((False, math.pi), (True, 0.0)):
+        logic = Mission1Logic()
+        logic.target = (3.0, 1.4)
+        logic._drive_heading = math.pi
+        logic.reverse = reverse
+        obs = Observation(x=3.08, y=1.36, yaw=yaw, now=0.0)
+        command = logic._drive(obs)
+        assert abs(command.angular) < 1e-9
+        assert command.linear < 0 if reverse else command.linear > 0
+
+
+def test_lateral_offset_outside_endpoint_region_is_not_arrival():
+    """진행축만 지났어도 목표에서 멀리 벗어나 있으면 도착 처리하지 않는다."""
+    logic = Mission1Logic()
+    logic.state = DRIVE
+    logic.target = (3.0, 1.4)
+    logic._drive_heading = math.pi
+    obs = Observation(x=3.02, y=1.25, yaw=math.pi, now=0.0)
+    logic._drive(obs)
+    assert logic.state == DRIVE
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

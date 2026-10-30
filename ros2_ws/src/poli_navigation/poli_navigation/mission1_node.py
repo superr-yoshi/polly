@@ -29,11 +29,20 @@ from std_msgs.msg import Bool, String
 CONTROL_PERIOD = 0.05
 
 # 스캔이 이 시간(초) 넘게 오지 않으면 "스캔 없음"으로 보고 SCAN에서 기다린다.
-# 판단 로직은 멈추고 SCAN_SETTLE_S(0.3초) 뒤의 스캔을 쓰므로,
-# 이보다 짧게 두어야 멈추기 전에 찍힌 스캔을 쓰지 않는다.
+# 수신 시각 외에 첫 광선의 촬영 시각도 검사해 정지 전 스캔을 배제한다.
 # TODO_MEASURE: RPLIDAR C1 실제 전송 주기 (보통 10Hz)
 SCAN_TIMEOUT = 0.2
 ODOM_TIMEOUT = 0.3  # s, 엔코더 위치 갱신이 끊기면 주행을 멈춘다.
+# TODO_MEASURE: 정지 판정 잡음 허용치. 흔들림이 남으면 최소 대기 시간을 다시 센다.
+STILL_LINEAR_MPS = 0.02
+STILL_ANGULAR_RPS = 0.1
+
+
+def mapping_scan_ready(scan_started_at, now, stop_started_at):
+    """정지 안정 시간이 지난 뒤 촬영한 최신 스캔인지 확인한다."""
+    return (0.0 <= now - scan_started_at <= SCAN_TIMEOUT
+            and scan_started_at >= stop_started_at + SCAN_SETTLE_S)
+
 
 # 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
 # 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
@@ -49,6 +58,7 @@ class Mission1Node(Node):
         self.logic = Mission1Logic()
         self.pose = None
         self.odom_received_at = None
+        self.last_motion_at = self.now_seconds()
         self.require_laser_tf = self.declare_parameter('require_laser_tf', False).value
         # 방향은 IMU 자이로(제자리 회전 때 바퀴가 미끄러져도 맞음), 거리는 엔코더로 위치를 계산한다.
         # 2026-10-31 실기: 엔코더만 쓰면 90도 회전 때 실제로 더 돌아 사선으로 주행했다.
@@ -98,6 +108,9 @@ class Mission1Node(Node):
         self.get_logger().info('POLI Mission 1 Started: poli_maze 한 칸 탐색 + 카메라 집기')
 
     def imu_callback(self, msg):
+        if max(abs(msg.angular_velocity.x), abs(msg.angular_velocity.y),
+               abs(msg.angular_velocity.z)) > STILL_ANGULAR_RPS:
+            self.last_motion_at = self.now_seconds()
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self.imu_stamp is not None and 0.0 < stamp - self.imu_stamp < 0.2:
             self.imu_dyaw += self.imu_yaw_sign * msg.angular_velocity.z * (stamp - self.imu_stamp)
@@ -108,6 +121,9 @@ class Mission1Node(Node):
         position = msg.pose.pose.position
         odom_yaw = yaw_from_quaternion(msg.pose.pose.orientation)
         now = self.now_seconds()
+        if (abs(msg.twist.twist.linear.x) > STILL_LINEAR_MPS
+                or abs(msg.twist.twist.angular.z) > STILL_ANGULAR_RPS):
+            self.last_motion_at = now
         if self.fused is None:
             self.fused = [position.x, position.y, odom_yaw]
         else:
@@ -193,6 +209,19 @@ class Mission1Node(Node):
                 throttle_duration_sec=3.0)
             return
 
+        if self.logic.state == SCAN and self.logic.state_started_at is not None:
+            scan_started_at = scan.header.stamp.sec + scan.header.stamp.nanosec * 1e-9
+            stop_started_at = max(self.logic.state_started_at, self.last_motion_at)
+            if not mapping_scan_ready(scan_started_at, now, stop_started_at):
+                self.stop()
+                if now - self.logic.state_started_at > 1.0:
+                    self.get_logger().warn(
+                        '정지 후 스캔 대기: '
+                        f'정지 경과={now - stop_started_at:.2f}s, '
+                        f'스캔 나이={now - scan_started_at:.2f}s',
+                        throttle_duration_sec=3.0)
+                return
+
         self.fix_pose_with_walls(scan, now)
         x, y, yaw = self.pose
 
@@ -223,7 +252,10 @@ class Mission1Node(Node):
             self.last_phase = self.logic.phase
 
         if self.logic.state != self.last_state:
-            self.get_logger().info(f'State: {self.logic.state}')
+            self.get_logger().info(
+                f'State: {self.logic.state}; pose=({x:.3f}, {y:.3f}, '
+                f'{math.degrees(yaw):.1f}deg); target={self.logic.target}; '
+                f'reverse={self.logic.reverse}')
             self.last_state = self.logic.state
             if self.logic.state == STUCK and self.logic.stop_reason is not None:
                 self.get_logger().warn(
@@ -232,6 +264,9 @@ class Mission1Node(Node):
 
         if self.logic.path != self.last_path:
             self.get_logger().info(f'Path: {self.logic.path}')
+            self.get_logger().info(
+                '탐색 지도 (# 막힘, . 빈칸, ? 미관측):\n' + self.logic.grid.to_text()
+                + '\n방문 횟수: ' + str(self.logic.maze.state.visits))
             self.last_path = self.logic.path
 
     def send_gripper(self, command):
