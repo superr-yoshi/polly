@@ -18,19 +18,21 @@
   <!-- ===== 차체 ===== -->
   <xacro:property name="wheel_radius" value="0.0325"/>       <!-- 바퀴 Ø65 mm (제품 사양서_E). 주행 시험으로 보정 (TODO_MEASURE) -->
   <xacro:property name="wheel_width" value="0.026"/>         <!-- 고무 바퀴 Ø65 × 26 mm (제품 사양서_E) -->
-  <xacro:property name="wheel_separation" value="0.18"/>     <!-- 좌우 바퀴 중심 간 거리 (TODO_MEASURE, hardware.yaml과 같게) -->
-  <xacro:property name="body_length" value="0.20"/>          <!-- 집게 제외 차체 길이 (TODO_MEASURE) -->
-  <xacro:property name="body_width" value="0.22"/>           <!-- 외곽 폭 220 mm (집게 연 상태 제공값) -->
+  <xacro:property name="wheel_separation" value="0.279"/>    <!-- 바퀴 포함 폭 305 - 바퀴 폭 26 (2026-10-30 줄자). 회전 시험으로 보정 (TODO_MEASURE, hardware.yaml과 같게) -->
+  <xacro:property name="body_length" value="0.21"/>          <!-- 집게 제외 차체 길이 210 mm (2026-10-30 실측) -->
+  <xacro:property name="body_width" value="0.22"/>           <!-- 바퀴 제외 차체 폭 220 mm (2026-10-30 실측) -->
   <xacro:property name="body_bottom_h" value="0.02"/>        <!-- 차체 바닥의 지면 높이 (TODO_MEASURE) -->
   <xacro:property name="body_top_h" value="0.14"/>           <!-- 차체 윗면의 지면 높이 (TODO_MEASURE) -->
-  <xacro:property name="body_center_x" value="0.0"/>         <!-- 바퀴 축 기준 차체 중심 앞뒤 위치 (TODO_MEASURE) -->
-  <xacro:property name="caster_x" value="-0.08"/>            <!-- 뒤 지지점(캐스터) 위치 (TODO_MEASURE) -->
+  <!-- 2026-10-30 실측: 바퀴 축 = 차체 뒤끝에서 160 mm, 볼캐스터 = 뒤끝에서 30 mm (좌우 가운데) -->
+  <xacro:property name="axle_from_rear" value="0.16"/>
+  <xacro:property name="body_center_x" value="${body_length / 2 - axle_from_rear}"/>  <!-- = -0.055 -->
+  <xacro:property name="caster_x" value="${0.03 - axle_from_rear}"/>                   <!-- = -0.13 -->
 
   <!-- ===== LiDAR (RPLIDAR C1) =====
        laser 높이 = 장착면 높이 + 0.0298. 외벽·장애물(0.20 m)보다 낮아야 한다.
        frame 이름 'laser'는 sllidar_ros2 기본값·poli_navigation fake_scan과 같다. -->
-  <xacro:property name="lidar_x" value="0.0"/>               <!-- TODO_MEASURE (scan_to_grid.py LASER_OFFSET과 맞출 것) -->
-  <xacro:property name="lidar_y" value="0.0"/>               <!-- TODO_MEASURE -->
+  <xacro:property name="lidar_x" value="${0.08 - axle_from_rear}"/>  <!-- 중심이 뒤끝에서 약 80 mm: 사진 추정 (TODO_MEASURE, scan_to_grid.py LASER_OFFSET과 맞출 것) -->
+  <xacro:property name="lidar_y" value="${body_width / 2 - 0.115}"/>  <!-- 중심이 좌측 끝에서 115 mm (2026-10-30 실측) = 오른쪽 5 mm -->
   <xacro:property name="lidar_mount_h" value="${body_top_h}"/>  <!-- 장착면 지면 높이 (TODO_MEASURE) -->
   <xacro:property name="lidar_yaw" value="0.0"/>             <!-- 스캔 0도 방향이 정면이 되게 (TODO_MEASURE) -->
 
@@ -41,7 +43,8 @@
   <xacro:property name="imu_yaw" value="0.0"/>               <!-- 보드 방향. 로봇을 반시계로 돌릴 때 /imu/data gz가 +가 되게 (TODO_MEASURE) -->
 
   <!-- ===== 카메라 (Raspberry Pi AI Camera, CAM0) ===== -->
-  <xacro:property name="camera_x" value="0.09"/>             <!-- SIM_ONLY -->
+  <xacro:property name="camera_x" value="${body_center_x + body_length / 2}"/>  <!-- 2층 판 앞끝 (사진 확인) -->
+  <xacro:property name="camera_y" value="${body_width / 2 - 0.12}"/>  <!-- 좌측 끝에서 120 mm (2026-10-30 실측) = 오른쪽 10 mm -->
   <xacro:property name="camera_h" value="0.12"/>             <!-- SIM_ONLY -->
   <xacro:property name="camera_pitch" value="0.26"/>         <!-- 아래로 숙인 각 (약 15도, SIM_ONLY) -->
 
@@ -56,7 +59,8 @@
   <xacro:property name="us_side_y" value="${body_width / 2}"/>
 
   <!-- ===== 집게 (Byte Robot Claw 125mm, 들어 올리기 없음) ===== -->
-  <xacro:property name="gripper_x" value="${body_center_x + body_length / 2 + 0.03}"/>  <!-- SIM_ONLY -->
+  <xacro:property name="gripper_len" value="0.12"/>          <!-- 차체 앞으로 튀어나온 길이: 전체 330 - 차체 210 (2026-10-30 실측, 닫힘) -->
+  <xacro:property name="gripper_x" value="${body_center_x + body_length / 2 + gripper_len / 2}"/>
   <xacro:property name="gripper_h" value="0.05"/>            <!-- SIM_ONLY -->
 
   <material name="dark"><color rgba="0.2 0.2 0.2 1.0"/></material>
@@ -140,7 +144,7 @@
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="camera_link"/>
-    <origin xyz="${camera_x} 0 ${camera_h - wheel_radius}" rpy="0 ${camera_pitch} 0"/>
+    <origin xyz="${camera_x} ${camera_y} ${camera_h - wheel_radius}" rpy="0 ${camera_pitch} 0"/>
   </joint>
 
   <xacro:macro name="ultrasonic" params="name x y h yaw">
@@ -163,7 +167,7 @@
 
   <link name="gripper_link">
     <visual>
-      <geometry><box size="0.06 0.125 0.04"/></geometry>
+      <geometry><box size="${gripper_len} 0.125 0.04"/></geometry>
       <material name="dark"/>
     </visual>
   </link>
