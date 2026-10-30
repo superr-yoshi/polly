@@ -68,8 +68,8 @@ class GridFrame:
 
     def cell_center(self, cell):
         """칸 중앙의 (x, y)."""
-        up = self.start[0] - cell[0]      # 위로 몇 칸
-        right = cell[1] - self.start[1]   # 오른쪽으로 몇 칸
+        right = cell[0] - self.start[0]   # 오른쪽으로 몇 칸 (x)
+        up = cell[1] - self.start[1]      # 위로 몇 칸 (y)
         ux, uy = self.dir_vec(ml.UP)
         rx, ry = self.dir_vec(ml.RIGHT)
         return ((up * ux + right * rx) * self.cell,
@@ -81,7 +81,7 @@ class GridFrame:
         rx, ry = self.dir_vec(ml.RIGHT)
         up = math.floor((x * ux + y * uy) / self.cell + 0.5)
         right = math.floor((x * rx + y * ry) / self.cell + 0.5)
-        return (self.start[0] - up, self.start[1] + right)
+        return (self.start[0] + right, self.start[1] + up)
 
 
 class WallMapper:
@@ -111,7 +111,7 @@ class WallMapper:
             a = lyaw + beam
             d = rng + PUSH
             cell = self.frame.world_to_cell(lx + d * math.cos(a), ly + d * math.sin(a))
-            if 0 <= cell[0] < self.n and 0 <= cell[1] < self.n:
+            if ml.inside(cell, self.n):
                 counts[cell] = counts.get(cell, 0) + 1
         return counts
 
