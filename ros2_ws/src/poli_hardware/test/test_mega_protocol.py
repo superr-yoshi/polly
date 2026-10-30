@@ -3,8 +3,10 @@ import math
 import random
 
 from poli_hardware.mega_protocol import (
-    checksum, gripper_action, GstPacket, make_grip_command, make_packet, MegaParser,
-    mm_to_range_m, parse_line, RANGE_ORDER, RangeMedianFilter, RngPacket)
+    checksum, EncPacket, gripper_action, GstPacket, ImuPacket, make_drive_command,
+    make_grip_command, make_packet, make_pwm_command, MegaParser, mm_to_range_m, parse_line,
+    RANGE_ORDER, RangeMedianFilter, RngPacket, ticks_to_wheel, wheel_to_ticks,
+    WheelSpeedEstimator)
 import pytest
 
 
@@ -14,6 +16,11 @@ import pytest
     '$GST,3,1500,1,1,120*68',
     '$GRIP,1,1*0C',
     '$GRIP,2,0*0E',
+    '$ENC,10,200,1320,-660,1*7B',
+    '$IMU,4,160,0,0,0,10000,0,0,12,0,0,9806*57',
+    '$DRV,1616,1616*40',
+    '$DRV,0,0*40',
+    '$PWM,80,-80*67',
 ])
 def test_doc_examples_checksum(line):
     body, cs = line[1:].split('*')
@@ -53,8 +60,11 @@ def test_bad_checksum_dropped():
     'RNG,5,640,1000,1500,2000',
     'RNG,5,640,1000,1500,2000,800,1',
     'GST,3,1500,1,1',
-    'IMU,1,2,3',          # v1.1에서 삭제된 packet
+    'IMU,1,2,3',          # v1 형식 (v2.0은 필드 12개)
     'BAT,1,2,24000',      # v1.1에서 삭제된 packet
+    'ENC,1,2,3,4',
+    'ENC,-1,2,3,4,0',     # seq·millis는 음수 불가
+    'GST,3,1500,1,-1,120',  # ENC/IMU 말고는 음수 불가
     'RNG,5,640,a,1500,2000,800',
     'RNG,5,640,1.5,1500,2000,800',
     'RNG,5,640,-1,1500,2000,800',
@@ -144,3 +154,47 @@ def test_gripper_command_words():
     assert gripper_action('lift') is None
     assert gripper_action('close') is None
     assert gripper_action('') is None
+
+
+def test_enc_imu_parse_with_negative_values():
+    assert parse_line('$ENC,10,200,1320,-660,1*7B') == EncPacket(10, 200, 1320, -660, 1)
+    assert parse_line(make_packet('ENC,0,0,0,0,3')).status_name == 'fault_reverse'
+    pkt = parse_line('$IMU,4,160,0,0,0,10000,0,0,12,0,0,9806*57')
+    assert pkt == ImuPacket(4, 160, (0, 0, 0, 10000), (0, 0, 12), (0, 0, 9806))
+    quat, gyro, accel = pkt.to_si()
+    assert quat == (0.0, 0.0, 0.0, 1.0)
+    assert gyro[2] == pytest.approx(0.012)
+    assert accel[2] == pytest.approx(9.806)
+
+
+def test_drive_and_pwm_commands_match_doc():
+    assert make_drive_command(1616, 1616) == b'$DRV,1616,1616*40\r\n'
+    assert make_drive_command(0, 0) == b'$DRV,0,0*40\r\n'
+    assert make_pwm_command(80, -80) == b'$PWM,80,-80*67\r\n'
+    with pytest.raises(ValueError):
+        make_pwm_command(256, 0)
+
+
+def test_wheel_ticks_conversion():
+    # 0.25 m/s, 바퀴 반지름 0.0325 m -> 7.69 rad/s -> 1320 tick/rev 기준 약 1616 tick/s
+    w = 0.25 / 0.0325
+    assert wheel_to_ticks(w, 1320.0) == 1616
+    assert wheel_to_ticks(-w, 1320.0) == -1616
+    assert ticks_to_wheel(1320.0, 1320.0) == pytest.approx(2 * math.pi)
+
+
+def test_wheel_speed_estimator():
+    est = WheelSpeedEstimator(1320.0)
+    assert est.read() == (0.0, 0.0)                 # packet 전
+    est.update(EncPacket(0, 1000, 0, 0, 1))
+    assert est.read() == (0.0, 0.0)                 # 첫 packet = 기준
+    est.update(EncPacket(1, 1020, 13, -13, 1))
+    est.update(EncPacket(3, 1500, 660, -330, 1))    # seq 2 누락해도 이동량은 그대로
+    left, right = est.read()
+    assert left == pytest.approx(math.pi * 2)       # 0.5 s에 반 바퀴 = 1 rev/s
+    assert right == pytest.approx(-math.pi)
+    assert est.read() == (left, right)              # 새 packet 없으면 지난 값
+    est.update(EncPacket(0, 20, 5, 5, 0))           # Mega 리셋 (millis 감소)
+    assert est.read() == (0.0, 0.0)
+    est.update(EncPacket(1, 520, 665, 5, 1))
+    assert est.read()[0] == pytest.approx(math.pi * 2)

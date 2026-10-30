@@ -11,7 +11,7 @@
 조원 A (구동)    ◀── /cmd_vel ─────────── │
                  ◀── /gripper/command ─── │
                  ── /gripper/holding ──▶  │
-                 ── /odom_raw, /imu/data, /range/*, /battery_state ──▶
+                 ── /odom_raw, /imu/data, /range/*, /gripper/state ──▶
 LiDAR 드라이버   ── /scan ─────────────▶  │
 ```
 
@@ -64,10 +64,10 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 | 토픽 | 형식 | 보내는 쪽 → 받는 쪽 | 비고 |
 |---|---|---|---|
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | 담당 1 → 조원 A | `linear.x` 전진 m/s, `angular.z` 회전 rad/s (**양수 = 왼쪽 회전**) |
-| `/odom_raw` | `nav_msgs/msg/Odometry` | 조원 A → 담당 1 | 엔코더 odometry |
-| `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | RRC Lite 내장 IMU |
+| `/odom_raw` | `nav_msgs/msg/Odometry` | 조원 A → 담당 1 | 엔코더 odometry (2026-10-29부터 실제 엔코더, Mega `$ENC`) |
+| `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | BNO085 (Mega I2C, 2026-10-29 RRC Lite 내장 IMU에서 변경). 미연결이면 휠 각속도로 z축만 |
 | `/range/front`, `/range/left`, `/range/right`, `/range/rear` | `sensor_msgs/msg/Range` | 조원 A → 담당 1 | 초음파, 단위 m. **2026-09-30 이름 변경** (예전 front_left 등, 조원 A 결정: 실제 장착이 전방·좌측·우측·후방). 좌측만 낮게, 나머지 지면 약 14 cm. 측정 실패는 `inf` |
-| `/battery_state` | `sensor_msgs/msg/BatteryState` | 조원 A → 담당 1 | **RRC Lite 입력 전압** (12V 컨버터 출력, 약 1 Hz). LiPo 잔량 아님, percentage = NaN |
+| ~~`/battery_state`~~ | `sensor_msgs/msg/BatteryState` | — | **2026-10-29 없앰.** 전압을 재던 RRC Lite를 뺐다. 필요하면 조원 A에게 요청 (분압 회로 추가 필요) |
 | `/scan` | `sensor_msgs/msg/LaserScan` | LiDAR 드라이버 → 담당 1 | RPLIDAR C1 |
 
 ## 3. 확인 필요 (TODO)
@@ -106,10 +106,9 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 ros2 launch poli_hardware hardware.launch.py use_fake_hardware:=false   # 실제 로봇
 ros2 launch poli_hardware hardware.launch.py                            # fake (테스트용, 기본)
 ```
-- 실제: `rrc_adapter_node` (`/cmd_vel` → 모터, `/odom_raw`, `/imu/data`, `/battery_state`),
-  `/gripper/command`, `/gripper/state` (2026-10-07 Mega에서 이전),
-  `mega_bridge_node` (`/range/*`)
-- fake: `fake_rrc_node`, `fake_mega_node` — 토픽은 실제와 같습니다.
+- 실제: `mega_bridge_node` 하나 (`/cmd_vel` → MDD10 모터, `/odom_raw`, `/imu/data`, `/range/*`, `/gripper/*`).
+  2026-10-29 RRC Lite를 빼면서 `rrc_adapter_node`를 없앴다 (아래 5-5).
+- fake: `fake_mega_node` 하나 — 토픽은 실제와 같습니다. (예전 `fake_rrc_node`는 없앰)
 - 대회 launch에서는 `IncludeLaunchDescription`으로 `poli_hardware/launch/hardware.launch.py`를 포함하면 됩니다.
 - `/cmd_vel`이 0.3초 넘게 안 오면 정지합니다 (약속 0.5초 이내). mission2의 20 Hz 발행이면 문제없습니다.
 
@@ -120,11 +119,10 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   실측값을 URDF 한 곳에서만 고치면 됩니다. 지금 URDF 값은 둘 다 0 (TODO_MEASURE).
 
 ### 4-6. 주의할 점
-- **`/odom_raw`는 엔코더 값이 아닙니다.** RRC Lite는 공장 펌웨어를 그대로 쓰기로 했고(2026-10-01, 조원 A 결정),
-  공장 펌웨어는 엔코더 값을 Pi로 보내지 않아서 보낸 속도 명령으로 추정한 값입니다. 바퀴가 미끄러지거나 막혀도 모릅니다.
-  대각선 1697mm 주행 거리는 IMU·LiDAR 벽 거리 등으로 보정하는 것을 권장합니다. (자세한 내용: `docs/rrc_protocol.md`)
-- RRC Lite는 명령이 끊겨도 스스로 멈추지 않습니다. 임무 노드가 `/cmd_vel`을 계속(20 Hz) 보내는 지금 방식을 유지해 주세요.
-- **`/battery_state`는 LiPo 잔량이 아닙니다** (RRC 입력 = 12V 컨버터 출력). 저전압 판단에 쓰면 안 됩니다.
+- ~~`/odom_raw`는 엔코더 값이 아닙니다.~~ **2026-10-29부터 엔코더 값입니다** (아래 5-5). 바퀴가 미끄러지면 여전히 모르므로
+  대각선 1697mm 주행 거리는 IMU·LiDAR 벽 거리 등으로 보정하는 것을 권장합니다.
+- 임무 노드가 `/cmd_vel`을 계속(20 Hz) 보내는 지금 방식을 유지해 주세요. 끊기면 0.3초 뒤 멈춥니다 (Pi 노드 + Mega 펌웨어 둘 다).
+- ~~`/battery_state`~~ 는 2026-10-29에 없앴습니다.
 - `poli_navigation/fake_odom.py`도 `/odom_raw`를 발행하므로 `hardware.launch.py`와 **동시에 실행하면 안 됩니다.**
   fake 테스트는 `hardware.launch.py`(기본 fake 모드)만 켜도 조원 A 토픽이 전부 나옵니다.
 - mission2는 `"open"`을 시작할 때 한 번만 보냅니다. 집게는 켜질 때 열림 상태라 괜찮지만,
@@ -152,7 +150,7 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   (확인: 1초마다 `grab` → 2초째 `closed`)
 - `mega_bridge_node` 로그는 명령이 바뀔 때만 찍습니다 (1초마다 같은 로그가 쌓이지 않게).
 
-### 5-2. 조원 A 변경 (2026-10-07) — 집게 서보를 RRC Lite로 이전
+### 5-2. 조원 A 변경 (2026-10-07) — 집게 서보를 RRC Lite로 이전 (2026-10-29 Mega D9로 되돌림, 5-5)
 - 제품 사양서_E 연결 계획에 따라 집게 서보(DS3218)를 Mega D9에서 **RRC Lite PWM 서보 포트**로 옮겼습니다.
 - **토픽 약속은 그대로입니다.** `/gripper/command` (`"open"` / `"grab"`), `/gripper/state` (`open` / `closed` / `moving`, 2 Hz).
   발행 노드만 `mega_bridge_node` → `rrc_adapter_node`(fake는 `fake_rrc_node`)로 바뀌었습니다. 담당 1 코드 수정 필요 없음.
@@ -177,3 +175,19 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   시뮬레이션(모터 0.2초·카메라 0.3초 지연)에서 계속 도는 방식은 12번 중 1번만 대상을 잡았고, 끊어 도는 방식은 12번 모두 잡았다.
 - `turn_pulse.HW_MIN_WHEEL_SPEED = 0.25`는 `hardware.yaml`의 `min_wheel_speed`와 같아야 한다. **조원 A가 이 값을 바꾸면 알려 주세요.**
 - 실측 필요(TODO_MEASURE): 0.05초 펄스 한 번에 실제로 몇 도 도는지 (`drive_test`). 펄스가 너무 짧아 바퀴가 안 움직이면 `PULSE_S`를 늘린다.
+
+### 5-5. 조원 A·팀 변경 (2026-10-29) — RRC Lite → MDD10 + Mega
+- 모터 드라이버를 **Cytron MDD10**으로 바꾸고 RRC Lite를 뺐습니다. 속도 제어·엔코더·IMU(BNO085)·집게(D9)는 **Mega**가 맡습니다
+  (`docs/pin_map.md`, `docs/serial_protocol.md` v2.0). 배터리는 12 V.
+- **토픽 이름·형식·frame_id는 그대로입니다.** `/cmd_vel`, `/odom_raw`, `/imu/data`, `/range/*`, `/gripper/command`, `/gripper/state`.
+  `hardware.launch.py` 사용법도 같습니다. 담당 1 코드 수정 필요 없음.
+- 바뀐 점:
+  - 노드: 실제 = `mega_bridge_node` 하나, fake = `fake_mega_node` 하나.
+  - `/odom_raw`: 명령 기반 추정 → **엔코더 기반**. 바퀴가 막히면 odom도 멈춥니다.
+  - `/imu/data`: 25 Hz (RRC 때 50 Hz). BNO085가 연결되면 `orientation`(쿼터니언)도 채웁니다.
+    BNO085 연결 전에는 RRC 때처럼 `orientation_covariance[0] = -1`, 휠 각속도로 z축만.
+  - `/battery_state`: 없앴습니다 (구독하는 담당 1 코드는 없음, 2026-10-29 확인).
+  - 안전: Mega 펌웨어가 명령이 0.3초 끊기면 스스로 멈춥니다. 엔코더 방향 반대·신호 없음·바퀴 막힘(0.3초)이면 모터를 끄고,
+    노드를 다시 켤 때까지 움직이지 않습니다. **벽을 0.3초 넘게 밀면 이 정지가 걸리니** 임무 코드가 벽에 붙어 미는 동작이 있으면 알려 주세요.
+- 저속(`min_wheel_speed: 0.25`, 5-3·5-4)은 **그대로 둡니다.** MDD10 + Mega 속도 제어는 저속도 부드러울 수 있지만 아직 실측 전입니다.
+  실측 후 낮추게 되면 `turn_pulse.HW_MIN_WHEEL_SPEED`와 함께 바꾸도록 담당 1에게 먼저 알립니다.

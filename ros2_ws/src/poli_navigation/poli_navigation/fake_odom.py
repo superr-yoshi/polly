@@ -7,7 +7,7 @@ from tf2_ros import TransformBroadcaster
 
 # SIM_ONLY: 실제 엔코더 없이 테스트하기 위한 가짜 값이다.
 # 로봇이 움직이지 않고 출발점(0, 0)에 계속 있다고 가정한다.
-# 실제 /odom_raw는 조원 A의 RRC Lite 엔코더 드라이버가 제공한다.
+# 실제 /odom_raw는 조원 A의 mega_bridge_node(MDD10 + 엔코더)가 제공한다.
 SIM_ONLY_ODOM_FRAME_ID = 'odom'
 SIM_ONLY_BASE_FRAME_ID = 'base_link'
 SIM_ONLY_PUBLISH_PERIOD = 0.05

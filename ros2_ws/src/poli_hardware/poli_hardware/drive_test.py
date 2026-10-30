@@ -1,13 +1,13 @@
 """
-보정용 주행 시험 (조원 A). docs/rrc_adapter_plan.md의 실측 순서를 명령 하나로 실행한다.
+보정용 주행 시험 (조원 A). docs/calibration.md의 실측 순서를 명령 하나로 실행한다.
 
   ros2 run poli_hardware drive_test straight --distance 1.0 [--speed 0.25]
   ros2 run poli_hardware drive_test rotate --angle 360 [--speed 0.6]
   ros2 run poli_hardware drive_test wheel --revs 10 [--rps 1.22]    # 바퀴를 띄우고!
 
-끝나면 odom(명령 기반)과 IMU 적분값을 보여주고, 실제로 잰 값을 입력하면
+끝나면 odom(엔코더 기반)과 IMU 적분값을 보여주고, 실제로 잰 값을 입력하면
 config/hardware.yaml에 넣을 새 값을 계산한다. (--measured로 미리 줘도 된다)
-Ctrl+C로 언제든 정지 (0 속도 발행, RRC 쪽 watchdog도 0.3초 뒤 정지).
+Ctrl+C로 언제든 정지 (0 속도 발행, Mega 펌웨어도 명령이 0.3초 끊기면 스스로 정지).
 """
 import argparse
 import math
@@ -106,7 +106,7 @@ def load_current_params():
         path = os.path.join(share, 'config', 'hardware.yaml')
         with open(path, encoding='utf-8') as f:
             cfg = yaml.safe_load(f)
-        for section in ('/**', 'rrc_adapter_node'):
+        for section in ('/**', 'mega_bridge_node'):
             params = cfg.get(section, {}).get('ros__parameters', {})
             cur.update({k: float(v) for k, v in params.items() if k in cur})
     except Exception as e:  # noqa: BLE001 - 설정 파일이 없어도 시험은 가능
@@ -216,9 +216,9 @@ def run(node, a):
     odom_deg = math.degrees(yaw1 - yaw0)
     imu_deg = math.degrees(imu1 - imu0)
     print('\n[결과]')
-    print(f'  odom 이동거리 : {odom_dist:.3f} m   (명령 기반 추정)')
+    print(f'  odom 이동거리 : {odom_dist:.3f} m   (엔코더 기반, fake 모드에선 명령 그대로)')
     print(f'  odom 회전     : {odom_deg:+.1f} 도')
-    print(f'  IMU 적분 회전 : {imu_deg:+.1f} 도   (실제 회전에 가까움, fake 모드에선 odom과 같음)')
+    print(f'  IMU 적분 회전 : {imu_deg:+.1f} 도   (실제 회전에 가까움, IMU 없으면 odom과 같음)')
 
     if a.mode == 'straight':
         m = ask('  줄자로 잰 실제 이동거리(m), 모르면 Enter: ', a.measured)

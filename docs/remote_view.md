@@ -25,7 +25,7 @@ Pi에 모니터가 없어도 노트북(WSL)의 RViz2 / rqt_image_view로 Pi의 R
 ## 한 줄로 보기 (노트북 VS Code 터미널, 저장소 폴더에서)
 | 확인 | 명령 | 끝내기 |
 |---|---|---|
-| **LiDAR + 카메라 + 바퀴 한 번에** | `bash scripts/laptop/check_all.sh` | RViz 창 닫기 (Pi 쪽 모두 꺼짐). 바퀴는 띄우고, RRC USB를 바로 뽑을 수 있게 |
+| **LiDAR + 카메라 + 바퀴 한 번에** | `bash scripts/laptop/check_all.sh` | RViz 창 닫기 (Pi 쪽 모두 꺼짐). 바퀴는 띄우고, 비상정지(또는 Mega USB)를 바로 누를 수 있게 |
 | LiDAR + 카메라 | `bash scripts/laptop/view_all.sh` | RViz 창 닫기 (Pi 쪽도 꺼짐) |
 | LiDAR | `bash scripts/laptop/view_lidar.sh` | RViz 창 닫기 (Pi LiDAR도 꺼짐) |
 | 카메라 영상 | `bash scripts/laptop/view_camera.sh` | 영상 창 닫기 (Pi 영상 발행도 꺼짐) |

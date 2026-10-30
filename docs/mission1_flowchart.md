@@ -22,7 +22,7 @@ flowchart TD
     RECENTER --> TURN
     NEXT --> TURN
 
-    TURN["제자리 회전<br/>목표 방향 ±5° 이내까지"] --> DRIVE["직진 (RRC Lite /cmd_vel)<br/>방향 보정하며 가까워지면 감속"]
+    TURN["제자리 회전<br/>목표 방향 ±5° 이내까지"] --> DRIVE["직진 (/cmd_vel → Mega → MDD10)<br/>방향 보정하며 가까워지면 감속"]
     DRIVE --> ARRIVE{"목표 3 cm 이내<br/>또는 지나침?"}
     ARRIVE -- NO --> DRIVE
     ARRIVE -- "YES, 놓을 위치" --> RELEASE
@@ -56,8 +56,8 @@ flowchart TD
 | 원래 | 바뀐 것 | 이유 |
 |---|---|---|
 | 목표 (5,5) | (5,5)의 상하좌우 옆 칸, 거기서 카메라로 접근 | (5,5)에는 큐브가 있어서 들어가면 큐브를 밀어낸다 |
-| RoboClaw 제어 | RRC Lite (`/cmd_vel`) | 하드웨어 변경 |
-| 엔코더로 400 mm 확인 | odom 추정 위치가 목표 3 cm 이내 | RRC Lite 공장 펌웨어는 엔코더 값을 Pi로 보내지 않는다. odom은 보낸 속도 명령 기반 추정이다 |
+| RoboClaw 제어 | MDD10 + Mega (`/cmd_vel`) | 하드웨어 변경 (RRC Lite → MDD10, 2026-10-29) |
+| 엔코더로 400 mm 확인 | odom 위치가 목표 3 cm 이내 | 2026-10-29부터 odom은 엔코더 기반 (Mega `$ENC`). RRC Lite 때는 명령 기반 추정이었다 |
 | Arducam | Raspberry Pi AI Camera (`/vision/target`) | 하드웨어 변경 |
 | TCS34725 근접 재확인 | 없음. 카메라 `area`로 거리 판단 후 `/gripper/state`로 잡았는지 확인 | RGB 컬러 센서는 쓰지 않기로 함 (2026-10-06) |
 | 회전 0° / ±90° / 180° | 목표 칸 방향으로 회전 (±5°) | 격자 가운데에서 벗어나 있으면 먼저 가운데로 돌아간다 |
@@ -68,4 +68,4 @@ flowchart TD
 ## 아직 정하지 않은 것
 - 중앙에 큐브가 없을 때 (상대가 먼저 가져감) 대응: 지금은 제자리 회전 탐색만 한다.
 - 집게 상태를 모르면 잡은 것으로 본다.
-- 엔코더가 없어서 위치 오차가 쌓인다. IMU(`/odometry/filtered`)와 LiDAR 외벽 거리 보정으로 줄이는 것이 남은 과제다.
+- 바퀴 미끄러짐으로 위치 오차가 쌓인다 (2026-10-29부터 엔코더 odom이지만 미끄러짐은 모른다). IMU(`/odometry/filtered`)와 LiDAR 외벽 거리 보정으로 줄이는 것이 남은 과제다.

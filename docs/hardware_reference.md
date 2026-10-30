@@ -4,26 +4,38 @@
 - 원본: `docs/product-spec-e/제품_사양서_E.md` + `제품_사양서_E_그림/` (원본 HWP `제품 사양서_E.hwp`, 요약 없이 변환).
   아래 1장 이후는 옛 임시본(`docs/product-spec-claude/`) 기준 정리이고, 사양서_E와 다른 점은 이 0장이 우선이다.
 
+### 0-0. 팀 결정 (2026-10-29) — RRC Lite → MDD10 + Mega (사양서_E와 다름, 팀 결정이 우선)
+| 항목 | 사양서_E | 지금 (팀 결정, `docs/pin_map.md`) |
+|---|---|---|
+| 모터 드라이버 | RRC Lite | **Cytron MDD10** (PWM1/DIR1 = Mega D6/D30, PWM2/DIR2 = D7/D31) |
+| 속도 제어 | RRC Lite 내부 PID | Mega 펌웨어 PI + 앞먹임 (`firmware/mega_sensor_controller/motor.cpp`) |
+| 엔코더 | (기타 상세 정보) A/B → Mega D2/D3, D18/D19 | **사양서와 같음**: 왼쪽 C1/C2 = D2/D3, 오른쪽 C1/C2 = D18/D19, VCC·GND = Mega |
+| IMU | RRC Lite 내장 6축 | **BNO085** (Mega I2C D20/D21, 배선 TODO) |
+| 집게 서보 | RRC PWM 서보 포트 | **Mega D9**, 전원 5V 10A 컨버터 |
+| 배터리·전원 | 6S LiPo + 컨버터 | **12 V 배터리** → MDD10 직접, 5V 10A 컨버터 → Pi·서보 |
+| 배터리 전압 감시 | RRC 입력 전압 | **없음** (`/battery_state` 없앰) |
+- 아래 0-1~0-3의 RRC Lite 관련 줄은 2026-10-07 기준 기록이다. 사양서 작성자에게 "RRC Lite를 MDD10으로 바꿈"을 알려 사양서를 고쳐 달라고 한다 (TODO).
+
 ### 0-1. 코드와 일치 확인
 | 항목 | 사양서_E | 코드·설정 |
 |---|---|---|
 | 모터 JGB37-520 | 1:30, 12 V, 정격 250 RPM (무부하 330), 정격 1 A, 스톨 2.3 A | `motor_ticks_per_rev` 1320 |
-| 엔코더 | 11 PPR × 30 = 330 PPR, 4체배 1320 CPR | 1320 (RRC 내부 PID에만 사용) |
+| 엔코더 | 11 PPR × 30 = 330 PPR, 4체배 1320 CPR | 1320 (2026-10-29부터 Mega가 4체배로 셈, `/odom_raw`·속도 제어에 사용) |
 | 바퀴 | 고무 Ø65 × 26 mm, 1회전 약 204.2 mm | `wheel_radius` 0.0325, URDF `wheel_width` 0.026 |
 | HC-SR04 | 5 V, 2 cm ~ 4 m, 약 15° | `min_range` 0.02, `max_range` 4.0, `field_of_view` 0.26 rad |
-| RRC Lite | STM32F407VET6, 6축 IMU, USB 시리얼, 6~14 V 입력 (우리 12 V) | `docs/rrc_protocol.md` |
+| RRC Lite | STM32F407VET6, 6축 IMU, USB 시리얼, 6~14 V 입력 (우리 12 V) | **사용 안 함** (2026-10-29, 0-0) |
 
 ### 0-2. 사양서_E에 맞춰 바꾼 것
 | 변경 | 내용 |
 |---|---|
-| **집게 서보 → RRC Lite PWM 서보 포트** | 사양서_E 연결 계획·통신 기능표 "PWM 서보 제어 ○ 그리퍼". Mega D9 → RRC (팀 결정 2026-10-07). `rrc_adapter_node`가 `/gripper/*` 담당, 서보 전원 점퍼 5V 필수 (`docs/pin_map.md` 2장) |
+| ~~집게 서보 → RRC Lite PWM 서보 포트~~ | 2026-10-07 Mega D9 → RRC로 옮겼다가, **2026-10-29 RRC Lite를 빼면서 Mega D9로 되돌림** (0-0) |
 | `max_wheel_rpm` 330 → 250 | 사양서 "정격 동작점 12V, 250RPM → 연속 주행 시 이 부근에서 운용" |
 | URDF `wheel_width` 0.027 → 0.026 | 사양서 바퀴 Ø65 × 26 mm |
 
 ### 0-3. 사양서 확인 요청 (사양서 작성자에게 전달, 내용 추측하지 않음)
 | 위치 (사양서_E) | 사양서 내용 | 실제·다른 자료 | 요청 |
 |---|---|---|---|
-| JGB37-520 기타 상세 정보 | 엔코더 A/B → 아두이노 메가 D2/D3, D18/D19, VCC·GND도 메가 | 엔코더는 모터 케이블로 **RRC M1/M2**에 연결 (팀 결정, 현재 구현) | 메가 연결 문장 삭제 또는 RRC로 수정 |
+| JGB37-520 기타 상세 정보 | 엔코더 A/B → 아두이노 메가 D2/D3, D18/D19, VCC·GND도 메가 | ~~RRC M1/M2에 연결~~ → **2026-10-29부터 사양서대로 Mega** | 요청 취소 (사양서가 맞음) |
 | RRC Lite 데이터 흐름 | "RRC Lite → 라즈베리파이 : 엔코더 값" | 공장 펌웨어는 엔코더 값을 Pi로 보내지 않음 (`docs/rrc_protocol.md`, 공장 펌웨어 유지 결정 2026-10-01) | "엔코더 값 미전송(속도 PID 내부 사용)"으로 수정 |
 | RRC Lite 통신 기능표 | 배터리 전압 "○ 저전압 감시" | RRC가 재는 것은 자기 입력 = 12 V 컨버터 출력. LiPo 잔량 감시 불가 | 저전압 감시 방법 따로 정하기 (예: 배터리 체커) |
 | RRC Lite 사양 | 무게 329 g (첫 표) / 32 g (둘째 표) | — | 실측 무게로 하나로 |
@@ -91,7 +103,7 @@
 | 최대 개폐 | **125 mm** (열었을 때 높이 110 mm) |
 | 최대 파지력 | **500 g** |
 | 재질 | 경질 알루미늄 합금 |
-| 제어 | PWM 서보 구동 (사양표에는 "PWM / Serial Port") — 우리는 DS3218 1개, **RRC Lite PWM 서보 포트** (2026-10-07) |
+| 제어 | PWM 서보 구동 (사양표에는 "PWM / Serial Port") — 우리는 DS3218 1개, **Mega D9** (2026-10-29, RRC PWM 포트에서 되돌림) |
 
 주의 (팀 결정)
 - **집게는 잡기만 하고 들어 올리지 않는다.** `/gripper/command`는 `"open"`, `"grab"`(닫아 잡기)만 있다 (`docs/interfaces.md` 4장).
@@ -101,7 +113,7 @@
 ## 5. DS3218 서보
 | 항목 | 값 |
 |---|---|
-| 전압 | **4.8 ~ 6.8 V** (우리: RRC 서보 포트, **전원 점퍼 5V 필수** — VIN 12 V면 파손) |
+| 전압 | **4.8 ~ 6.8 V** (우리: 5V 10A 컨버터 5 V, GND는 Mega와 공통. Mega 5V 핀 사용 금지) |
 | 크기·무게 (BIN000F) | 40 × 20 × 40.5 mm (귀 포함 54.5 mm, 장착 구멍 간격 49.5 × 10 mm), 60 g |
 | 회전 | 180° 버전 |
 | PWM | **500 ~ 2500 µs = 0 ~ 180°**, 중립 1500 µs (= 90°), 주기 50~330 Hz, 신호 3.3~5 V (BIN0010) |
@@ -111,20 +123,20 @@
 대회 규정 관련
 - **빨간색 부품 금지 (문의 6번)**: 서보 몸체가 빨간색이면 관심대상과 같은 색이라 금지 대상이 될 수 있고, 우리 카메라도 오인식할 수 있다.
   빨간색이 아닌 테이프·커버로 가린다 (TODO: 실물 색 확인). 빨간 전선·수축튜브도 밖으로 보이지 않게 한다.
-- **시작 전 기동 금지 (규정 3.5.6)**: 첫 집게 명령 전에는 서보 명령을 보내지 않는다. RRC가 전원을 켤 때 내는 1500 µs를 열림 위치로 조립한다 (아래).
+- **시작 전 기동 금지 (규정 3.5.6)**: 첫 집게 명령 전에는 서보 신호를 보내지 않는다 (Mega가 첫 `$GRIP` 때 `Servo.attach`). RRC 때 1500 µs = 열림으로 조립했으므로 열림 각도를 90도(1500 µs)로 둔다.
 
 소프트웨어 반영
-- 2026-10-07부터 `rrc_adapter_node`가 RRC PWM 서보(func 4)로 직접 펄스를 보낸다 (`docs/rrc_protocol.md`).
-  각도 = (µs − 500) / 2000 × 180. 설정 `config/hardware.yaml`: `gripper_servo_id` 1, `gripper_open_us` 1500,
-  `gripper_close_us` 1833, `gripper_move_ms` 1000 (포트·닫힘값은 TODO_MEASURE).
-- (사용 안 함) Mega 펌웨어 `gripper.cpp`의 집게 코드는 남아 있지만 Pi가 `$GRIP`을 보내지 않는다.
+- 2026-10-29부터 다시 Mega 펌웨어 `gripper.cpp`가 D9로 서보를 움직인다. `mega_bridge_node`가 `$GRIP`을 보내고 `$GST`로 상태를 받는다.
+  각도 = (µs − 500) / 2000 × 180. 설정 `firmware/mega_sensor_controller/config.h`: `GRIP_OPEN_DEG` 90 (1500 µs),
+  `GRIP_CLOSE_DEG` 120 (약 1833 µs), 1도당 15 ms (닫힘값은 TODO_MEASURE).
+- (기록) 2026-10-07~10-29에는 `rrc_adapter_node`가 RRC PWM 서보(func 4)로 펄스를 보냈다.
 
 ## 9. Raspberry Pi 5
 | 항목 | 값 |
 |---|---|
 | CPU / GPU | Broadcom BCM2712 2.4 GHz 4코어 Cortex-A76 / VideoCore VII |
 | RAM | LPDDR4X 2 / 4 / 8 / 16 GB |
-| USB | USB 3.0 × 2, USB 2.0 × 2 (RRC Lite, Mega, RPLIDAR 연결) |
+| USB | USB 3.0 × 2, USB 2.0 × 2 (Mega, RPLIDAR 연결) |
 | 카메라 | 4-lane MIPI × 2 (CAM0, CAM1) |
 | 전원 | **5 V / 5 A**, USB-C PD |
 | 기타 | Wi-Fi 802.11ac, BT 5.0, 기가비트 이더넷, microSD, PCIe 2.0 x1, RTC, 전원 버튼 |
@@ -142,9 +154,10 @@
 | PWM (GPIO 12, 13) | 32, 33 |
 
 주의 (확인 필요)
-- 결선도상 Pi 전원은 XL4015 5 V 출력을 **GPIO 5 V 핀**으로 넣는다. Pi 5는 5 A PD 전원이 아니면 USB 포트 총 출력을 제한할 수 있으므로,
-  RPLIDAR(최대 260 mA) + Mega + RRC를 USB로 연결했을 때 전원 부족·재부팅이 없는지 실기 확인한다 (TODO_MEASURE).
-- XL4015 최대 출력(약 5 A)과 Pi 5 요구(5 V / 5 A)가 거의 같아 여유가 없다.
+- 2026-10-29 결선도: Pi 전원은 **5V 10A 컨버터 → USB-C** (서보와 같은 5 V를 나눠 씀). Pi 5는 5 A PD 전원이 아니면 USB 포트 총 출력을
+  600 mA로 제한하므로, `usb_max_current_enable=1`(`/boot/firmware/config.txt`)을 넣고 RPLIDAR(최대 260 mA) + Mega를 USB로 연결했을 때
+  전원 부족·재부팅이 없는지 실기 확인한다 (TODO_MEASURE).
+- 서보가 잡을 때 순간 전류로 5 V가 출렁이면 Pi가 저전압 경고를 낸다. 잡기 시험 때 `vcgencmd get_throttled`로 확인한다 (TODO_MEASURE).
 
 ## 10. Arduino Mega 2560 R3
 | 항목 | 값 |
@@ -163,12 +176,16 @@
 | 용도 | 핀 |
 |---|---|
 | HC-SR04 ×4 Trig / Echo | D22/D23, D24/D25, D26/D27, D28/D29 (2열 헤더 첫 4쌍) |
-| 집게 서보 신호 | 사용 안 함 (2026-10-07 RRC PWM 서보 포트로 이전) |
+| 집게 서보 신호 | D9 (2026-10-29 다시 사용) |
+| 엔코더 왼쪽 C1 / C2, 오른쪽 C1 / C2 | D2 / D3, D18 / D19 (외부 인터럽트) |
+| MDD10 PWM1 / DIR1, PWM2 / DIR2 | D6 / D30, D7 / D31 |
+| BNO085 SDA / SCL | D20 / D21 (TODO: 배선) |
 | Pi 통신 | USB (UART0, 115200 baud). 호환보드(CH340)는 `/dev/ttyUSB*`, 정품은 `/dev/ttyACM*` |
 
 주의
 - SRAM 8 KB → 펌웨어에서 `String` 클래스·큰 배열 지양, `snprintf`의 `%f` 미지원 (정수만).
 - D0/D1은 USB 시리얼과 공유하므로 다른 용도로 쓰지 않는다.
+- D18/D19를 엔코더에 쓰므로 Serial1은 쓸 수 없다. Servo 라이브러리는 Timer5를 써서 D44~D46 PWM이 안 된다 (모터는 D6/D7 = Timer4).
 
 ---
 
@@ -176,7 +193,9 @@
 이 부품들의 정보는 아래 문서에 있다.
 | 부품 | 참고 문서 |
 |---|---|
-| RRC Lite Controller (STM32F407VET6, 내장 IMU QMI8658) | `docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md` |
-| JGB37-520 12V 330RPM 엔코더 모터 × 2 (30:1, 11 PPR) | `docs/rrc_adapter_plan.md`, `ros2_ws/src/poli_hardware/config/hardware.yaml` |
+| Cytron MDD10 모터 드라이버 (2채널) | `docs/pin_map.md` 1장, `firmware/mega_sensor_controller/README.md` |
+| BNO085 IMU | `docs/pin_map.md` 1장 |
+| (사용 안 함) RRC Lite Controller (STM32F407VET6, 내장 IMU QMI8658) | `docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md` |
+| JGB37-520 12V 330RPM 엔코더 모터 × 2 (30:1, 11 PPR) | `docs/pin_map.md` 1장, `ros2_ws/src/poli_hardware/config/hardware.yaml` |
 | HC-SR04 초음파 × 4 | `docs/pin_map.md`, `firmware/mega_sensor_controller/README.md` |
-| 전원 (6S LiPo, 퓨즈, XL4015 × 3) | `docs/pin_map.md` 4장, `docs/hardware_plan.md` 9장 |
+| 전원 (12 V 배터리, 퓨즈, 5V 10A 컨버터. 예전 6S LiPo + XL4015 × 3) | `docs/pin_map.md` 4장, `docs/hardware_plan.md` |

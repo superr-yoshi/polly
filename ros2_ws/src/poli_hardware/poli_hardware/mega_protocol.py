@@ -1,15 +1,22 @@
 """
-Mega <-> Pi 시리얼 프로토콜 v1.1 (docs/serial_protocol.md).
+Mega <-> Pi 시리얼 프로토콜 v2.0 (docs/serial_protocol.md).
 
 rclpy / pyserial에 의존하지 않는 순수 모듈이다. PC에서 pytest로 바로 검증한다.
 packet 형식을 바꾸면 docs/serial_protocol.md와 펌웨어를 함께 고친다.
 """
 from collections import deque
 from dataclasses import dataclass
+import math
 from typing import Optional, Union
 
 # 타입 뒤 필드 수 (seq, millis 포함)
-FIELD_COUNT = {'RNG': 6, 'GST': 5}
+FIELD_COUNT = {'RNG': 6, 'GST': 5, 'ENC': 5, 'IMU': 12}
+# 음수가 올 수 있는 packet (엔코더 tick, IMU 값). 나머지는 음수면 폐기
+SIGNED = ('ENC', 'IMU')
+
+# ENC status (펌웨어 motor.h MotorStatus)
+MOTOR_STATUS_NAMES = {0: 'idle', 1: 'drive', 2: 'pwm', 3: 'fault_reverse', 4: 'fault_stall'}
+MOTOR_FAULTS = (3, 4)
 
 # RNG 거리값 순서 (Mega 센서 0~3 = D22/23, D24/25, D26/27, D28/29). 토픽 /range/<이름>과 1:1.
 # 좌측만 낮게, 나머지는 지면에서 약 14 cm (docs/pin_map.md).
@@ -46,7 +53,35 @@ class GstPacket:
         return GRIP_STATE_NAMES.get(self.state, 'unknown')
 
 
-Packet = Union[RngPacket, GstPacket]
+@dataclass(frozen=True)
+class EncPacket:
+    seq: int
+    millis: int
+    left: int    # 누적 tick (4체배), 로봇 전진 = +
+    right: int
+    status: int  # MOTOR_STATUS_NAMES
+
+    @property
+    def status_name(self) -> str:
+        return MOTOR_STATUS_NAMES.get(self.status, 'unknown')
+
+
+@dataclass(frozen=True)
+class ImuPacket:
+    seq: int
+    millis: int
+    quat: tuple   # (x, y, z, w) x 10000
+    gyro: tuple   # (x, y, z) mrad/s
+    accel: tuple  # (x, y, z) mm/s^2, 중력 포함
+
+    def to_si(self):
+        """((x, y, z, w), (gx, gy, gz) rad/s, (ax, ay, az) m/s^2)."""
+        return (tuple(v / 10000.0 for v in self.quat),
+                tuple(v / 1000.0 for v in self.gyro),
+                tuple(v / 1000.0 for v in self.accel))
+
+
+Packet = Union[RngPacket, GstPacket, EncPacket, ImuPacket]
 
 
 def checksum(body: str) -> int:
@@ -72,8 +107,31 @@ def make_grip_command(cmd_id: int, action: int) -> bytes:
     return make_packet(f'GRIP,{cmd_id},{action}')
 
 
+def make_drive_command(left_tps: int, right_tps: int) -> bytes:
+    """목표 바퀴 속도 (엔코더 tick/s, 전진 = +). Mega는 0.3초 안에 다음 명령이 없으면 멈춘다."""
+    return make_packet(f'DRV,{int(left_tps)},{int(right_tps)}')
+
+
+def make_pwm_command(left_duty: int, right_duty: int) -> bytes:
+    """배선·방향 확인용 직접 출력 (-255~255). 엔코더를 보지 않는다."""
+    for d in (left_duty, right_duty):
+        if not -255 <= d <= 255:
+            raise ValueError(f'duty must be -255..255, got {d}')
+    return make_packet(f'PWM,{int(left_duty)},{int(right_duty)}')
+
+
+def wheel_to_ticks(rad_s: float, ticks_per_rev: float) -> int:
+    """바퀴 각속도 rad/s -> 엔코더 tick/s (반올림)."""
+    return int(round(rad_s / (2.0 * math.pi) * ticks_per_rev))
+
+
+def ticks_to_wheel(ticks_s: float, ticks_per_rev: float) -> float:
+    """엔코더 tick/s -> 바퀴 각속도 rad/s."""
+    return ticks_s / ticks_per_rev * 2.0 * math.pi
+
+
 def parse_line(line: Union[str, bytes]) -> Optional[Packet]:
-    """정상 packet이면 RngPacket/GstPacket, 아니면 None. 예외를 올리지 않는다."""
+    """정상 packet이면 RngPacket/GstPacket/EncPacket/ImuPacket, 아니면 None. 예외를 올리지 않는다."""
     if isinstance(line, bytes):
         line = line.decode('ascii', errors='replace')
     line = line.strip()
@@ -92,11 +150,16 @@ def parse_line(line: Union[str, bytes]) -> Optional[Packet]:
         values = [int(x) for x in parts[1:]]
     except ValueError:
         return None
-    if any(v < 0 for v in values):
+    if any(v < 0 for v in values[:2]) or (kind not in SIGNED and any(v < 0 for v in values)):
         return None
 
     if kind == 'RNG':
         return RngPacket(values[0], values[1], tuple(values[2:6]))
+    if kind == 'ENC':
+        return EncPacket(*values)
+    if kind == 'IMU':
+        return ImuPacket(values[0], values[1], tuple(values[2:6]), tuple(values[6:9]),
+                         tuple(values[9:12]))
     return GstPacket(*values)
 
 
@@ -158,3 +221,38 @@ class RangeMedianFilter:
             med = s[len(s) // 2]
             out.append(0 if med == float('inf') else int(med))
         return tuple(out)
+
+
+class WheelSpeedEstimator:
+    """
+    ENC packet(누적 tick + Mega millis) -> 바퀴 각속도 rad/s.
+
+    read()는 지난 read() 이후 움직인 tick을 Mega 시각 차이로 나눈다. 그래서 packet이 몇 개
+    빠져도 이동 거리는 그대로 남는다. 그 사이 새 packet이 없으면 지난 값을 그대로 돌려준다.
+    Mega가 리셋되면(millis 감소) 기준을 다시 잡고 그 구간은 0으로 본다.
+    """
+
+    def __init__(self, ticks_per_rev: float):
+        self.ticks_per_rev = ticks_per_rev
+        self._latest = None     # 마지막 EncPacket
+        self._base = None       # 지난 read() 때의 EncPacket
+        self._speeds = (0.0, 0.0)
+
+    def update(self, pkt: EncPacket):
+        if self._latest is not None and pkt.millis < self._latest.millis:
+            self._base = None   # Mega 리셋
+        self._latest = pkt
+
+    def read(self):
+        cur, base = self._latest, self._base
+        if cur is None:
+            return 0.0, 0.0
+        if base is None:
+            self._base = cur
+            self._speeds = (0.0, 0.0)
+        elif cur.millis > base.millis:
+            dt = (cur.millis - base.millis) / 1000.0
+            self._speeds = (ticks_to_wheel((cur.left - base.left) / dt, self.ticks_per_rev),
+                            ticks_to_wheel((cur.right - base.right) / dt, self.ticks_per_rev))
+            self._base = cur
+        return self._speeds

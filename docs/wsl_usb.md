@@ -1,4 +1,6 @@
-# Windows PC에서 Mega/RRC를 WSL(Ubuntu) ROS로 테스트하기
+# Windows PC에서 Mega를 WSL(Ubuntu) ROS로 테스트하기
+
+> 2026-10-29부터 RRC Lite는 쓰지 않는다. 아래 RRC 관련 내용은 기록용이다.
 
 Pi 없이 개발 PC의 WSL2 + ROS 2에서 실제 USB 장치를 쓰는 방법. (2026-09-29 Mega로 확인)
 

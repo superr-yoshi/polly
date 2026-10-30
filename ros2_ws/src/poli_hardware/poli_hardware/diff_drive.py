@@ -1,7 +1,7 @@
 """
 차동구동 계산: /cmd_vel <-> 바퀴 속도, 휠 오도메트리 적분, cmd_vel watchdog.
 
-rclpy에 의존하지 않는 순수 모듈이다. fake_rrc_node와 실제 RRC 어댑터가 같이 쓴다.
+rclpy에 의존하지 않는 순수 모듈이다. fake_mega_node와 mega_bridge_node(drive_node)가 같이 쓴다.
 """
 from dataclasses import dataclass
 import math
@@ -13,7 +13,7 @@ class DiffDriveParams:
     wheel_separation: float    # m, 좌우 바퀴 중심 간 거리
     max_linear: float          # m/s
     max_angular: float         # rad/s
-    max_wheel_rpm: float       # 모터 정격 (JGB37-520 330 RPM)
+    max_wheel_rpm: float       # 모터 정격 (JGB37-520 정격 부하 250 RPM, 무부하 330)
     min_wheel_speed: float = 0.0   # m/s, 바퀴 둘레 속도 하한. 0 = 끔 (아래 twist_to_wheels 참고)
 
 
@@ -33,8 +33,8 @@ def twist_to_wheels(p: DiffDriveParams, linear: float, angular: float):
     회전 반경(곡률)을 유지한다.
 
     min_wheel_speed > 0이면, 빠른 쪽 바퀴가 그보다 느릴 때 두 바퀴를 같은 비율로 키운다
-    (곡률 유지). RRC 공장 펌웨어가 PWM 25 % 미만을 꺼서 저속에서 울컥거리기 때문이다.
-    그래서 실제 속도는 명령보다 빠를 수 있다 (제자리 회전도 빨라진다).
+    (곡률 유지). 모터가 저속에서 울컥거릴 때 쓴다 (RRC Lite 때 도입, MDD10 실측 후 재검토).
+    켜면 실제 속도는 명령보다 빠를 수 있다 (제자리 회전도 빨라진다).
     """
     v = clamp(linear, p.max_linear)
     w = clamp(angular, p.max_angular)
