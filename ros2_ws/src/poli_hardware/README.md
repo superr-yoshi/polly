@@ -7,7 +7,7 @@
 | 노드 | 상태 | 역할 |
 |---|---|---|
 | `fake_mega_node` | 사용 가능 | 부품 없이 /cmd_vel → /odom_raw, /imu/data, /range/*, 집게 (SIM_ONLY) |
-| `mega_bridge_node` | 구현됨, MDD10 실기 미검증 | Arduino Mega 시리얼 v2.0 ↔ ROS. 주행(MDD10)·엔코더·IMU(BNO085)·초음파·집게를 **한 노드**가 맡는다 |
+| `mega_bridge_node` | 구현됨, MDD10 실기 미검증 | Arduino Mega 시리얼 v2.0 ↔ ROS. 주행(MDD10)·엔코더·IMU(MPU-6050)·초음파·집게를 **한 노드**가 맡는다 |
 | `drive_test` | 사용 가능 | 보정용 주행 시험 (직진/회전/바퀴 N바퀴) → 새 파라미터 계산. `docs/calibration.md` |
 
 2026-10-29: RRC Lite를 쓰지 않는다 (모터 드라이버 Cytron MDD10 + Mega). `fake_rrc_node`, `rrc_adapter_node`는 삭제했다.
@@ -26,8 +26,8 @@ Mega USB 포트 하나를 한 노드만 열 수 있어서 초음파·집게도 `
 - odom → base_link **TF는 발행하지 않는다** (robot_localization EKF 소유).
 - `/cmd_vel`이 `cmd_timeout`(0.3 s) 이상 끊기면 0 속도. 노드가 죽거나 USB가 빠져도 **Mega 펌웨어가 0.3 s 뒤 스스로 멈춘다**.
 - `/odom_raw`: **엔코더 기반** (Mega가 4체배로 센 tick, `$ENC` 50 Hz). fake는 명령 그대로.
-- `/imu/data`: BNO085가 연결되어 있으면 방향(쿼터니언, 자기장 안 씀)·각속도·가속도 3축.
-  BNO085가 없거나(`SIM_IMU 1`) 끊기면 `orientation_covariance[0] = -1`, z축 각속도만 휠 값으로 채운다 (fake도 같음).
+- `/imu/data`: MPU-6050이 연결되어 있으면 각속도·가속도 3축. 방향(쿼터니언)은 없다 (`orientation_covariance[0] = -1`,
+  2026-10-30 BNO085에서 변경). MPU-6050이 없거나(`SIM_IMU 1`) 끊기면 `orientation_covariance[0] = -1`, z축 각속도만 휠 값으로 채운다 (fake도 같음).
 - `/battery_state`: **없음** (2026-10-29). 전압을 재던 RRC Lite를 뺐고 Mega에 전압 측정 회로가 없다. 필요하면 분압 회로 + `$BAT`를 추가한다 (TODO).
 - `/gripper/*`: 집게 서보 DS3218은 다시 **Mega D9** (전원 5V 10A 컨버터, GND 공통). 첫 명령 전에는 서보 신호를 보내지 않는다 (규정 3.5.6).
 - `/gripper/holding`: 없음. 잡힘 감지 센서 추가 후 제공 예정 (TODO).

@@ -3,7 +3,7 @@ Arduino Mega <-> ROS 2 브리지 (프로토콜 v2.0, docs/serial_protocol.md).
 
 2026-10-29부터 Mega가 주행까지 맡는다 (RRC Lite 사용 중단, 모터 드라이버 MDD10).
   Pi -> Mega: $DRV 목표 바퀴 속도 25 Hz, $GRIP 집게
-  Mega -> Pi: $ENC 엔코더 50 Hz, $IMU BNO085 25 Hz, $RNG 초음파 8 Hz, $GST 집게 2 Hz
+  Mega -> Pi: $ENC 엔코더 50 Hz, $IMU MPU-6050 25 Hz, $RNG 초음파 8 Hz, $GST 집게 2 Hz
 Topic 계약은 drive_node.DriveNode와 같다 (fake_mega_node와 바꿔 끼울 수 있음).
 
 시리얼 읽기는 별도 스레드, packet 해석은 mega_protocol(순수 모듈)이 담당한다.
@@ -163,7 +163,7 @@ class MegaTransport:
     def read_imu(self):
         if self._imu is None or time.monotonic() - self._imu_t > self._imu_timeout:
             if not self._imu_warned:
-                self._log.warn(f'Mega IMU 수신 없음 ({self._imu_timeout}s, BNO085 미연결?) '
+                self._log.warn(f'Mega IMU 수신 없음 ({self._imu_timeout}s, MPU-6050 미연결?) '
                                '-> /imu/data는 휠 각속도로 대신함')
                 self._imu_warned = True
             return None

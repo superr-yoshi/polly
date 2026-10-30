@@ -5,7 +5,7 @@
 // 1 = 모의값 (부품 없이 테스트), 0 = 실제 하드웨어 사용
 #define SIM_ULTRASONIC 0   // 2026-09-29 실측 확인 (전방 1개). 센서 없는 자리는 0(실패)으로 전송
 #define SIM_GRIPPER    0   // 2026-10-29 집게 서보를 다시 Mega D9로 (MDD10 전환). 서보 없이 시험하려면 1
-#define SIM_IMU        1   // BNO085 배선 후 0. 0이면 SparkFun BNO080 라이브러리 필요. 1이면 $IMU를 보내지 않음
+#define SIM_IMU        0   // 2026-10-30 MPU-6050 장착. 라이브러리 필요 없음(Wire만). 1이면 $IMU를 보내지 않음
 
 // ---- 초음파 핀 (TODO_MEASURE: 실제 배선 후 확정) -------------------------
 // 순서: 0=전방(front), 1=좌측(left), 2=우측(right), 3=후방(rear) -> ROS /range/<이름>
@@ -33,7 +33,7 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 #define MOTOR_R_INVERT  1      // 좌우 모터가 마주 보고 달려 있으므로 한쪽은 반대 (TODO_MEASURE)
 
 // ---- 엔코더: JGB37-520 C1/C2 (A상/B상) --------------------------------------
-// 4개 모두 외부 인터럽트 핀. 20·21은 I2C(BNO085)라 쓰지 않는다.
+// 4개 모두 외부 인터럽트 핀. 20·21은 I2C(MPU-6050)라 쓰지 않는다.
 // 왼쪽 C1 = D2 (PE4), C2 = D3 (PE5) / 오른쪽 C1 = D18 (PD3), C2 = D19 (PD2)
 // 핀을 바꾸면 encoder.cpp의 포트 읽기도 함께 고친다.
 #define ENC_L_A         2
@@ -61,7 +61,9 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 #define FAULT_STALL_MS  300    //   이 시간 넘게 계속되면 → 엔코더 신호 없음 또는 바퀴 막힘
 #define ENC_REPORT_MS   20     // $ENC 50 Hz
 
-// ---- IMU: BNO085 (I2C, SDA = D20, SCL = D21) -------------------------------
-// ⚠ Mega는 SDA/SCL이 보드 안에서 5 V로 풀업되어 있다. 3.3 V 전용 BNO085 보드는 레벨 시프터 필요
-#define IMU_I2C_ADDR    0x4A   // TODO_MEASURE: Adafruit 보드 0x4A, SparkFun 보드 0x4B
+// ---- IMU: MPU-6050 (I2C, SDA = D20, SCL = D21) -----------------------------
+// 2026-10-30 BNO085 대신 MPU-6050 사용. 자이로·가속도만 (방향 계산 없음 -> $IMU q = 0)
+// GY-521 모듈은 VCC 5V 가능 (보드에 3.3 V 레귤레이터). 자이로 ±500 dps, 가속도 ±4 g, 저역 필터 약 44 Hz
+#define IMU_I2C_ADDR    0x68   // AD0 핀이 GND거나 비어 있으면 0x68, 3.3 V/5 V에 연결하면 0x69 (TODO_MEASURE)
 #define IMU_REPORT_MS   40     // $IMU 25 Hz (115200 baud 여유를 위해 ENC보다 느리게)
+#define IMU_BIAS_SAMPLES 200   // 켤 때 자이로 영점 평균 개수 (5 ms 간격, 약 1초). 이때 로봇을 움직이지 않는다

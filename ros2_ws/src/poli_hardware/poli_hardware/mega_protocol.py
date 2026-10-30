@@ -70,13 +70,18 @@ class EncPacket:
 class ImuPacket:
     seq: int
     millis: int
-    quat: tuple   # (x, y, z, w) x 10000
+    quat: tuple   # (x, y, z, w) x 10000. 모두 0 = 방향 없음 (MPU-6050은 방향을 계산하지 않음)
     gyro: tuple   # (x, y, z) mrad/s
     accel: tuple  # (x, y, z) mm/s^2, 중력 포함
 
     def to_si(self):
-        """((x, y, z, w), (gx, gy, gz) rad/s, (ax, ay, az) m/s^2)."""
-        return (tuple(v / 10000.0 for v in self.quat),
+        """
+        ((x, y, z, w) 또는 None, (gx, gy, gz) rad/s, (ax, ay, az) m/s^2).
+
+        쿼터니언이 모두 0이면 방향 없음 -> None.
+        """
+        quat = None if not any(self.quat) else tuple(v / 10000.0 for v in self.quat)
+        return (quat,
                 tuple(v / 1000.0 for v in self.gyro),
                 tuple(v / 1000.0 for v in self.accel))
 

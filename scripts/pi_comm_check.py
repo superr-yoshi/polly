@@ -2,7 +2,7 @@
 """Pi <-> Mega 통신 확인 (듣기 전용).
 
 보드에 아무것도 보내지 않는다. 모터·서보가 움직이지 않는다 (Mega는 첫 명령 전에는 모터를 돌리지 않음).
-Mega가 스스로 보내는 엔코더 ENC(약 50 Hz), IMU(BNO085 연결 시 약 25 Hz), 초음파 RNG(약 8 Hz)를
+Mega가 스스로 보내는 엔코더 ENC(약 50 Hz), IMU(MPU-6050 연결 시 약 25 Hz), 초음파 RNG(약 8 Hz)를
 받아서 개수·오류·값을 보여 준다. 2026-10-29부터 RRC Lite는 쓰지 않는다 (MDD10 + Mega).
 
 실행 (Pi에서):  python3 ~/polly/scripts/pi_comm_check.py           # 장치 자동 찾기, 각 5초
@@ -74,7 +74,7 @@ def check_mega(port, seconds):
               f'오른쪽 {enc_first.right} -> {enc_last.right} '
               '(검사 중 바퀴를 손으로 앞으로 돌리면 둘 다 커져야 정상)')
         print(f'  모터 상태: {enc_last.status_name} (명령을 안 보냈으니 idle이 정상)')
-    print(f'IMU {imu_n}개 = {imu_n / seconds:.1f} Hz (BNO085 연결 시 약 25 Hz, 없으면 0)')
+    print(f'IMU {imu_n}개 = {imu_n / seconds:.1f} Hz (MPU-6050 연결 시 약 25 Hz, 없으면 0)')
     if imu_last:
         _, gyro, accel = imu_last.to_si()
         print(f'  가속도 m/s^2 x={accel[0]:+.2f} y={accel[1]:+.2f} z={accel[2]:+.2f} '

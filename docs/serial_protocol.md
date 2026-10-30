@@ -18,7 +18,7 @@
 | 이름 | 형식 | 주기 | 설명 |
 |---|---|---|---|
 | ENC | `$ENC,seq,millis,left,right,status*CS` | 50 Hz | 엔코더 **누적** tick (4체배, 바퀴 1바퀴 약 1320). 로봇 전진 = + (펌웨어 `ENC_*_INVERT` 적용). status는 아래 표 |
-| IMU | `$IMU,seq,millis,qx,qy,qz,qw,gx,gy,gz,ax,ay,az*CS` | 25 Hz | BNO085. q = 쿼터니언 ×10000 (Game Rotation Vector, 자기장 안 씀, 켤 때 yaw 0), g = 각속도 mrad/s, a = 가속도 mm/s² (중력 포함). **BNO085가 없으면(`SIM_IMU 1`·못 찾음) 보내지 않는다** |
+| IMU | `$IMU,seq,millis,qx,qy,qz,qw,gx,gy,gz,ax,ay,az*CS` | 25 Hz | MPU-6050 (2026-10-30). q = 쿼터니언 ×10000, **MPU-6050은 방향을 계산하지 않아 항상 0,0,0,0 (= 방향 없음)**. g = 각속도 mrad/s (켤 때 약 1초 정지 평균으로 영점 보정), a = 가속도 mm/s² (중력 포함). **IMU가 없거나(`SIM_IMU 1`·못 찾음) 읽기가 0.2 s 넘게 실패하면 보내지 않는다** |
 | RNG | `$RNG,seq,millis,front,left,right,rear*CS` | 8 Hz | 초음파 4개 거리(mm). 0 = 측정 실패 또는 범위 밖 |
 | GST | `$GST,seq,millis,last_id,state,angle*CS` | 2 Hz + 명령 직후 | 집게 상태. state 0=열림, 1=닫힘, 2=이동 중. angle = 서보 각도(도). last_id = 마지막으로 처리한 GRIP 명령 id |
 
@@ -70,8 +70,9 @@ IMU를 더 빠르게 하거나 packet을 늘리면 다시 계산한다.
 ## v1(팀 매뉴얼)·v1.1 대비 변경 사항
 1. v1.1: `$IMU` 삭제(당시 IMU는 RRC Lite), `$BAT` 삭제(전압 측정 회로 없음), `$GST`·`$GRIP` 추가.
 2. v1.1 (2026-10-07): 집게를 RRC Lite PWM 서보 포트로 옮겨 `$GRIP`·`$GST`를 쓰지 않음.
-3. **v2.0 (2026-10-29)**: RRC Lite 사용 중단 → `$DRV`·`$PWM`·`$ENC` 추가, `$IMU`를 BNO085용 새 형식(필드 12개)으로 다시 추가,
+3. **v2.0 (2026-10-29)**: RRC Lite 사용 중단 → `$DRV`·`$PWM`·`$ENC` 추가, `$IMU`를 새 형식(필드 12개)으로 다시 추가,
    집게를 Mega D9로 되돌려 `$GRIP`·`$GST` 다시 사용. `$BAT`는 여전히 없음.
+4. v2.0 (2026-10-30): IMU를 BNO085 → MPU-6050으로. 형식은 그대로, q = 0 이면 방향 없음 (Pi는 orientation 비움).
 
 ## Pi 쪽 구현 (poli_hardware 패키지)
 - 파서: `ros2_ws/src/poli_hardware/poli_hardware/mega_protocol.py` (`FIELD_COUNT = {RNG: 6, GST: 5, ENC: 5, IMU: 12}`)

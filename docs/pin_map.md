@@ -2,7 +2,8 @@
 
 > 기준: **2026-10-29 팀 결선도 (RRC Lite 대신 Cytron MDD10)** + 해냄터 4팀 Arduino Mega 2560 결선도(초음파).
 > 실제 배선 후 다시 확인하고, 바뀌면 이 문서와 `firmware/mega_sensor_controller/config.h`를 함께 고친다.
-> 2026-10-29: RRC Lite를 쓰지 않는다. 모터 드라이버는 MDD10, 속도 제어·엔코더·IMU(BNO085)·집게는 모두 Mega가 맡는다.
+> 2026-10-29: RRC Lite를 쓰지 않는다. 모터 드라이버는 MDD10, 속도 제어·엔코더·IMU·집게는 모두 Mega가 맡는다.
+> 2026-10-30: IMU는 BNO085가 아니라 **MPU-6050**을 쓴다.
 
 ## 1. Arduino Mega 2560 (주행·센서 MCU, 조원 A)
 
@@ -11,7 +12,7 @@
 |---|---|---|
 | D2 / D3 | 왼쪽 모터 엔코더 C1 / C2 | 외부 인터럽트 INT4 / INT5 |
 | D18 / D19 | 오른쪽 모터 엔코더 C1 / C2 | 외부 인터럽트 INT3 / INT2 (Serial1 TX1/RX1 자리 → Serial1 사용 불가) |
-| D20 / D21 | BNO085 SDA / SCL (I2C) | TODO: 결선도에 아직 없음. 배선 후 확정 |
+| D20 / D21 | MPU-6050 SDA / SCL (I2C) | 2026-10-30 장착 |
 | D6 / D30 | MDD10 PWM1 / DIR1 (왼쪽 모터) | D6 = Timer4 PWM |
 | D7 / D31 | MDD10 PWM2 / DIR2 (오른쪽 모터) | D7 = Timer4 PWM |
 | D9 | 집게 서보 DS3218 신호 (노랑) | 전원은 5V 10A 컨버터 |
@@ -49,16 +50,17 @@
   배선 후 `scripts/pc_serial_tester.py`로 바퀴를 손으로 돌려 tick이 변하는지 먼저 확인한다 (`firmware/mega_sensor_controller/README.md`).
 - 엔코더 방향이 반대거나 신호가 없으면 Mega가 폭주 감지로 모터를 끈다 (status `fault_reverse` / `fault_stall`). 노드를 다시 켜야 풀린다.
 
-### IMU BNO085 (I2C)
-| BNO085 | Mega | 비고 |
+### IMU MPU-6050 (I2C) — 2026-10-30 (BNO085 계획에서 변경)
+| MPU-6050 (GY-521) | Mega | 비고 |
 |---|---|---|
-| VIN | 5V 또는 3.3V | 보드 종류에 따름 (아래) |
+| VCC | 5V | GY-521은 보드에 3.3 V 레귤레이터가 있어 5V 가능 (모듈 종류 확인, TODO_MEASURE) |
 | GND | GND | |
-| SDA / SCL | D20 / D21 | |
+| SCL / SDA | D21 / D20 | |
+| AD0 | 연결 안 함 또는 GND | 주소 0x68. VCC에 연결하면 0x69 → `config.h` `IMU_I2C_ADDR` |
+| INT, XDA, XCL | 연결 안 함 | |
 
-- ⚠ Mega는 SDA/SCL이 보드 안에서 **5 V로 풀업**되어 있다. Adafruit·SparkFun처럼 레벨 시프터가 있는 보드는 바로 연결,
-  3.3 V 전용 저가 보드는 VIN 3.3V + **I2C 레벨 시프터**가 필요하다 (TODO_MEASURE: 실제 보드 확인).
-- I2C 주소: Adafruit 0x4A / SparkFun 0x4B → `config.h` `IMU_I2C_ADDR`. 배선 후 `SIM_IMU 0`.
+- 자이로·가속도만 준다. **방향(쿼터니언)은 계산하지 않는다** → `/imu/data` orientation 없음.
+- 켤 때 약 1초 자이로 영점을 잰다. 이때 로봇이 가만히 있어야 한다.
 - 위치·방향은 URDF `imu_link` (TODO_MEASURE).
 
 ### HC-SR04 × 4
@@ -87,7 +89,7 @@
 
 ## 2. RRC Lite — 사용 안 함 (2026-10-29)
 - MDD10 + Mega로 바꾸면서 RRC Lite를 뺐다. 옛 기록은 `docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md`에 남겨 둔다.
-- RRC Lite가 맡던 것 → 지금: 주행 모터·엔코더 → MDD10 + Mega, 내장 IMU → BNO085, 집게 PWM 포트 → Mega D9, 입력 전압 보고(`/battery_state`) → 없음.
+- RRC Lite가 맡던 것 → 지금: 주행 모터·엔코더 → MDD10 + Mega, 내장 IMU → MPU-6050, 집게 PWM 포트 → Mega D9, 입력 전압 보고(`/battery_state`) → 없음.
 
 ## 3. Raspberry Pi 5
 | 장치 | 연결 | udev 별칭 |
@@ -106,7 +108,7 @@
 - 배터리 → **비상정지 스위치** → 퓨즈(SZH-FU003, ATO 퓨즈 인라인 홀더) → 분배
   - → MDD10 B+ / B− (주행 모터, 12 V 그대로. 모터 정격 12 V)
   - → 5V 10A 컨버터 → Raspberry Pi 5 (USB-C), 집게 서보 DS3218
-- Mega는 Pi USB로 전원을 받는다. 엔코더·초음파·BNO085는 Mega 5V/3.3V에서 받는다.
+- Mega는 Pi USB로 전원을 받는다. 엔코더·초음파·MPU-6050은 Mega 5V에서 받는다.
 - XL4015 벅 컨버터 3개(12 V RRC / 5 V Pi / 6 V 서보)는 더 이상 쓰지 않는다.
 - ⚠ Pi와 서보가 같은 5 V를 나눠 쓴다. 서보가 잡을 때 순간 2 A 이상(TODO_MEASURE) 당기면 Pi 전압이 떨어질 수 있다.
   서보 + / − 근처에 470~1000 µF 콘덴서를 달고, 잡기 시험 때 Pi가 재부팅·저전압 경고(`vcgencmd get_throttled`)를 내지 않는지 확인한다.

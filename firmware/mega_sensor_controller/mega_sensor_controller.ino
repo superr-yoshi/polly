@@ -1,5 +1,5 @@
 // Mega 센서·주행 컨트롤러 (조원 A)
-// 담당: 초음파 4개 + 집게 서보 1개 + 주행 모터(MDD10) 속도 제어 + 엔코더 2개 + IMU(BNO085) + Pi와 시리얼 통신
+// 담당: 초음파 4개 + 집게 서보 1개 + 주행 모터(MDD10) 속도 제어 + 엔코더 2개 + IMU(MPU-6050, 2026-10-30 BNO085에서 변경) + Pi와 시리얼 통신
 // 2026-10-29: RRC Lite를 쓰지 않고 MDD10으로 바꾸면서 모터·엔코더·IMU를 Mega가 맡는다 (docs/serial_protocol.md v2.0).
 #include "config.h"
 #include "serial_protocol.h"
@@ -116,7 +116,7 @@ void loop() {
     tEnc = now;
     sendEnc();
   }
-  if (imuReady() && now - tImu >= IMU_REPORT_MS) {   // 25 Hz, BNO085가 있을 때만
+  if (imuReady() && now - tImu >= IMU_REPORT_MS) {   // 25 Hz, MPU-6050이 있을 때만
     tImu = now;
     sendImu();
   }

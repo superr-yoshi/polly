@@ -165,6 +165,10 @@ def test_enc_imu_parse_with_negative_values():
     assert quat == (0.0, 0.0, 0.0, 1.0)
     assert gyro[2] == pytest.approx(0.012)
     assert accel[2] == pytest.approx(9.806)
+    # MPU-6050: 방향을 계산하지 않아 q = 0 -> None
+    quat, gyro, _ = parse_line(make_packet('IMU,5,200,0,0,0,0,0,0,-35,0,0,9806')).to_si()
+    assert quat is None
+    assert gyro[2] == pytest.approx(-0.035)
 
 
 def test_drive_and_pwm_commands_match_doc():

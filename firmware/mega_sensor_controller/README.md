@@ -1,7 +1,7 @@
 # mega_sensor_controller — Arduino Mega 2560 펌웨어 (조원 A)
 
 2026-10-29부터 RRC Lite를 쓰지 않고 **Mega가 주행까지 맡는다** (모터 드라이버 Cytron MDD10).
-주행 모터 2개 속도 제어(MDD10) + 엔코더 2개 + IMU BNO085 + 초음파 HC-SR04 ×4 + 집게 서보(D9) + Pi와 시리얼 통신
+주행 모터 2개 속도 제어(MDD10) + 엔코더 2개 + IMU MPU-6050 + 초음파 HC-SR04 ×4 + 집게 서보(D9) + Pi와 시리얼 통신
 (`docs/serial_protocol.md` v2.0). 핀은 `docs/pin_map.md`.
 
 | 파일 | 내용 |
@@ -11,7 +11,7 @@
 | `serial_protocol.h` | XOR 체크섬, `sendPacket` |
 | `motor.h/.cpp` | MDD10 출력, 바퀴별 PI + 앞먹임 속도 제어 (50 Hz), 명령 끊김 정지, 폭주 감지 |
 | `encoder.h/.cpp` | 엔코더 4체배 (외부 인터럽트 D2·D3·D18·D19) |
-| `imu.h/.cpp` | BNO085 (I2C D20·D21). `SIM_IMU 1`이면 아무것도 보내지 않음 |
+| `imu.h/.cpp` | MPU-6050 (I2C D20·D21, Wire만 사용). 켤 때 자이로 영점 1초. `SIM_IMU 1`이면 아무것도 보내지 않음 |
 | `ultrasonic.h/.cpp` | 초음파 (30 ms 슬롯마다 1개씩 → 동시 Trigger 없음) |
 | `gripper.h/.cpp` | 집게 (1도씩 서서히 이동) |
 
@@ -30,15 +30,16 @@
 
 ## SIM / REAL
 - `SIM_ULTRASONIC 1`: 초음파 모의값. `SIM_GRIPPER 1`: 서보 신호를 내지 않음 (상태만 계산).
-- `SIM_IMU 1`(기본): BNO085 없이 빌드. `$IMU`를 보내지 않는다 → Pi는 휠 각속도로 `/imu/data` z축만 채운다.
-  BNO085를 연결하면 `SIM_IMU 0`으로 바꾸고 `IMU_I2C_ADDR`(0x4A/0x4B)를 보드에 맞춘다.
+- `SIM_IMU 0`(기본, 2026-10-30): MPU-6050 사용. 주소 `IMU_I2C_ADDR` 0x68 (AD0 핀을 VCC에 연결했으면 0x69).
+  못 찾으면 `$IMU`를 보내지 않는다 → Pi는 휠 각속도로 `/imu/data` z축만 채운다. `SIM_IMU 1`이면 IMU 코드를 아예 뺀다.
+- ⚠ 켤 때(포트를 열어 Mega가 리셋될 때도) 약 1초 동안 자이로 영점을 잰다. **이때 로봇을 움직이지 않는다.**
+- MPU-6050은 방향을 계산하지 않는다 (`$IMU` q = 0). yaw는 Pi에서 자이로 z를 적분해서 쓴다 (시간이 지나면 조금씩 틀어짐).
 - 모터·엔코더는 SIM 스위치가 없다. 부품 없이 Pi를 시험하려면 Pi 쪽 `fake_mega_node`를 쓴다.
 
 ## 컴파일 (보드 없이 가능)
 ```bash
 arduino-cli core install arduino:avr
 arduino-cli lib install Servo                               # REAL 집게(SIM_GRIPPER 0)에 필요. Arduino IDE는 기본 포함
-arduino-cli lib install "SparkFun BNO080 Cortex Based IMU"  # SIM_IMU 0일 때만 필요
 arduino-cli compile --fqbn arduino:avr:mega firmware/mega_sensor_controller
 ```
 - 2026-09-29 확인 (MDD10 전): SIM 빌드 7,854 B / RAM 464 B, REAL 빌드 8,892 B / RAM 624 B.
@@ -68,6 +69,6 @@ python scripts/pc_serial_tester.py <포트>     # pip install pyserial
 | 2026-09-29 | WSL2 Ubuntu + ROS 2에서 `mega_bridge_node`로 실물 Mega 연결 (`docs/wsl_usb.md`) | `/range/front_left`(현재 `/range/front`) 7.9 Hz, 1.869 m, 없는 센서 자리는 `inf`, `/gripper/set`(당시 인터페이스, 이후 `/gripper/command`로 교체) 닫기·열기 success, Ctrl+C·SIGTERM 정상 종료 |
 
 - 남은 센서 3개(D24~D29)는 도착 후 같은 방법으로 확인한다.
-- MDD10·엔코더·BNO085·집게 서보(D9)는 아직 실기 확인 전이다 (2026-10-29 코드 작성).
+- MDD10·엔코더·MPU-6050·집게 서보(D9)는 아직 실기 확인 전이다 (2026-10-29·30 코드 작성).
 - 초음파는 이제 `pulseInLong`(micros 기반)으로 잰다. 엔코더 인터럽트가 끼어도 거리가 짧게 나오지 않게 하려는 것이다.
   측정 1개가 최대 24 ms 걸리는 동안에도 엔코더는 인터럽트로 세므로 tick은 빠지지 않는다 (속도 제어 주기만 조금 늘어남).

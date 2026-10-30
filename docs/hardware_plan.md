@@ -21,7 +21,7 @@
 - Connection: USB Serial → Raspberry Pi 5 (docs/serial_protocol.md v2.0)
 - Role:
   - MDD10 모터 속도 제어 + 엔코더 2개 (D2/D3, D18/D19)
-  - BNO085 IMU (I2C D20/D21)
+  - MPU-6050 IMU (I2C D20/D21)
   - HC-SR04 ultrasonic sensors × 4
   - 집게 서보 DS3218 (D9)
   - 안전: 명령이 0.3 s 끊기면 정지, 엔코더 방향 반대·신호 없음 감지 시 정지
@@ -43,7 +43,7 @@
   - Visual alignment
 
 ## 6. IMU
-- **BNO085** (2026-10-29, RRC Lite 내장 IMU에서 변경)
+- **MPU-6050** (2026-10-30. 2026-10-29 계획은 BNO085였음)
 - Connection: Mega I2C (D20 SDA / D21 SCL) → `$IMU` → Raspberry Pi 5 (mega_bridge_node). 배선 TODO, 레벨 시프터 필요 여부 확인
 - Role:
   - Robot heading
@@ -78,7 +78,7 @@
 ## 10. Software Interface Plan
 - /cmd_vel → motor command (mega_bridge_node → `$DRV` → Mega → MDD10)
 - /odom_raw → 엔코더 odometry (Mega `$ENC`)
-- /imu/data → BNO085 (Mega `$IMU`). 미연결이면 휠 각속도로 z축만
+- /imu/data → MPU-6050 (Mega `$IMU`, 각속도·가속도만). 미연결이면 휠 각속도로 z축만
 - /range/front, /range/left, /range/right, /range/rear → 초음파 (전방·좌측·우측·후방)
 - /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Mega D9)
 - /battery_state → 없음 (2026-10-29, 전압 측정원 없음)

@@ -6,7 +6,7 @@
 
 ## 1. 프로젝트
 - 2026 창원대 전국대학생 자율로봇경진대회 출전 자율 구조 로봇 "POLI"
-- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·IMU·초음파·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · BNO085 IMU · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
+- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·IMU·초음파·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · MPU-6050 IMU (2026-10-30, BNO085 아님) · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
 - **2026-10-29: RRC Lite를 쓰지 않는다** (MDD10 + Mega로 변경). 옛 RRC 문서·코드 기록(`docs/rrc_*.md`, `firmware/rrc_lite_patch/`)은 참고용이다.
 
 ## 0. 대회 규정이 최우선 (이 로봇은 이 대회를 위해 만든다)
@@ -51,7 +51,7 @@
 | `ros2_ws/src/poli_navigation/` | 임무(mission2), 격자 지도, LiDAR 처리, fake_scan / fake_odom | 담당 1 |
 | `ros2_ws/src/poli_hardware/` | Mega 브리지 `mega_bridge_node`(주행·센서·집게), fake 하드웨어 `fake_mega_node`, 보정 도구 `drive_test` | 조원 A |
 | `ros2_ws/src/poli_description/` | 로봇 위치 모델 URDF (센서 frame: `laser`, `imu_link`, `camera_link`, `ultrasonic_*_link`) | 조원 A |
-| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, BNO085, 초음파 4개, 집게 서보 1개) | 조원 A |
+| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, MPU-6050, 초음파 4개, 집게 서보 1개) | 조원 A |
 | `firmware/rrc_lite_patch/` | **사용 안 함** (RRC Lite를 뺌, 2026-10-29). 기록용 | — |
 | (예정) 카메라 / `/vision/target` | 빨간 대상 탐지 | 조원 B |
 | `firmware/nucleo_controller/` | 옛 NUCLEO 계획. 사용하지 않음 | — |
@@ -73,7 +73,7 @@
 6. odom → base_link TF는 robot_localization(EKF)만 발행한다. 하드웨어 노드는 TF를 발행하지 않는다.
    base_link → 센서 frame은 `poli_description`(robot_state_publisher)만 발행한다. 센서 위치를 코드 상수로 따로 두지 말고 URDF를 고친다.
    초음파 토픽은 `/range/front`, `/range/left`, `/range/right`, `/range/rear` (좌측만 낮게 장착).
-   IMU frame `imu_link` = BNO085 위치.
+   IMU frame `imu_link` = MPU-6050 위치. MPU-6050은 방향(orientation)을 주지 않는다 (각속도·가속도만).
 7. 실측하지 않은 값(바퀴 지름·간격, 센서 위치, 서보 각도 등)은 상수/파라미터로 빼고 `TODO_MEASURE`(실측 필요) 또는 `SIM_ONLY`(시뮬레이션 임시값) 주석을 단다. 임시값을 진짜 값처럼 굳히지 않는다.
 8. Mega 시리얼 packet 형식을 바꾸면 `docs/serial_protocol.md`, 펌웨어, `poli_hardware/mega_protocol.py`를 **함께** 고친다.
 9. 서보 전원은 Mega 5V 핀에서 받지 않는다 (5V 10A 컨버터, GND는 Mega와 공통). DS3218 사양 4.8~6.8 V, PWM 범위 500~2500 µs.
@@ -92,8 +92,8 @@
 # ROS 2 빌드 + 스타일 검사 (flake8, pep257 통과 필수)
 cd ros2_ws && colcon build --symlink-install && colcon test && colcon test-result --verbose
 
-# Mega 펌웨어 컴파일 (보드 없이 가능. Servo 라이브러리 필요, SIM_IMU 0이면 BNO080 라이브러리도)
-arduino-cli lib install Servo "SparkFun BNO080 Cortex Based IMU"
+# Mega 펌웨어 컴파일 (보드 없이 가능. Servo 라이브러리 필요, MPU-6050은 Wire만 써서 추가 라이브러리 없음)
+arduino-cli lib install Servo
 arduino-cli compile --fqbn arduino:avr:mega firmware/mega_sensor_controller
 ```
 - ROS 스타일: 한 줄 99자 이하, import는 표준 라이브러리 다음 나머지 전부를 알파벳순, 여러 줄 docstring은 `"""` 다음 줄에 요약.

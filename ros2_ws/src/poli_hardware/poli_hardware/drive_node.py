@@ -5,7 +5,7 @@
 
 - fake_mega_node  : SimTransport (부품 없이, 바퀴가 명령을 그대로 따른다고 가정)
 - mega_bridge_node: MegaTransport (Arduino Mega USB Serial, docs/serial_protocol.md v2.0)
-  Mega가 MDD10 모터·엔코더·BNO085·초음파·집게를 모두 맡는다 (2026-10-29 RRC Lite 사용 중단).
+  Mega가 MDD10 모터·엔코더·IMU(MPU-6050)·초음파·집게를 모두 맡는다 (2026-10-29 RRC Lite 사용 중단).
 
 두 노드의 Topic·frame_id·parameter 계약은 같다. launch에서 노드만 바꿔 끼운다.
 odom -> base_link TF는 발행하지 않는다 (robot_localization EKF 소유).
@@ -159,7 +159,7 @@ class DriveNode(Node):
         for i in (0, 4, 8):
             msg.angular_velocity_covariance[i] = 1e-3
         if imu is None:
-            # IMU 없음 (fake, BNO085 미연결): 휠 각속도로 z축만 채운다
+            # IMU 없음 (fake, MPU-6050 미연결): 휠 각속도로 z축만 채운다
             msg.orientation_covariance[0] = -1.0
             msg.linear_acceleration_covariance[0] = -1.0
             msg.angular_velocity.z = self._angular

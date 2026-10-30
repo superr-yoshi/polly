@@ -10,7 +10,7 @@
 | 모터 드라이버 | RRC Lite | **Cytron MDD10** (PWM1/DIR1 = Mega D6/D30, PWM2/DIR2 = D7/D31) |
 | 속도 제어 | RRC Lite 내부 PID | Mega 펌웨어 PI + 앞먹임 (`firmware/mega_sensor_controller/motor.cpp`) |
 | 엔코더 | (기타 상세 정보) A/B → Mega D2/D3, D18/D19 | **사양서와 같음**: 왼쪽 C1/C2 = D2/D3, 오른쪽 C1/C2 = D18/D19, VCC·GND = Mega |
-| IMU | RRC Lite 내장 6축 | **BNO085** (Mega I2C D20/D21, 배선 TODO) |
+| IMU | RRC Lite 내장 6축 | **MPU-6050** (Mega I2C D20/D21, 2026-10-30. 계획은 BNO085였음) |
 | 집게 서보 | RRC PWM 서보 포트 | **Mega D9**, 전원 5V 10A 컨버터 |
 | 배터리·전원 | 6S LiPo + 컨버터 | **12 V 배터리** → MDD10 직접, 5V 10A 컨버터 → Pi·서보 |
 | 배터리 전압 감시 | RRC 입력 전압 | **없음** (`/battery_state` 없앰) |
@@ -179,7 +179,7 @@
 | 집게 서보 신호 | D9 (2026-10-29 다시 사용) |
 | 엔코더 왼쪽 C1 / C2, 오른쪽 C1 / C2 | D2 / D3, D18 / D19 (외부 인터럽트) |
 | MDD10 PWM1 / DIR1, PWM2 / DIR2 | D6 / D30, D7 / D31 |
-| BNO085 SDA / SCL | D20 / D21 (TODO: 배선) |
+| MPU-6050 SDA / SCL | D20 / D21 |
 | Pi 통신 | USB (UART0, 115200 baud). 호환보드(CH340)는 `/dev/ttyUSB*`, 정품은 `/dev/ttyACM*` |
 
 주의
@@ -194,7 +194,7 @@
 | 부품 | 참고 문서 |
 |---|---|
 | Cytron MDD10 모터 드라이버 (2채널) | `docs/pin_map.md` 1장, `firmware/mega_sensor_controller/README.md` |
-| BNO085 IMU | `docs/pin_map.md` 1장 |
+| MPU-6050 IMU | `docs/pin_map.md` 1장 |
 | (사용 안 함) RRC Lite Controller (STM32F407VET6, 내장 IMU QMI8658) | `docs/rrc_protocol.md`, `docs/rrc_adapter_plan.md` |
 | JGB37-520 12V 330RPM 엔코더 모터 × 2 (30:1, 11 PPR) | `docs/pin_map.md` 1장, `ros2_ws/src/poli_hardware/config/hardware.yaml` |
 | HC-SR04 초음파 × 4 | `docs/pin_map.md`, `firmware/mega_sensor_controller/README.md` |

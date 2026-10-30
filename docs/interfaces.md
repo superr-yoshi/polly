@@ -65,7 +65,7 @@ LiDAR 드라이버   ── /scan ─────────────▶  �
 |---|---|---|---|
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | 담당 1 → 조원 A | `linear.x` 전진 m/s, `angular.z` 회전 rad/s (**양수 = 왼쪽 회전**) |
 | `/odom_raw` | `nav_msgs/msg/Odometry` | 조원 A → 담당 1 | 엔코더 odometry (2026-10-29부터 실제 엔코더, Mega `$ENC`) |
-| `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | BNO085 (Mega I2C, 2026-10-29 RRC Lite 내장 IMU에서 변경). 미연결이면 휠 각속도로 z축만 |
+| `/imu/data` | `sensor_msgs/msg/Imu` | 조원 A → 담당 1 | MPU-6050 (Mega I2C, 2026-10-30). 각속도·가속도만, **orientation 없음** (`orientation_covariance[0] = -1`). 미연결이면 휠 각속도로 z축만 |
 | `/range/front`, `/range/left`, `/range/right`, `/range/rear` | `sensor_msgs/msg/Range` | 조원 A → 담당 1 | 초음파, 단위 m. **2026-09-30 이름 변경** (예전 front_left 등, 조원 A 결정: 실제 장착이 전방·좌측·우측·후방). 좌측만 낮게, 나머지 지면 약 14 cm. 측정 실패는 `inf` |
 | ~~`/battery_state`~~ | `sensor_msgs/msg/BatteryState` | — | **2026-10-29 없앰.** 전압을 재던 RRC Lite를 뺐다. 필요하면 조원 A에게 요청 (분압 회로 추가 필요) |
 | `/scan` | `sensor_msgs/msg/LaserScan` | LiDAR 드라이버 → 담당 1 | RPLIDAR C1 |
@@ -177,15 +177,16 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
 - 실측 필요(TODO_MEASURE): 0.05초 펄스 한 번에 실제로 몇 도 도는지 (`drive_test`). 펄스가 너무 짧아 바퀴가 안 움직이면 `PULSE_S`를 늘린다.
 
 ### 5-5. 조원 A·팀 변경 (2026-10-29) — RRC Lite → MDD10 + Mega
-- 모터 드라이버를 **Cytron MDD10**으로 바꾸고 RRC Lite를 뺐습니다. 속도 제어·엔코더·IMU(BNO085)·집게(D9)는 **Mega**가 맡습니다
+- 모터 드라이버를 **Cytron MDD10**으로 바꾸고 RRC Lite를 뺐습니다. 속도 제어·엔코더·IMU·집게(D9)는 **Mega**가 맡습니다
   (`docs/pin_map.md`, `docs/serial_protocol.md` v2.0). 배터리는 12 V.
 - **토픽 이름·형식·frame_id는 그대로입니다.** `/cmd_vel`, `/odom_raw`, `/imu/data`, `/range/*`, `/gripper/command`, `/gripper/state`.
   `hardware.launch.py` 사용법도 같습니다. 담당 1 코드 수정 필요 없음.
 - 바뀐 점:
   - 노드: 실제 = `mega_bridge_node` 하나, fake = `fake_mega_node` 하나.
   - `/odom_raw`: 명령 기반 추정 → **엔코더 기반**. 바퀴가 막히면 odom도 멈춥니다.
-  - `/imu/data`: 25 Hz (RRC 때 50 Hz). BNO085가 연결되면 `orientation`(쿼터니언)도 채웁니다.
-    BNO085 연결 전에는 RRC 때처럼 `orientation_covariance[0] = -1`, 휠 각속도로 z축만.
+  - `/imu/data`: 25 Hz (RRC 때 50 Hz). IMU는 **MPU-6050** (2026-10-30, 처음 계획한 BNO085에서 변경).
+    각속도·가속도만 채우고 `orientation`은 없습니다 (`orientation_covariance[0] = -1`, RRC 때와 같음).
+    yaw가 필요하면 `angular_velocity.z`를 적분하거나 EKF에 넣습니다. 미연결이면 휠 각속도로 z축만.
   - `/battery_state`: 없앴습니다 (구독하는 담당 1 코드는 없음, 2026-10-29 확인).
   - 안전: Mega 펌웨어가 명령이 0.3초 끊기면 스스로 멈춥니다. 엔코더 방향 반대·신호 없음·바퀴 막힘(0.3초)이면 모터를 끄고,
     노드를 다시 켤 때까지 움직이지 않습니다. **벽을 0.3초 넘게 밀면 이 정지가 걸리니** 임무 코드가 벽에 붙어 미는 동작이 있으면 알려 주세요.
