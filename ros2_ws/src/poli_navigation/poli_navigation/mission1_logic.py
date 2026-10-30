@@ -39,7 +39,12 @@ from poli_navigation.mission2_logic import (
     GRIPPER_OPEN,
     heading_error_to,
 )
-from poli_navigation.scan_to_grid import point_to_cell, scan_to_cells, update_grid_from_scan
+from poli_navigation.scan_to_grid import (
+    neighbor_states,
+    point_to_cell,
+    scan_to_cells,
+    update_grid_from_scan,
+)
 from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPulse
 
 
@@ -73,6 +78,8 @@ CELL_CENTER_TOLERANCE_M = 0.1
 DRIVE_SPEED = 0.25
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 SLOWDOWN_GAIN = 1.0
+# 한 칸 주행 출발 가속 (m/s^2). 0 -> 0.25 m/s에 약 0.6초 (2026-10-31 급출발 방지)
+DRIVE_ACCEL = 0.4
 APPROACH_SPEED = HW_MIN_WHEEL_SPEED
 TURN_SPEED = 0.8
 SEARCH_SPEED = 0.6
@@ -148,12 +155,16 @@ class Mission1Logic:
         self.reverse = False
         self._drive_block_scans = 0
         self._last_drive_scan = None
+        self._drive_speed = 0.0
+        self._drive_time = None
         self.stop_reason = None
 
     def _change_state(self, new_state, obs):
         self.state = new_state
         self.state_started_at = obs.now
         self.turn_pulse.reset()
+        self._drive_speed = 0.0
+        self._drive_time = None
 
     def step(self, obs):
         self.maze.observe(point_to_cell(obs.x, obs.y), obs.yaw)
@@ -214,6 +225,14 @@ class Mission1Logic:
             return Command()
 
         update_grid_from_scan(self.grid, obs.scan, (obs.x, obs.y, obs.yaw))
+        # 상하좌우 이웃 칸은 방향별 ±15도 레이저 판단으로 덮어쓴다 (사선 오차에 강함).
+        for cell, state in neighbor_states(obs.scan, (obs.x, obs.y, obs.yaw)).items():
+            if not self.grid.in_bounds(cell):
+                continue
+            if state == BLOCKED:
+                self.grid.mark_blocked(cell)
+            else:
+                self.grid.mark_free(cell)
         return self._plan(obs)
 
     def _plan(self, obs):
@@ -361,9 +380,17 @@ class Mission1Logic:
 
         # 목표에 가까워지면 속도를 줄인다.
         speed = max(MIN_DRIVE_SPEED, min(DRIVE_SPEED, SLOWDOWN_GAIN * distance))
+        # 급출발 방지: 직전 속도에서 DRIVE_ACCEL만큼씩만 올린다.
+        if self._drive_time is not None:
+            elapsed = max(0.0, obs.now - self._drive_time)
+            speed = min(speed, self._drive_speed + DRIVE_ACCEL * elapsed)
+        else:
+            speed = min(speed, MIN_DRIVE_SPEED)
         angular = clamp(HEADING_GAIN * error, TURN_SPEED)
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
+        self._drive_speed = linear
+        self._drive_time = obs.now
         return Command(linear=-linear if self.reverse else linear, angular=angular)
 
     def _travel_heading_error(self, obs):

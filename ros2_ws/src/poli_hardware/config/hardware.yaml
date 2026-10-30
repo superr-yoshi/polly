@@ -12,7 +12,7 @@
     max_linear: 0.25           # m/s, 초기 실내 제한 (무부하 이론 최고 약 1.12 m/s)
     max_angular: 1.0           # rad/s
     max_wheel_rpm: 250.0       # JGB37-520 정격 부하 250 RPM (무부하 330). 제품 사양서_E: 연속 주행은 정격 부근
-    min_wheel_speed: 0.25      # m/s. 0 = 끔. 이보다 느린 바퀴 명령은 두 바퀴를 같은 비율로 키움
+    min_wheel_speed: 0.08      # m/s. 2026-10-31 0.25 -> 0.08 (MDD10 저속 가능, 급출발·급정지 해결). 0 = 끔. 이보다 느린 바퀴 명령은 두 바퀴를 같은 비율로 키움
                                # RRC 공장 펌웨어 PWM 25 % 미만 컷 때문에 도입 (2026-10-08). 제자리 회전도 약 2.8 rad/s
                                # ⚠ poli_navigation turn_pulse.HW_MIN_WHEEL_SPEED와 같아야 한다 (담당 1)
                                # TODO_MEASURE: MDD10 + Mega 속도 제어는 저속도 될 수 있다. 0.1·0.15 m/s가 부드러우면

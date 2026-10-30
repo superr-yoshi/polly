@@ -14,7 +14,8 @@ import math
 
 
 # 조원 A hardware.yaml의 min_wheel_speed (m/s). 저쪽 값이 바뀌면 같이 고친다.
-HW_MIN_WHEEL_SPEED = 0.25
+# 2026-10-31: MDD10 + 엔코더 속도 제어는 저속도 되므로 0.25 -> 0.08 (40 cm 주행 급출발·급정지 원인)
+HW_MIN_WHEEL_SPEED = 0.08
 
 # TODO_MEASURE: drive_test로 펄스 한 번에 실제로 몇 도 도는지 재고 조정.
 # 펄스 한 번 회전량이 회전 허용 오차 범위(±TURN_TOLERANCE)보다 작아야 멈출 수 있다.

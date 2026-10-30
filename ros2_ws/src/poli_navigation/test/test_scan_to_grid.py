@@ -14,6 +14,7 @@ from poli_navigation.grid_map import (
 )
 from poli_navigation.scan_to_grid import (
     ARENA_SIZE_M,
+    neighbor_states,
     odom_to_arena,
     point_to_cell,
     scan_to_cells,
@@ -248,3 +249,15 @@ def test_scan_then_plan_avoids_known_obstacles():
     assert path is not None
     assert all(grid.get(cell) != BLOCKED for cell in path)
     assert any(state == UNKNOWN for state in grid.cells.values())
+
+
+def test_neighbor_states_uses_direction_cones():
+    # 상하좌우 이웃 칸은 그 방향 ±15도 레이저로만 판단한다 (2026-10-31).
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    scan = simulate_scan(true_grid, START_POSE)
+
+    states = neighbor_states(scan, START_POSE)
+
+    assert states.get((9, 2)) == BLOCKED
+    assert states.get((8, 1)) != BLOCKED

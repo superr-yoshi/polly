@@ -270,7 +270,8 @@ def test_search_finds_target_with_latency_from_any_heading():
         robot = LaggedSimRobot(
             (CENTER_M[0] - 0.5, CENTER_M[1], math.radians(start_deg)))
 
-        states = run(logic, robot, max_seconds=20.0, until=HOLD)
+        # 2026-10-31 최저 바퀴 속도 0.25 -> 0.08: 제자리 회전이 느려져 20초 -> 40초
+        states = run(logic, robot, max_seconds=40.0, until=HOLD)
 
         assert logic.state == HOLD, (start_deg, states)
         # 한 번 찾은 대상을 놓쳐서 다시 찾는 일(SEARCH로 되돌아감)이 없어야 한다.

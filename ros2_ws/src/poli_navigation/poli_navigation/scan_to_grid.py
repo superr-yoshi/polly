@@ -16,6 +16,7 @@ from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
     CELL_SIZE_M,
+    FREE,
     GRID_SIZE,
     MISSION1_START,
 )
@@ -48,6 +49,13 @@ MIN_HITS_PER_CELL = 2
 # 2026-10-31 실기: 장애물(높이 약 20 cm) 윗변과 레이저 높이가 비슷해 약 0.55 m 너머 벽은 레이저가 위로 넘어간다.
 # 임무는 한 칸씩 멈춰 옆 칸만 고르므로 가까운 점(옆 칸의 면은 약 0.3 m)만으로 충분하다. (TODO_MEASURE)
 MAX_USE_RANGE_M = 0.7
+# 칸 가운데에서 상하좌우 이웃 칸은 그 방향 ±CONE_HALF_RAD 레이저로만 판단한다 (2026-10-31 팀 요청).
+# 로봇이 몇 도 비뚤어져 있어도 45도 쪽 옆 벽이 앞칸 판단에 섞이지 않게 한다.
+CONE_HALF_RAD = math.radians(15.0)
+CONE_BLOCK_M = 0.40      # 로봇 중심에서 이 거리 안(이웃 칸 앞쪽 절반)에 맞으면 그 칸에 장애물
+CONE_FREE_M = 0.55       # 이보다 멀리 맞은 레이저는 이웃 칸을 지나간 것
+CONE_SKIP_M = 0.12       # 이보다 가까운 점은 로봇 자기 부품으로 보고 버린다
+CONE_MIN_RAYS = 3
 
 # 빈 격자 판단 시 광선을 따라 확인하는 간격, 맞은 지점 앞에서 멈추는 여유
 FREE_STEP_M = 0.1
@@ -207,6 +215,49 @@ def _trace_scan(scan, robot_pose):
     free_cells -= blocked_cells
 
     return blocked_cells, free_cells, see_through_counts
+
+
+def neighbor_states(scan, robot_pose):
+    """
+    칸 가운데에서 상하좌우 이웃 칸을 각 방향 ±15도 레이저로만 판단한다.
+
+    반환: {이웃 격자: BLOCKED 또는 FREE}. 판단이 애매한 방향은 넣지 않는다.
+    """
+    robot_x, robot_y, robot_yaw = robot_pose
+    cell = point_to_cell(robot_x, robot_y)
+    if cell is None:
+        return {}
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    states = {}
+    for phi, (dx, dy) in ((0.0, (1, 0)), (math.pi / 2, (0, 1)),
+                          (math.pi, (-1, 0)), (-math.pi / 2, (0, -1))):
+        near = far = 0
+        for i, distance in enumerate(scan.ranges):
+            if not math.isfinite(distance):
+                continue
+            if not scan.range_min <= distance <= scan.range_max:
+                continue
+            angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+            if abs(math.atan2(math.sin(angle - phi), math.cos(angle - phi))) > CONE_HALF_RAD:
+                continue
+            hit_x = laser_x + distance * math.cos(angle)
+            hit_y = laser_y + distance * math.sin(angle)
+            along = (hit_x - robot_x) * math.cos(phi) + (hit_y - robot_y) * math.sin(phi)
+            if along < CONE_SKIP_M:
+                continue
+            if along < CONE_BLOCK_M:
+                near += 1
+            elif along >= CONE_FREE_M:
+                far += 1
+        neighbor = (cell[0] + dx, cell[1] + dy)
+        if near >= CONE_MIN_RAYS:
+            states[neighbor] = BLOCKED
+        elif near == 0 and far >= CONE_MIN_RAYS:
+            states[neighbor] = FREE
+    return states
 
 
 def update_grid_from_scan(grid, scan, robot_pose):
