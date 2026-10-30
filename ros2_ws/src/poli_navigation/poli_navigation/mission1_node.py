@@ -48,8 +48,9 @@ class Mission1Node(Node):
         # 2026-10-31 실기: 엔코더만 쓰면 90도 회전 때 실제로 더 돌아 사선으로 주행했다.
         # IMU가 0.3초 넘게 안 오면 엔코더 방향을 쓴다 (시뮬레이션·fake도 그대로 동작).
         self.use_imu_yaw = self.declare_parameter('use_imu_yaw', True).value
-        # 손으로 반시계 90도 돌렸을 때 +98도 (2026-10-31) -> +1. 칩을 뒤집어 달면 -1
-        self.imu_yaw_sign = self.declare_parameter('imu_yaw_sign', 1.0).value
+        # 2026-10-31 실측: 바닥에서 손으로 반시계 약 45도 -> /imu/data z 적분 -51도 -> 부호 반대(-1).
+        # (앞선 손 시험의 +98도는 시계 방향으로 돌린 것으로 판단). 보드를 다시 달면 확인할 것
+        self.imu_yaw_sign = self.declare_parameter('imu_yaw_sign', -1.0).value
         self.imu_dyaw = 0.0
         self.imu_stamp = None
         self.imu_received_at = None
