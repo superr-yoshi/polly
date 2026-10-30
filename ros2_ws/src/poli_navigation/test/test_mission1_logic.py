@@ -378,10 +378,10 @@ def test_maze_counts_actual_cell_entry_once_not_replans():
     for _ in range(10):
         logic.step(obs)
         logic._plan(obs)
-    assert logic.maze.state.visits == {(8, 8): 1}
+    assert logic.maze.state.visits == {(9, 1): 1}
     x, y = cell_center_m((9, 2))
     logic.step(Observation(x=x, y=y, yaw=yaw, now=0.1))
-    assert logic.maze.state.visits[(7, 8)] == 1
+    assert logic.maze.state.visits[(9, 2)] == 1
 
 
 def test_return_uses_only_visited_cells():
