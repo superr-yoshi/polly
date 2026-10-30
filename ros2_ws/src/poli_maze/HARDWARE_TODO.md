@@ -63,7 +63,6 @@ grep -rn "TODO_HW\|TODO_MEASURE" poli_maze/
 | `/gripper/holding` 센서가 생기면 잡았는지 확인하고, 못 잡았으면 다시 시도 | `maze_runner.py:205` |
 | 회전 전에 라이다로 벽까지 거리를 재서 칸 중앙에 맞추기 (회전 여유 약 4 cm) | `maze_runner.py:276` |
 | 물건이 칸 안 어디에 있는지에 따라 비전(`/vision/target`)으로 정렬 후 집기 | `maze_runner.py:378` |
-| 규정상 시작점에서 물건을 내려놓아야 하면 `'open'` 발행 | `maze_runner.py:404` |
 
 ## 4. 아직 안 만든 것 (실제 주행에서 필요해지면)
 
