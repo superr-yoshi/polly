@@ -24,8 +24,8 @@ CAMERA_FPS = 30.0
 # 발행 주기. 약속은 10Hz 이상. 실제 값은 ros2 topic hz 로 확인한다.
 PUBLISH_HZ = 20.0
 
-# TODO_MEASURE: 빨간 물체를 로봇 기준 왼쪽에 두고 x_offset 이 음수인지 확인.
-# 양수가 나오면(화면이 좌우 반전) True 로 바꾼다.
+# 빨간 물체를 로봇 기준 왼쪽에 두고 x_offset 이 음수인지 확인. 양수가 나오면(화면이 좌우 반전) True 로 바꾼다.
+# 2026-10-30 확인: 카메라를 케이블이 아래로 가게 단 상태에서 왼쪽 앞 약 50 cm 대상 -> x_offset -0.83 (맞음)
 CAMERA_HFLIP = False
 # TODO_MEASURE: 카메라가 거꾸로 달려 있으면 CAMERA_HFLIP, CAMERA_VFLIP 둘 다 True.
 CAMERA_VFLIP = False
