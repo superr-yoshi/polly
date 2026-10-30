@@ -5,13 +5,19 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from poli_interfaces.msg import TargetDetection
 from poli_navigation.laser_tf import LaserMountFromTf
-from poli_navigation.mission1_logic import Mission1Logic, Observation, STUCK
+from poli_navigation.mission1_logic import (
+    Mission1Logic,
+    Observation,
+    SCAN,
+    SCAN_SETTLE_S,
+    STUCK,
+)
 from poli_navigation.mission2_node import (
     raise_keyboard_interrupt,
     VISION_TIMEOUT,
     yaw_from_quaternion,
 )
-from poli_navigation.scan_to_grid import odom_to_arena
+from poli_navigation.scan_to_grid import odom_to_arena, START_POSE, wall_offset
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
@@ -56,6 +62,7 @@ class Mission1Node(Node):
         self.imu_received_at = None
         self.prev_odom = None
         self.fused = None
+        self.wall_fixed_for = None
         self.holding = None
         self.vision = None
         self.vision_received_at = None
@@ -153,6 +160,26 @@ class Mission1Node(Node):
             return None
         return self.vision
 
+    def fix_pose_with_walls(self, scan, now):
+        """칸 가운데에 멈춰 스캔할 때(SCAN) 가까운 벽까지 거리로 위치를 한 번 바로잡는다."""
+        logic = self.logic
+        if logic.state != SCAN or self.fused is None:
+            return
+        if self.wall_fixed_for == logic.state_started_at:
+            return
+        if now - logic.state_started_at < SCAN_SETTLE_S:
+            return
+        self.wall_fixed_for = logic.state_started_at
+        dx, dy = wall_offset(scan, self.pose)
+        if dx == 0.0 and dy == 0.0:
+            return
+        # 경기장 좌표 보정량 -> odom 좌표 (odom_to_arena의 반대 회전)
+        start_yaw = START_POSE[2]
+        self.fused[0] += dx * math.cos(start_yaw) + dy * math.sin(start_yaw)
+        self.fused[1] += -dx * math.sin(start_yaw) + dy * math.cos(start_yaw)
+        self.pose = odom_to_arena(*self.fused)
+        self.get_logger().info(f'벽 보정: dx={dx:+.3f} m, dy={dy:+.3f} m')
+
     def control_step(self):
         now = self.now_seconds()
         scan = self.fresh_scan(now)
@@ -166,6 +193,7 @@ class Mission1Node(Node):
                 throttle_duration_sec=3.0)
             return
 
+        self.fix_pose_with_walls(scan, now)
         x, y, yaw = self.pose
 
         observation = Observation(

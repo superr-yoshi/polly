@@ -20,6 +20,7 @@ from poli_navigation.scan_to_grid import (
     scan_to_cells,
     START_POSE,
     update_grid_from_scan,
+    wall_offset,
 )
 from poli_navigation.sim_world import simulate_scan
 import pytest
@@ -261,3 +262,15 @@ def test_neighbor_states_uses_direction_cones():
 
     assert states.get((9, 2)) == BLOCKED
     assert states.get((8, 1)) != BLOCKED
+
+
+def test_wall_offset_pulls_back_to_cell_center():
+    # 출발 칸에서 실제로는 5 cm 앞(+y)에 있는데 가운데라고 믿으면, 앞 벽으로 +y 보정이 나온다.
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    x, y, yaw = START_POSE
+    scan = simulate_scan(true_grid, (x, y + 0.05, yaw))
+
+    dx, dy = wall_offset(scan, START_POSE)
+
+    assert abs(dy - 0.05) < 0.02

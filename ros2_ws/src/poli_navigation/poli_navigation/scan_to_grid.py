@@ -56,6 +56,10 @@ CONE_BLOCK_M = 0.40      # 로봇 중심에서 이 거리 안(이웃 칸 앞쪽 
 CONE_FREE_M = 0.55       # 이보다 멀리 맞은 레이저는 이웃 칸을 지나간 것
 CONE_SKIP_M = 0.12       # 이보다 가까운 점은 로봇 자기 부품으로 보고 버린다
 CONE_MIN_RAYS = 3
+# 칸 가운데에 멈췄을 때 가까운 벽(칸 경계, 중심에서 0.2 m)까지 거리로 위치를 바로잡는다 (2026-10-31 팀 요청).
+WALL_FIT_MIN_M = 0.10
+WALL_FIT_MAX_M = 0.32
+MAX_POSE_FIX_M = 0.10    # 한 번에 고치는 최대 거리 (잘못 잰 값에 크게 끌려가지 않게)
 
 # 빈 격자 판단 시 광선을 따라 확인하는 간격, 맞은 지점 앞에서 멈추는 여유
 FREE_STEP_M = 0.1
@@ -258,6 +262,55 @@ def neighbor_states(scan, robot_pose):
         elif near == 0 and far >= CONE_MIN_RAYS:
             states[neighbor] = FREE
     return states
+
+
+def wall_offset(scan, robot_pose):
+    """
+    칸 가운데에서 가까운 벽까지 거리로 위치 오차를 잰다.
+
+    장애물·벽 면은 칸 경계(칸 중심에서 0.2 m)에 있다. 상하좌우 ±15도 레이저 중
+    0.10~0.32 m에 맞은 점의 중간값으로 실제 위치를 구한다.
+    반환: 경기장 좌표 보정량 (dx, dy). 벽이 안 보이는 축은 0.
+    """
+    robot_x, robot_y, robot_yaw = robot_pose
+    cell = point_to_cell(robot_x, robot_y)
+    if cell is None:
+        return 0.0, 0.0
+    center = cell_center_m(cell)
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    fixes = ([], [])
+    for phi, axis, sign in ((0.0, 0, 1.0), (math.pi / 2, 1, 1.0),
+                            (math.pi, 0, -1.0), (-math.pi / 2, 1, -1.0)):
+        alongs = []
+        for i, distance in enumerate(scan.ranges):
+            if not math.isfinite(distance):
+                continue
+            if not scan.range_min <= distance <= scan.range_max:
+                continue
+            angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+            if abs(math.atan2(math.sin(angle - phi), math.cos(angle - phi))) > CONE_HALF_RAD:
+                continue
+            hit_x = laser_x + distance * math.cos(angle)
+            hit_y = laser_y + distance * math.sin(angle)
+            along = (hit_x - robot_x) * math.cos(phi) + (hit_y - robot_y) * math.sin(phi)
+            if WALL_FIT_MIN_M <= along <= WALL_FIT_MAX_M:
+                alongs.append(along)
+        if len(alongs) >= CONE_MIN_RAYS:
+            alongs.sort()
+            measured = alongs[len(alongs) // 2]
+            fixes[axis].append(center[axis] + sign * (CELL_SIZE_M / 2 - measured))
+    current = (robot_x, robot_y)
+    offset = []
+    for axis in (0, 1):
+        if not fixes[axis]:
+            offset.append(0.0)
+            continue
+        delta = sum(fixes[axis]) / len(fixes[axis]) - current[axis]
+        offset.append(max(-MAX_POSE_FIX_M, min(MAX_POSE_FIX_M, delta)))
+    return offset[0], offset[1]
 
 
 def update_grid_from_scan(grid, scan, robot_pose):
