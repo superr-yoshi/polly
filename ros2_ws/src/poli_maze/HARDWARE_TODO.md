@@ -18,7 +18,7 @@ grep -rn "TODO_HW\|TODO_MEASURE" poli_maze/
 | 라이다를 뒤집어 달았으면 `LASER_FLIPPED = True` | `maze_mapper.py:33` |
 | 라이다 0도가 로봇 정면이 아니면, 진행 방향 안전 거리 계산도 같이 확인 | `maze_runner.py:170` |
 | 제자리 회전 가능한지: 바퀴 축 가운데 ~ 가장 먼 끝(집게, 들고 있는 물건 포함) 거리가 18 cm 이하인지 | `maze_runner.py:63` |
-| 대회 규정의 목표 칸, 시작 칸, 시작 방향 (지금: 9x9, 목표 (4,4) = 사람 기준 (5,5), 시작 (8,8) = (9,9), 위쪽 출발) | `maze_logic.py:26` |
+| 대회 규정의 목표 칸, 시작 칸, 시작 방향 (지금: 9x9, 목표 (5,5), 시작 (9,1) 오른쪽 아래, 위쪽 출발. 칸은 (x, y) 1 부터) | `maze_logic.py:26` |
 | 실제 칸 한 변 길이 `CELL_SIZE` (지금 0.40 m) | `maze_mapper.py:23` |
 
 ## 2. 로봇을 달려 보면서 재서 넣을 숫자
@@ -63,7 +63,6 @@ grep -rn "TODO_HW\|TODO_MEASURE" poli_maze/
 | `/gripper/holding` 센서가 생기면 잡았는지 확인하고, 못 잡았으면 다시 시도 | `maze_runner.py:205` |
 | 회전 전에 라이다로 벽까지 거리를 재서 칸 중앙에 맞추기 (회전 여유 약 4 cm) | `maze_runner.py:276` |
 | 물건이 칸 안 어디에 있는지에 따라 비전(`/vision/target`)으로 정렬 후 집기 | `maze_runner.py:378` |
-| 규정상 시작점에서 물건을 내려놓아야 하면 `'open'` 발행 | `maze_runner.py:404` |
 
 ## 4. 아직 안 만든 것 (실제 주행에서 필요해지면)
 

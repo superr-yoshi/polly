@@ -403,7 +403,8 @@ class MazeRunner(Node):
         """복귀 구간 하나를 시작한다. 다 끝났으면 DONE."""
         if not self.segments:
             self.say('시작점 복귀 완료')
-            # TODO_HW: 규정상 시작점에서 물건을 내려놓아야 하면 여기서 'open' 발행.
+            # 2026-10-31 팀 결정: 시작 칸에 도착하면 끝. 집게는 열지 않고 잡은 채로 정지한다
+            # (규정 3.3.4는 시작 지점으로 운송하면 승리, 내려놓기 요구 없음. 잡고 있으면 탈취도 어렵다)
             self.set_state('DONE')
             return
         d, n = self.segments.pop(0)

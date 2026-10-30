@@ -15,8 +15,9 @@
   2. 올 때 지나간 칸에만, 시작점 1 부터 물결처럼(BFS) 새 숫자를 매긴다
   3. 숫자가 가장 작은 칸으로 간다 (동점 규칙은 갈 때와 같음)
 
-좌표: 칸은 (행, 열). 행 0 이 경기장 맨 위, 열 0 이 맨 왼쪽 (0 부터 셈).
-방향: 0 = 위, 1 = 오른쪽, 2 = 아래, 3 = 왼쪽 (경기장 그림 기준).
+좌표: 칸은 (x, y), 1 부터 셈. x 는 왼쪽 -> 오른쪽 1~9, y 는 아래 -> 위 1~9.
+      poli_navigation(grid_map.py) 과 같은 번호다. 오른쪽 아래 구석 = (9, 1).
+방향: 0 = 위(+y), 1 = 오른쪽(+x), 2 = 아래(-y), 3 = 왼쪽(-x) (경기장 그림 기준).
 """
 
 from collections import deque
@@ -26,17 +27,16 @@ from collections import deque
 # ---------------------------------------------------------------------------
 # TODO_HW: 대회 규정의 목표 칸, 시작 칸, 시작 방향 확인.
 #          지금은 목표 = 정가운데, 시작 = 오른쪽 아래 구석에서 위를 보고 출발로 가정.
-# 칸 번호는 0 부터 센다. 사람이 1 부터 세는 (5,5) 가 코드의 (4,4).
 N = 9
-GOAL = (4, 4)    # 사람 기준 (5, 5)
-START = (8, 8)   # 사람 기준 (9, 9)
+GOAL = (5, 5)    # 정가운데
+START = (9, 1)   # 오른쪽 아래 구석
 START_DIR = 0  # 위쪽을 보고 출발
 
 VISIT_COST = 10
 WALL_VALUE = 50  # 표시용. 벽 칸은 점수와 상관없이 후보에서 뺀다.
 
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
-DIRS = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+DIRS = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # (dx, dy)
 DIR_NAME = ['위', '오른쪽', '아래', '왼쪽']
 
 FORWARD = 'forward'
@@ -56,8 +56,8 @@ def step(cell, d):
 
 
 def inside(cell, n=N):
-    """경기장 안인지."""
-    return 0 <= cell[0] < n and 0 <= cell[1] < n
+    """경기장 안인지 (1 ~ n)."""
+    return 1 <= cell[0] <= n and 1 <= cell[1] <= n
 
 
 def choice_order(facing):
@@ -151,15 +151,15 @@ class MazeState:
         return set(self.visits)
 
     def text_map(self):
-        """디버그용 숫자표 문자열."""
+        """디버그용 숫자표 문자열. 경기장 그림처럼 위쪽(y = n) 줄부터 찍는다."""
         rows = []
-        for r in range(self.n):
+        for y in range(self.n, 0, -1):
             row = []
-            for c in range(self.n):
-                if (r, c) == self.cell:
+            for x in range(1, self.n + 1):
+                if (x, y) == self.cell:
                     row.append('  R')
                 else:
-                    row.append('%3d' % self.display_value((r, c)))
+                    row.append('%3d' % self.display_value((x, y)))
             rows.append(' '.join(row))
         return '\n'.join(rows)
 
