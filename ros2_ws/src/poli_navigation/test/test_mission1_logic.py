@@ -299,6 +299,29 @@ def test_release_point_puts_cube_on_cell_center():
     assert abs(y - (start_y + GRIPPER_REACH_M)) < 1e-9
 
 
+def test_fine_turn_continues_between_old_pulses_and_slows_near_goal():
+    """작은 회전 오차에서도 정지 구간 없이 감속하고 회전한다."""
+    logic = Mission1Logic()
+    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0)
+    fast = logic._turn_toward(math.pi / 2, obs)
+    for now in (0.05, 0.10, 0.20, 0.30):
+        obs.now = now
+        slow = logic._turn_toward(math.radians(10), obs)
+        assert 0 < slow < fast
+        assert logic._turn_toward(-math.radians(10), obs) == -slow
+
+
+def test_camera_alignment_continues_and_stops_when_aligned():
+    """카메라 오차가 남으면 연속 정렬하고 허용 범위에서는 정지한다."""
+    logic = Mission1Logic()
+    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0, detected=True, x_offset=-0.3)
+    for now in (0.0, 0.05, 0.10, 0.20):
+        obs.now = now
+        assert logic._align(obs).angular > 0
+    obs.x_offset = 0.0
+    assert logic._align(obs) == Command()
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

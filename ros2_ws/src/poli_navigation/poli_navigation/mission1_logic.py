@@ -50,10 +50,11 @@ from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPu
 
 CENTER_M = cell_center_m(CENTER)
 
-# TODO_MEASURE: 로봇 중심 ~ 집게로 잡은 큐브 중심 거리
+# 2026-10-31 사용자 실측: 바퀴 축 중앙 ~ 잡은 큐브 중심 약 13 cm.
+# TODO_MEASURE: 근삿값이므로 출발 칸 안에 블록 전체가 들어오는지 실기 재확인.
 # 큐브는 들지 않고 바닥에 끌고 간다.
 # 출발 격자에서 놓을 때 로봇 중심이 아니라 큐브가 격자 가운데에 오게 한다.
-GRIPPER_REACH_M = 0.25
+GRIPPER_REACH_M = 0.13
 
 # SIM_ONLY: 멈춘 뒤 스캔할 때까지 기다리는 시간 (움직이며 찍힌 스캔을 쓰지 않게)
 SCAN_SETTLE_S = 0.6  # 2026-10-31: 0.3이면 멈춘 직후 차체 흔들림이 남은 스캔으로 지도를 갱신했다 (실기)
@@ -82,6 +83,8 @@ SLOWDOWN_GAIN = 1.5  # 감속을 도착 약 0.23 m 전부터
 DRIVE_ACCEL = 0.4
 APPROACH_SPEED = 0.15  # 최저 속도(0.08)에 묶여 너무 느렸음 (2026-10-31)
 TURN_SPEED = 1.2  # 2026-10-31 0.8 -> 1.2 (IMU로 각도를 재므로 빨라도 정확)
+# SIM_ONLY: 연속 회전 감속 하한. 실물에서 목표각 초과·정렬 진동을 확인할 것.
+MIN_TURN_SPEED = 0.6
 SEARCH_SPEED = 0.6
 HEADING_GAIN = 1.5
 ALIGN_GAIN = 1.0
@@ -94,7 +97,8 @@ ALIGN_TOLERANCE = 0.15
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
 # (아래가 화면 밖으로 잘려 사실상 최댓값) -> 집게 안에 들어온 순간 잡도록 조금 낮춤 (TODO_MEASURE: 경기장에서 재확인)
-GRAB_AREA = 32000.0  # 2026-10-31: 27000이면 대상 바로 앞에서 일찍 잡음 -> 32000 (집게 사이 최대 약 35000)
+# TODO_MEASURE: 32000에서도 일찍 잡는 실기 피드백. 기존 관측 최대 약 35000 안에서 재시험.
+GRAB_AREA = 34000.0
 
 # 집게가 닫히는 시간, 열리는 시간 (조원 A: 약 1.2초, 서보 40<->120도, 1도/15ms)
 # TODO_MEASURE: 서보 각도가 실측 후 바뀌면 다시 확인
@@ -330,11 +334,9 @@ class Mission1Logic:
         return Command(gripper=GRIPPER_OPEN)
 
     def _turn_toward(self, error, obs):
-        """제자리 회전. 멀면 계속 돌고, 가까우면 끊어서 돈다 (turn_pulse.py)."""
-        if abs(error) > FINE_TURN_RAD:
-            self.turn_pulse.reset()
-            return math.copysign(TURN_SPEED, error)
-        return self.turn_pulse.angular(error, TURN_SPEED, obs.now)
+        """IMU 각도 오차에 따라 연속 회전하고 목표 근처에서 감속한다."""
+        speed = max(MIN_TURN_SPEED, min(TURN_SPEED, TURN_SPEED * abs(error) / FINE_TURN_RAD))
+        return math.copysign(speed, error)
 
     def _turn(self, obs):
         error = self._travel_heading_error(obs)
@@ -433,8 +435,7 @@ class Mission1Logic:
             return Command()
 
         # TODO: 큐브가 중앙에 없을 때 (상대가 먼저 가져감) 대응
-        # 끊어서 돌아야 카메라가 멈춘 화면에서 대상을 찾는다.
-        return Command(angular=self.turn_pulse.angular(1.0, SEARCH_SPEED, obs.now))
+        return Command(angular=SEARCH_SPEED)
 
     def _align(self, obs):
         if not obs.detected:
@@ -445,9 +446,9 @@ class Mission1Logic:
             self._change_state(APPROACH, obs)
             return Command()
 
-        # 대상이 화면 안에 있으면 오차가 작으므로 항상 끊어서 돈다. x_offset 음수 = 왼쪽.
-        return Command(
-            angular=self.turn_pulse.angular(-obs.x_offset, TURN_SPEED, obs.now))
+        # x_offset 음수 = 왼쪽. 정렬 오차가 작아지면 감속한다.
+        speed = max(MIN_TURN_SPEED, min(TURN_SPEED, ALIGN_GAIN * abs(obs.x_offset)))
+        return Command(angular=math.copysign(speed, -obs.x_offset))
 
     def _approach(self, obs):
         if not obs.detected:

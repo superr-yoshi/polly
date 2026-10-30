@@ -48,7 +48,8 @@ SIM_ONLY_GRAB_TIME = 1.2
 SIM_ONLY_GRAB_REACH_M = 0.3
 
 # SIM_ONLY: 잡은 대상은 들지 않고 로봇 중심에서 이 거리 앞에 붙여 끌고 간다 (m)
-SIM_ONLY_DRAG_OFFSET_M = 0.25
+# 2026-10-31 실물 근삿값과 임무 1 놓기 계산에 맞춘다.
+SIM_ONLY_DRAG_OFFSET_M = 0.13
 
 SIM_ONLY_SCAN_PERIOD = 0.1
 SIM_ONLY_SCAN_FRAME_ID = 'base_link'
