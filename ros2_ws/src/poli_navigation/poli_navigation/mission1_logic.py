@@ -295,8 +295,10 @@ class Mission1Logic:
     def _shortest_path(self, current, goals):
         return_grid = GridMap(use_point_symmetry=False)
         visited = self.maze.visited_cells()
+        # 실제로 지나온 칸은 지도에 막힘으로 바뀌어 있어도 지나갈 수 있다고 본다.
+        # 2026-10-31 실기: 지나온 (7,5)가 대칭 칸 (3,5) 때문에 막힘이 되어 복귀 경로가 없었다.
         for cell in return_grid.cells:
-            if cell not in visited or self.grid.get(cell) == BLOCKED:
+            if cell not in visited:
                 return_grid.mark_blocked(cell)
         paths = [return_grid.find_path(current, goal) for goal in goals]
         paths = [path for path in paths if path is not None]
