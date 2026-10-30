@@ -75,13 +75,13 @@ CELL_CENTER_TOLERANCE_M = 0.1
 # 속도와 제어 값 (임무 2와 같은 기준, turn_pulse.py 참고)
 # 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
 # 감속(MIN_DRIVE_SPEED)·느린 접근은 실제로는 0.25 m/s가 된다.
-DRIVE_SPEED = 0.25
+DRIVE_SPEED = 0.35  # 2026-10-31 0.25 -> 0.35 (전체가 느림, 팀 요청)
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
-SLOWDOWN_GAIN = 1.0
+SLOWDOWN_GAIN = 1.5  # 감속을 도착 약 0.23 m 전부터
 # 한 칸 주행 출발 가속 (m/s^2). 0 -> 0.25 m/s에 약 0.6초 (2026-10-31 급출발 방지)
 DRIVE_ACCEL = 0.4
-APPROACH_SPEED = HW_MIN_WHEEL_SPEED
-TURN_SPEED = 0.8
+APPROACH_SPEED = 0.15  # 최저 속도(0.08)에 묶여 너무 느렸음 (2026-10-31)
+TURN_SPEED = 1.2  # 2026-10-31 0.8 -> 1.2 (IMU로 각도를 재므로 빨라도 정확)
 SEARCH_SPEED = 0.6
 HEADING_GAIN = 1.5
 ALIGN_GAIN = 1.0
@@ -94,7 +94,7 @@ ALIGN_TOLERANCE = 0.15
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
 # (아래가 화면 밖으로 잘려 사실상 최댓값) -> 집게 안에 들어온 순간 잡도록 조금 낮춤 (TODO_MEASURE: 경기장에서 재확인)
-GRAB_AREA = 27000.0
+GRAB_AREA = 32000.0  # 2026-10-31: 27000이면 대상 바로 앞에서 일찍 잡음 -> 32000 (집게 사이 최대 약 35000)
 
 # 집게가 닫히는 시간, 열리는 시간 (조원 A: 약 1.2초, 서보 40<->120도, 1도/15ms)
 # TODO_MEASURE: 서보 각도가 실측 후 바뀌면 다시 확인
