@@ -10,6 +10,7 @@ from poli_navigation.grid_map import (
     RULE_EXAMPLE_BLOCKED,
 )
 from poli_navigation.mission1_logic import (
+    ALIGN,
     CENTER_M,
     Command,
     DONE,
@@ -28,6 +29,7 @@ from poli_navigation.mission1_logic import (
     RETURN,
     SCAN,
     SEARCH,
+    SEE_TARGET_MIN_AREA,
     STUCK,
 )
 from poli_navigation.scan_to_grid import point_to_cell, START_POSE
@@ -412,3 +414,23 @@ def test_new_obstacle_in_target_cell_stops_drive():
     assert logic.state == SCAN
     # 이동 중 관측은 정지 판단에만 쓰고, 정지 후 스캔까지 지도에 남기지 않는다.
     assert logic.grid.get((9, 2)) != BLOCKED
+
+
+def test_target_seen_while_exploring_goes_to_align():
+    # (5,5) 옆이 아니어도 탐색 중 대상이 크게 보이면 바로 정렬한다 (2026-10-31).
+    logic = Mission1Logic()
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic.step(obs)
+    obs.detected = True
+    obs.area = SEE_TARGET_MIN_AREA + 1.0
+    assert logic._drive(obs) == Command()
+    assert logic.state == ALIGN
+
+
+def test_small_far_target_is_ignored_while_exploring():
+    logic = Mission1Logic()
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, area=SEE_TARGET_MIN_AREA - 1.0)
+    logic.step(obs)
+    assert logic.state != ALIGN

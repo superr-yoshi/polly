@@ -55,6 +55,11 @@ SCAN_SETTLE_S = 0.6  # 2026-10-31: 0.3이면 멈춘 직후 차체 흔들림이 �
 # 주행 중 다음 칸이 막혀 보이는 스캔이 이만큼 연속이어야 멈춘다.
 # 출발 순간 차체가 숙여져 LiDAR가 바닥·장애물 윗변을 앞칸 장애물로 보는 것을 거른다 (2026-10-31 실기)
 DRIVE_BLOCK_SCANS = 3
+# 탐색 중 카메라에 대상이 이 크기 이상으로 보이면 (5,5) 옆이 아니어도 바로 정렬·접근한다 (2026-10-31 팀 결정).
+# 너무 작으면(멀면) 경기장 밖 빨간 물체일 수 있어 무시한다. 50 cm에서 약 9000 (TODO_MEASURE)
+SEE_TARGET_MIN_AREA = 2000.0
+# 탐색 단계에서 대상을 놓치고 이 시간 동안 못 찾으면 다시 격자 탐색으로 돌아간다.
+SEARCH_GIVE_UP_S = 10.0
 
 # 격자 가운데에 도착했다고 보는 거리, 가운데에서 벗어났다고 보는 거리
 ARRIVE_TOLERANCE_M = 0.03
@@ -202,6 +207,9 @@ class Mission1Logic:
             return Command()
         if obs.scan is None:
             return Command()
+        if self._sees_target(obs):
+            self._change_state(ALIGN, obs)
+            return Command()
 
         update_grid_from_scan(self.grid, obs.scan, (obs.x, obs.y, obs.yaw))
         return self._plan(obs)
@@ -285,6 +293,10 @@ class Mission1Logic:
 
         return (to_x - dir_x * GRIPPER_REACH_M, to_y - dir_y * GRIPPER_REACH_M)
 
+    def _sees_target(self, obs):
+        """탐색 중 대상이 충분히 크게 보이는지 (보이면 위치와 상관없이 잡으러 간다)."""
+        return self.phase == EXPLORE and obs.detected and obs.area >= SEE_TARGET_MIN_AREA
+
     def _arrived_at_goal(self, obs):
         if self.phase == EXPLORE:
             self._change_state(FACE, obs)
@@ -311,6 +323,9 @@ class Mission1Logic:
         return Command(angular=self._turn_toward(error, obs))
 
     def _drive(self, obs):
+        if self._sees_target(obs):
+            self._change_state(ALIGN, obs)
+            return Command()
         # 진행 중 다음 칸에 장애물이 나타나면 멈춘 뒤 다시 계획한다.
         if obs.scan is not None and obs.scan is not self._last_drive_scan:
             # 이동 중 스캔과 odom의 시각 차이로 벽이 옆 칸에 찍힐 수 있다.
@@ -380,6 +395,9 @@ class Mission1Logic:
     def _search(self, obs):
         if obs.detected:
             self._change_state(ALIGN, obs)
+            return Command()
+        if self.phase == EXPLORE and obs.now - self.state_started_at > SEARCH_GIVE_UP_S:
+            self._change_state(SCAN, obs)
             return Command()
 
         # TODO: 큐브가 중앙에 없을 때 (상대가 먼저 가져감) 대응
