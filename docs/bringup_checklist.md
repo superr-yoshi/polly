@@ -47,7 +47,7 @@ ros2 launch poli_navigation mission2.launch.py use_fake_hardware:=false
 ## 4. 실측해서 고칠 값 (담당 1)
 | 값 | 파일 | 지금 | 재는 방법 |
 |---|---|---|---|
-| `GRAB_AREA` | `mission2_logic.py`, `mission1_logic.py` | 15000 (임시) | 집게로 잡을 수 있는 거리에 대상을 두고 `/vision/target`의 `area` (640×480 기준, 조원 B와) |
+| `GRAB_AREA` | `mission2_logic.py`, `mission1_logic.py` | 27000 (2026-10-30 주황 시험 대상이 집게 사이일 때 실측 약 33000) | 집게로 잡을 수 있는 거리에 대상을 두고 `/vision/target`의 `area` (640×480 기준, 조원 B와) |
 | `GRIPPER_REACH_M` | `mission1_logic.py` | 0.25 | 로봇 중심 ~ 잡은 큐브 중심 거리 (줄자) |
 | `GRASP_WAIT_S` | `mission2_logic.py`, `mission1_logic.py` | 1.5 | `/gripper/state`가 `closed`가 될 때까지 걸린 시간 + 여유 |
 | `DANGER_MARGIN_M` | `mission2_logic.py` | 0.15 | 로봇 반지름 정도 |
