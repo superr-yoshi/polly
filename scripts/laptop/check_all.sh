@@ -9,7 +9,7 @@ find_pi "$1"
 
 stop_all() {
   echo "Pi의 LiDAR·카메라·바퀴 노드를 끈다."
-  pi 'pkill -INT -f "lib/poli_hardware/mega_bridge_node";
+  pi 'pkill -INT -f "^/usr/bin/python3 [^ ]*/lib/poli_hardware/mega_bridge_node";
       pkill -INT -f "^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch sllidar";
       pkill -INT -f "^python3 /home/poli/polly/scripts/camera_stream_test.py"; sleep 3;
       pgrep -x sllidar_node | xargs -r kill; echo "  모두 꺼짐"'
@@ -36,10 +36,10 @@ pi "source /opt/ros/jazzy/setup.bash; source ~/lidar_ws/install/setup.bash; sour
     sleep 6
     grep -q 'health status : OK' /tmp/check_lidar.log && echo '  LiDAR: OK' \
       || echo '  LiDAR: 응답 없음 -> LiDAR USB를 뺐다 다시 꽂기'
-    pgrep -f camera_stream_test.py > /dev/null && echo '  카메라: OK' \
+    pgrep -f '^python3 /home/poli/polly/scripts/camera_stream_test.py' > /dev/null && echo '  카메라: OK' \
       || { echo '  카메라: 실패'; tail -3 /tmp/check_camera.log; }
     if [ $WHEELS = yes ]; then
-      pgrep -f mega_bridge_node > /dev/null && echo '  바퀴 노드: OK' \
+      pgrep -f '^/usr/bin/python3 [^ ]*/lib/poli_hardware/mega_bridge_node' > /dev/null && echo '  바퀴 노드: OK' \
         || { echo '  바퀴 노드: 실패'; tail -3 /tmp/check_wheel.log; }
     fi"
 

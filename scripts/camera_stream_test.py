@@ -12,7 +12,7 @@ from picamera2 import Picamera2
 import rclpy
 from sensor_msgs.msg import Image
 
-ROTATE_180 = True   # 책상 시험 때 카메라가 거꾸로 놓여 있었다 (2026-10-28)
+ROTATE_180 = False  # 2026-10-30 카메라를 케이블이 아래로 가게 다시 달았다 (위로 달면 True)
 
 rclpy.init()
 node = rclpy.create_node('camera_stream_test')

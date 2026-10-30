@@ -26,6 +26,7 @@ Pi에 모니터가 없어도 노트북(WSL)의 RViz2 / rqt_image_view로 Pi의 R
 | 확인 | 명령 | 끝내기 |
 |---|---|---|
 | **LiDAR + 카메라 + 바퀴 한 번에** | `bash scripts/laptop/check_all.sh` | RViz 창 닫기 (Pi 쪽 모두 꺼짐). 바퀴는 띄우고, 비상정지(또는 Mega USB)를 바로 누를 수 있게 |
+| **앞으로 가기** (바닥 주행, 조립 후) | `bash scripts/laptop/forward_test.sh` | Enter 후 RViz 창 닫기 (Pi 쪽 모두 꺼짐). 아래 "앞으로 가기 시험" |
 | LiDAR + 카메라 | `bash scripts/laptop/view_all.sh` | RViz 창 닫기 (Pi 쪽도 꺼짐) |
 | LiDAR | `bash scripts/laptop/view_lidar.sh` | RViz 창 닫기 (Pi LiDAR도 꺼짐) |
 | 카메라 영상 | `bash scripts/laptop/view_camera.sh` | 영상 창 닫기 (Pi 영상 발행도 꺼짐) |
@@ -33,6 +34,27 @@ Pi에 모니터가 없어도 노트북(WSL)의 RViz2 / rqt_image_view로 Pi의 R
 
 Pi IP는 자동으로 찾는다. 못 찾으면 뒤에 IP를 붙인다: `bash scripts/laptop/view_lidar.sh 172.25.114.24`.
 카메라 스크립트는 Pi 저장소에 `scripts/camera_stream_test.py`가 있어야 한다 (Pi에서 `git pull`).
+
+## 앞으로 가기 시험 (`forward_test.sh`)
+RViz로 LiDAR·카메라를 보면서 로봇을 바닥에서 **0.25 m/s로 2초(약 0.5 m)** 전진시키고,
+앞·뒤 벽까지 거리가 바뀐 만큼을 LiDAR로 재서 실제로 앞으로 갔는지 알려 준다 (Pi에서 `scripts/forward_test.py`).
+y를 누를 때마다 한 번씩 달리므로, 로봇을 다시 놓고 여러 번 할 수 있다.
+
+- 준비: 로봇을 바닥에 두고 **앞쪽 1 m 이상 비우기**, **1~3 m 앞에 벽이나 상자** (거리 변화를 잰다),
+  비상정지 스위치와 Mega USB를 바로 누르거나 뽑을 수 있게.
+- 저절로 멈추는 경우: 출발 전 앞쪽(정면 ±30도)이 1 m 안으로 막혀 있으면 출발 안 함,
+  달리는 중 앞쪽 0.35 m 안에 뭐가 보이거나 LiDAR가 0.5초 넘게 끊기면 정지,
+  Ctrl+C·SSH 끊김이면 정지 명령을 보내고 끝남 (그래도 안 오면 `mega_bridge_node`와 Mega 펌웨어가 0.3초 뒤 정지).
+- LiDAR 정면은 URDF(`poli_description`의 `lidar_yaw`)에서 TF로 읽는다. LiDAR에서 0.15 m 안의 값은
+  로봇 몸체로 보고 무시한다 (`SELF_HIT_M`, 조립 후 실측 필요).
+
+| 결과 | 뜻 / 할 일 |
+|---|---|
+| ✅ 앞으로 갔어요 (명령의 80~120 %) | 정상. 20 % 넘게 다르면 바퀴 미끄러짐·`wheel_radius` 보정 (조원 A) |
+| ❌ LiDAR로 보면 뒤로 갔어요 | 눈으로도 뒤로 갔다 → 바퀴 방향(`left_sign`·`right_sign`, 조원 A). 눈으로는 앞으로 갔다 → URDF `lidar_yaw` 180도 |
+| ❌ 옆으로 움직인 것처럼 보여요 | 눈으로는 앞으로 갔다 → URDF `lidar_yaw` 90도 |
+| ❌ 거의 안 움직였어요 | 배터리·비상정지 스위치, MDD10 전원, 모터 선. 바퀴 노드 로그 `/tmp/forward_drive.log` (Pi) |
+| ⚠️ ○도 휘었어요 (IMU) | 두 바퀴 속도 차이 또는 바퀴 방향 설정 |
 
 ## LiDAR
 - Pi: LiDAR 켜기 (임무 launch를 켜면 같이 켜진다)

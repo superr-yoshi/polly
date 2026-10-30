@@ -17,7 +17,7 @@ pi 'source /opt/ros/jazzy/setup.bash; source ~/lidar_ws/install/setup.bash;
     sleep 6
     grep -q "health status : OK" /tmp/view_lidar.log && echo "  LiDAR: OK" \
       || echo "  LiDAR: 응답 없음 -> LiDAR USB를 뺐다 다시 꽂고 다시 실행"
-    pgrep -f camera_stream_test.py > /dev/null && echo "  카메라: OK" \
+    pgrep -f "^python3 /home/poli/polly/scripts/camera_stream_test.py" > /dev/null && echo "  카메라: OK" \
       || { echo "  카메라: 실패"; tail -3 /tmp/view_camera.log; }'
 
 echo "RViz를 연다. 다 보면 RViz 창을 닫는다 (저장하지 않고 닫기)."

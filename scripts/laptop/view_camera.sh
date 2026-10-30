@@ -11,7 +11,7 @@ pi 'test -f ~/polly/scripts/camera_stream_test.py' || {
 
 pi 'source /opt/ros/jazzy/setup.bash;
     setsid nohup python3 ~/polly/scripts/camera_stream_test.py > /tmp/view_camera.log 2>&1 < /dev/null &
-    sleep 5; pgrep -f camera_stream_test.py > /dev/null && echo "영상 발행 시작" || tail -5 /tmp/view_camera.log' || exit 1
+    sleep 5; pgrep -f "^python3 /home/poli/polly/scripts/camera_stream_test.py" > /dev/null && echo "영상 발행 시작" || tail -5 /tmp/view_camera.log' || exit 1
 
 echo "영상 창을 연다. 다 보면 창을 닫는다."
 ros2 run rqt_image_view rqt_image_view /camera/image_raw > /dev/null 2>&1

@@ -30,14 +30,14 @@ pi 'source /opt/ros/jazzy/setup.bash; source ~/polly/ros2_ws/install/setup.bash;
     P=$(ros2 pkg prefix poli_hardware)/share/poli_hardware/config/hardware.yaml;
     setsid nohup ros2 run poli_hardware mega_bridge_node --ros-args --params-file $P \
       > /tmp/wheel_node.log 2>&1 < /dev/null &
-    sleep 4; pgrep -f mega_bridge_node > /dev/null && echo "  노드 OK" \
+    sleep 4; pgrep -f "^/usr/bin/python3 [^ ]*/lib/poli_hardware/mega_bridge_node" > /dev/null && echo "  노드 OK" \
       || { echo "  노드 실패"; tail -5 /tmp/wheel_node.log; exit 1; }' || exit 1
 
 echo "동작 시작 (멈추려면 Ctrl+C, 위험하면 비상정지 또는 Mega USB 뽑기):"
 pi -t 'source /opt/ros/jazzy/setup.bash; python3 ~/polly/scripts/wheel_test.py'
 
 echo "바퀴 노드를 끈다."
-pi 'pkill -INT -f "lib/poli_hardware/mega_bridge_node"; sleep 2; echo "  꺼짐"; tail -3 /tmp/wheel_node.log'
+pi 'pkill -INT -f "^/usr/bin/python3 [^ ]*/lib/poli_hardware/mega_bridge_node"; sleep 2; echo "  꺼짐"; tail -3 /tmp/wheel_node.log'
 
 echo
 echo "확인할 것: 앞으로 때 두 바퀴가 같은 방향(앞)으로 돌았나? 왼쪽 회전 때 오른쪽 바퀴가 앞으로 돌았나? 정지 때 바로 섰나?"
