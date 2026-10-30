@@ -4,7 +4,11 @@
 
 static long g_mm[4] = {0, 0, 0, 0};
 
-#if SIM_ULTRASONIC
+#if NO_ULTRASONIC
+// 초음파 센서 없음: 재지 않고 0(실패)만 보낸다 (pulseIn으로 기다리지 않음)
+void ultrasonicBegin() {}
+void ultrasonicUpdate(uint8_t) {}
+#elif SIM_ULTRASONIC
 // SIM_ONLY: 센서마다 다른 모의값 (Pi 쪽 파서 테스트용)
 void ultrasonicBegin() {}
 void ultrasonicUpdate(uint8_t idx) {

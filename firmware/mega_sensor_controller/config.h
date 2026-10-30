@@ -4,6 +4,8 @@
 // ---- SIM / REAL 스위치 -------------------------------------------------
 // 1 = 모의값 (부품 없이 테스트), 0 = 실제 하드웨어 사용
 #define SIM_ULTRASONIC 0   // 2026-09-29 실측 확인 (전방 1개). 센서 없는 자리는 0(실패)으로 전송
+#define NO_ULTRASONIC  1   // 2026-10-30 초음파 센서 없음 (팀 확인). 재지 않고 0(실패)만 보낸다.
+                           //   없는 센서를 24 ms씩 기다리면 50 Hz 모터 제어가 밀린다. 센서를 달면 0
 #define SIM_GRIPPER    0   // 2026-10-29 집게 서보를 다시 Mega D9로 (MDD10 전환). 서보 없이 시험하려면 1
 #define SIM_IMU        1   // BNO085 배선 후 0. 0이면 SparkFun BNO080 라이브러리 필요. 1이면 $IMU를 보내지 않음
 
@@ -18,8 +20,9 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 // 사용 전압 4.8~6.8 V (5V 10A 컨버터 5 V). Arduino Servo 기본값(544~2400 us)을 쓰면 각도가 어긋난다.
 #define SERVO_MIN_US    500
 #define SERVO_MAX_US    2500
-#define GRIP_OPEN_DEG   90     // TODO_MEASURE: 1500 us. RRC 때 1500 us = 열림으로 혼을 끼웠음
-#define GRIP_CLOSE_DEG  120    // TODO_MEASURE: 약 1833 us. 50 mm 대상을 빠지지 않게 잡는 값
+#define GRIP_OPEN_DEG   90     // 1500 us = 열림 (2026-10-30 firmware/servo_test 실측)
+#define GRIP_CLOSE_DEG  135    // 2000 us = 빈 집게가 끝까지 닫히는 값 (2026-10-30 실측). 50 mm 대상을 물면
+                               //   서보가 계속 민다 -> 웅 소리·발열을 보고 낮춘다 (TODO_MEASURE: 대상 잡는 값)
 #define GRIP_STEP_MS    15     // 1도 이동 간격 (작을수록 빠름)
 
 // ---- 주행 모터: Cytron MDD10 (docs/pin_map.md) ------------------------------
@@ -28,9 +31,10 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 #define MOTOR_L_DIR     30     // MDD10 DIR1
 #define MOTOR_R_PWM     7      // MDD10 PWM2 (오른쪽 모터 M2A/M2B)
 #define MOTOR_R_DIR     31     // MDD10 DIR2
-// 전진 명령(+)에 바퀴가 뒤로 돌면 1로 바꾼다 (TODO_MEASURE: 바퀴 띄우고 $PWM 시험)
-#define MOTOR_L_INVERT  0
-#define MOTOR_R_INVERT  1      // 좌우 모터가 마주 보고 달려 있으므로 한쪽은 반대 (TODO_MEASURE)
+// 전진 명령(+)에 바퀴가 뒤로 돌면 1로 바꾼다
+// 2026-10-30 실측 (firmware/motor_test, 바닥 주행): 전진 = 왼쪽 DIR HIGH, 오른쪽 DIR LOW -> 왼쪽만 반대
+#define MOTOR_L_INVERT  1
+#define MOTOR_R_INVERT  0
 
 // ---- 엔코더: JGB37-520 C1/C2 (A상/B상) --------------------------------------
 // 4개 모두 외부 인터럽트 핀. 20·21은 I2C(BNO085)라 쓰지 않는다.
@@ -40,9 +44,12 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 #define ENC_L_B         3
 #define ENC_R_A         18
 #define ENC_R_B         19
-// 바퀴가 앞으로 돌 때 tick이 줄어들면 1로 바꾼다 (TODO_MEASURE: $PWM 시험의 $ENC 부호)
-#define ENC_L_INVERT    0
-#define ENC_R_INVERT    1      // TODO_MEASURE
+// 바퀴가 앞으로 돌 때 tick이 줄어들면 1로 바꾼다 (이 펌웨어는 B상이 앞서면 -로 센다)
+// 왼쪽: 2026-10-30 motor_test에서 왼쪽 후진 = A상 앞섬 (왼쪽 C1·C2를 바꾼 뒤) -> 전진 = B상 앞섬 = - -> 1
+#define ENC_L_INVERT    1
+// 오른쪽: 계산 추정 (좌우 모터 거울 배치, 한쪽만 C1·C2 바꿈 -> 오른쪽 전진도 B상 앞섬)
+//   TODO_MEASURE: 바퀴 띄우고 $PWM 전진 시 $ENC 오른쪽이 늘어나는지. 틀리면 역회전 감지로 멈춘다
+#define ENC_R_INVERT    1
 
 // ---- 속도 제어 (Mega 안의 PI + 앞먹임) ----------------------------------------
 // 단위: 목표·측정 속도 = 엔코더 tick/s (4체배, 바퀴 1바퀴 약 1320 tick), 출력 = PWM duty -255~255
