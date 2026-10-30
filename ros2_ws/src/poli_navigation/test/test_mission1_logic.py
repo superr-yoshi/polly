@@ -14,6 +14,7 @@ from poli_navigation.mission1_logic import (
     Command,
     DONE,
     DRIVE,
+    DRIVE_BLOCK_SCANS,
     EXPLORE,
     FACE,
     GRASP,
@@ -269,7 +270,9 @@ def test_opponent_blocking_exit_then_leaving():
     robot = SimRobot(true_grid)
 
     run(logic, robot, max_seconds=5.0, until=STUCK)
-    assert logic.state == STUCK
+    # 먼 출구가 막혀 있어도 빈 이웃을 탐색한다. 벽 칸에는 진입하지 않는다.
+    assert (9, 2) in robot.visited
+    assert (9, 4) not in robot.visited
     assert logic.grid.get((9, 4)) == BLOCKED
 
     # 상대가 떠나면 다시 스캔할 때 지도에서 지우고 출발한다.
@@ -315,3 +318,97 @@ def test_opens_gripper_once_at_start():
 
     assert first == Command(gripper=GRIPPER_OPEN)
     assert second == Command()
+
+
+def test_maze_explores_free_neighbor_even_when_center_is_enclosed():
+    logic = Mission1Logic()
+    for cell in logic.grid.neighbors((5, 5)):
+        logic.grid.mark_blocked(cell)
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic.step(obs)
+    logic._plan(obs)
+    assert logic.path == [(9, 1), (9, 2)]
+    assert logic._turn(obs).linear > 0.0
+
+
+def test_maze_turns_left_when_front_is_blocked():
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 2))
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic.step(obs)
+    logic._plan(obs)
+    assert logic.path == [(9, 1), (8, 1)]
+    command = logic._turn(obs)
+    assert command.linear == 0.0
+    assert command.angular > 0.0
+
+
+def test_maze_reverses_without_turning_in_dead_end():
+    logic = Mission1Logic()
+    for cell in ((9, 3), (8, 2)):
+        logic.grid.mark_blocked(cell)
+    x, y = cell_center_m((9, 2))
+    obs = Observation(x=x, y=y, yaw=math.pi / 2, now=0.0)
+    logic.step(obs)
+    logic._plan(obs)
+    assert logic.path == [(9, 2), (9, 1)]
+    command = logic._turn(obs)
+    assert command.linear < 0.0
+    assert abs(command.angular) < 1e-9
+
+
+def test_maze_stops_when_all_neighbors_are_blocked():
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 2))
+    logic.grid.mark_blocked((8, 1))
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic.step(obs)
+    assert logic._plan(obs) == Command()
+    assert logic.state == STUCK
+    assert logic.stop_reason is not None
+
+
+def test_maze_counts_actual_cell_entry_once_not_replans():
+    logic = Mission1Logic()
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    for _ in range(10):
+        logic.step(obs)
+        logic._plan(obs)
+    assert logic.maze.state.visits == {(8, 8): 1}
+    x, y = cell_center_m((9, 2))
+    logic.step(Observation(x=x, y=y, yaw=yaw, now=0.1))
+    assert logic.maze.state.visits[(7, 8)] == 1
+
+
+def test_return_uses_only_visited_cells():
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    x, y = cell_center_m((9, 3))
+    obs = Observation(x=x, y=y, yaw=0.0, now=0.0)
+    logic.step(obs)
+    logic._plan(obs)
+    assert logic.state == STUCK  # (9,2)를 방문하지 않아 연결된 복귀 경로가 없다.
+
+
+def test_new_obstacle_in_target_cell_stops_drive():
+    logic = Mission1Logic()
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic.step(obs)
+    logic._plan(obs)
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    # 출발 순간 흔들림으로 한두 번 막혀 보이는 것은 무시하고, 연속으로 막혀 보이면 멈춘다.
+    for _ in range(DRIVE_BLOCK_SCANS - 1):
+        obs.scan = simulate_scan(true_grid, (x, y, yaw))
+        logic._drive(obs)
+        assert logic.state != SCAN
+    obs.scan = simulate_scan(true_grid, (x, y, yaw))
+    assert logic._drive(obs) == Command()
+    assert logic.state == SCAN
+    # 이동 중 관측은 정지 판단에만 쓰고, 정지 후 스캔까지 지도에 남기지 않는다.
+    assert logic.grid.get((9, 2)) != BLOCKED

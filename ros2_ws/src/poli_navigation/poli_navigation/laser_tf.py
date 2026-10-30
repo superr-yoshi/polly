@@ -41,6 +41,7 @@ class LaserMountFromTf:
         self.listener = TransformListener(self.buffer, node)
         self.started_at = node.get_clock().now()
         self.warned = False
+        self.ready = False
         self.timer = node.create_timer(LOOKUP_PERIOD, self.try_lookup)
 
     def try_lookup(self):
@@ -63,6 +64,7 @@ class LaserMountFromTf:
         translation = transform.transform.translation
         yaw = yaw_from_quaternion(transform.transform.rotation)
         set_laser_mount(translation.x, translation.y, yaw)
+        self.ready = True
         self.node.get_logger().info(
             f'LiDAR mount from TF: x={translation.x:.3f} m, '
             f'y={translation.y:.3f} m, yaw={math.degrees(yaw):.1f} deg'

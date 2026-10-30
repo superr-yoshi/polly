@@ -10,7 +10,8 @@ ROS2와 무관한 순수 Python 모듈이다.
             FACE -> SEARCH / ALIGN -> APPROACH -> GRASP
   [RETURN]  SCAN -> TURN -> DRIVE -> SCAN ... (출발 격자까지 한 칸씩)
             RELEASE -> DONE
-  SCAN에서 스캔을 지도에 반영하고 바로 경로를 다시 계산한다 (PLAN).
+  탐색은 poli_maze의 거리 + 방문 횟수 점수로 이웃 한 칸을 선택한다.
+  복귀는 실제 방문한 칸 안에서 출발점까지 경로를 계산한다.
 
 좌표:
 - 경기장 좌표(m), 왼쪽 아래 모서리가 (0, 0)
@@ -29,6 +30,7 @@ from poli_navigation.grid_map import (
     GridMap,
     MISSION1_START,
 )
+from poli_navigation.mission1_maze import Mission1Maze
 from poli_navigation.mission2_logic import (
     clamp,
     Command,
@@ -37,7 +39,7 @@ from poli_navigation.mission2_logic import (
     GRIPPER_OPEN,
     heading_error_to,
 )
-from poli_navigation.scan_to_grid import point_to_cell, update_grid_from_scan
+from poli_navigation.scan_to_grid import point_to_cell, scan_to_cells, update_grid_from_scan
 from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPulse
 
 
@@ -49,7 +51,10 @@ CENTER_M = cell_center_m(CENTER)
 GRIPPER_REACH_M = 0.25
 
 # SIM_ONLY: 멈춘 뒤 스캔할 때까지 기다리는 시간 (움직이며 찍힌 스캔을 쓰지 않게)
-SCAN_SETTLE_S = 0.3
+SCAN_SETTLE_S = 0.6  # 2026-10-31: 0.3이면 멈춘 직후 차체 흔들림이 남은 스캔으로 지도를 갱신했다 (실기)
+# 주행 중 다음 칸이 막혀 보이는 스캔이 이만큼 연속이어야 멈춘다.
+# 출발 순간 차체가 숙여져 LiDAR가 바닥·장애물 윗변을 앞칸 장애물로 보는 것을 거른다 (2026-10-31 실기)
+DRIVE_BLOCK_SCANS = 3
 
 # 격자 가운데에 도착했다고 보는 거리, 가운데에서 벗어났다고 보는 거리
 ARRIVE_TOLERANCE_M = 0.03
@@ -132,6 +137,11 @@ class Mission1Logic:
         # 마지막으로 계산한 경로 (확인용)
         self.path = None
         self.turn_pulse = TurnPulse()
+        self.maze = Mission1Maze()
+        self.reverse = False
+        self._drive_block_scans = 0
+        self._last_drive_scan = None
+        self.stop_reason = None
 
     def _change_state(self, new_state, obs):
         self.state = new_state
@@ -139,6 +149,7 @@ class Mission1Logic:
         self.turn_pulse.reset()
 
     def step(self, obs):
+        self.maze.observe(point_to_cell(obs.x, obs.y), obs.yaw)
         if self.state_started_at is None:
             self.state_started_at = obs.now
 
@@ -197,7 +208,10 @@ class Mission1Logic:
 
     def _plan(self, obs):
         current = point_to_cell(obs.x, obs.y)
+        self.stop_reason = None
+        self.reverse = False
         if current is None:
+            self.stop_reason = '추정 위치가 경기장 밖입니다'
             self._change_state(STUCK, obs)
             return Command()
 
@@ -213,8 +227,16 @@ class Mission1Logic:
         if current in goals:
             return self._arrived_at_goal(obs)
 
-        path = self._shortest_path(current, goals)
+        if self.phase == EXPLORE:
+            next_cell = self.maze.next_cell(self.grid)
+            path = [current, next_cell] if next_cell is not None else None
+        else:
+            path = self._shortest_path(current, goals)
         if path is None:
+            self.path = None
+            self.stop_reason = (
+                '갈 수 있는 이웃 칸이 없습니다' if self.phase == EXPLORE
+                else '방문한 칸 안에서 복귀 경로를 찾지 못했습니다')
             self._change_state(STUCK, obs)
             return Command()
 
@@ -232,12 +254,22 @@ class Mission1Logic:
         else:
             self.target = cell_center_m(path[1])
             self.delivering = False
+            # 미로 탐색에서 뒤쪽 이웃을 고르면 180도 돌지 않고 후진한다.
+            # 복귀 때는 집게를 진행 방향으로 두어 기존 놓기 위치 계산을 유지한다.
+            self.reverse = (
+                self.phase == EXPLORE
+                and abs(heading_error_to(obs, self.target)) > 3 * math.pi / 4)
 
         self._change_state(TURN, obs)
         return Command()
 
     def _shortest_path(self, current, goals):
-        paths = [self.grid.find_path(current, goal) for goal in goals]
+        return_grid = GridMap(use_point_symmetry=False)
+        visited = self.maze.visited_cells()
+        for cell in return_grid.cells:
+            if cell not in visited or self.grid.get(cell) == BLOCKED:
+                return_grid.mark_blocked(cell)
+        paths = [return_grid.find_path(current, goal) for goal in goals]
         paths = [path for path in paths if path is not None]
         if not paths:
             return None
@@ -270,7 +302,7 @@ class Mission1Logic:
         return self.turn_pulse.angular(error, TURN_SPEED, obs.now)
 
     def _turn(self, obs):
-        error = heading_error_to(obs, self.target)
+        error = self._travel_heading_error(obs)
 
         if abs(error) < TURN_TOLERANCE_RAD:
             self._change_state(DRIVE, obs)
@@ -279,8 +311,25 @@ class Mission1Logic:
         return Command(angular=self._turn_toward(error, obs))
 
     def _drive(self, obs):
+        # 진행 중 다음 칸에 장애물이 나타나면 멈춘 뒤 다시 계획한다.
+        if obs.scan is not None and obs.scan is not self._last_drive_scan:
+            # 이동 중 스캔과 odom의 시각 차이로 벽이 옆 칸에 찍힐 수 있다.
+            # 이때는 정지만 하고, 정지 후 받은 스캔으로 영구 지도를 갱신한다.
+            # 새 스캔마다 한 번만 세고, 연속 DRIVE_BLOCK_SCANS번 막혀 보일 때만 멈춘다.
+            self._last_drive_scan = obs.scan
+            blocked, _ = scan_to_cells(obs.scan, (obs.x, obs.y, obs.yaw))
+            target_cell = point_to_cell(*self.target)
+            current_cell = point_to_cell(obs.x, obs.y)
+            if target_cell != current_cell and target_cell in blocked:
+                self._drive_block_scans += 1
+            else:
+                self._drive_block_scans = 0
+            if self._drive_block_scans >= DRIVE_BLOCK_SCANS:
+                self._drive_block_scans = 0
+                self._change_state(SCAN, obs)
+                return Command()
         distance = distance_to(obs, self.target)
-        error = heading_error_to(obs, self.target)
+        error = self._travel_heading_error(obs)
 
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
@@ -297,7 +346,14 @@ class Mission1Logic:
         angular = clamp(HEADING_GAIN * error, TURN_SPEED)
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
-        return Command(linear=linear, angular=angular)
+        return Command(linear=-linear if self.reverse else linear, angular=angular)
+
+    def _travel_heading_error(self, obs):
+        """후진할 때 목표 반대쪽으로 차체 정면을 유지한다."""
+        error = heading_error_to(obs, self.target)
+        if self.reverse:
+            error = math.atan2(math.sin(error + math.pi), math.cos(error + math.pi))
+        return error
 
     def _stuck(self, obs):
         # 상대 로봇이 길을 막고 있을 수 있다. 기다렸다가 다시 스캔한다.

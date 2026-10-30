@@ -4,7 +4,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from poli_interfaces.msg import TargetDetection
 from poli_navigation.laser_tf import LaserMountFromTf
-from poli_navigation.mission1_logic import Mission1Logic, Observation
+from poli_navigation.mission1_logic import Mission1Logic, Observation, STUCK
 from poli_navigation.mission2_node import (
     raise_keyboard_interrupt,
     VISION_TIMEOUT,
@@ -26,6 +26,7 @@ CONTROL_PERIOD = 0.05
 # 이보다 짧게 두어야 멈추기 전에 찍힌 스캔을 쓰지 않는다.
 # TODO_MEASURE: RPLIDAR C1 실제 전송 주기 (보통 10Hz)
 SCAN_TIMEOUT = 0.2
+ODOM_TIMEOUT = 0.3  # s, 엔코더 위치 갱신이 끊기면 주행을 멈춘다.
 
 # 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
 # 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
@@ -40,6 +41,8 @@ class Mission1Node(Node):
 
         self.logic = Mission1Logic()
         self.pose = None
+        self.odom_received_at = None
+        self.require_laser_tf = self.declare_parameter('require_laser_tf', False).value
         self.holding = None
         self.vision = None
         self.vision_received_at = None
@@ -71,12 +74,13 @@ class Mission1Node(Node):
 
         self.create_timer(CONTROL_PERIOD, self.control_step)
 
-        self.get_logger().info('POLI Mission 1 Started')
+        self.get_logger().info('POLI Mission 1 Started: poli_maze 한 칸 탐색 + 카메라 집기')
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
         yaw = yaw_from_quaternion(msg.pose.pose.orientation)
         self.pose = odom_to_arena(position.x, position.y, yaw)
+        self.odom_received_at = self.now_seconds()
 
     def scan_callback(self, msg):
         self.scan = msg
@@ -109,16 +113,23 @@ class Mission1Node(Node):
         return self.vision
 
     def control_step(self):
-        if self.pose is None:
-            # 위치를 아직 모르면 움직이지 않는다.
+        now = self.now_seconds()
+        scan = self.fresh_scan(now)
+        if (self.pose is None or self.odom_received_at is None
+                or now - self.odom_received_at > ODOM_TIMEOUT
+                or scan is None
+                or (self.require_laser_tf and not self.laser_mount.ready)):
+            self.stop()
+            self.get_logger().warn(
+                '출발/주행 대기: 최신 odom·scan 및 LiDAR TF 필요',
+                throttle_duration_sec=3.0)
             return
 
         x, y, yaw = self.pose
-        now = self.now_seconds()
 
         observation = Observation(
             x=x, y=y, yaw=yaw, now=now,
-            scan=self.fresh_scan(now),
+            scan=scan,
             holding=self.holding,
         )
 
@@ -145,6 +156,10 @@ class Mission1Node(Node):
         if self.logic.state != self.last_state:
             self.get_logger().info(f'State: {self.logic.state}')
             self.last_state = self.logic.state
+            if self.logic.state == STUCK and self.logic.stop_reason is not None:
+                self.get_logger().warn(
+                    f'{self.logic.stop_reason}; pose=({x:.2f}, {y:.2f}, {yaw:.2f})\n'
+                    + self.logic.grid.to_text())
 
         if self.logic.path != self.last_path:
             self.get_logger().info(f'Path: {self.logic.path}')

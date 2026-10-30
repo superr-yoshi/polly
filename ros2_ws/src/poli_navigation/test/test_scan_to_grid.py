@@ -1,6 +1,7 @@
 import math
 from types import SimpleNamespace
 
+from poli_navigation import scan_to_grid
 from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
@@ -20,6 +21,13 @@ from poli_navigation.scan_to_grid import (
     update_grid_from_scan,
 )
 from poli_navigation.sim_world import simulate_scan
+import pytest
+
+
+@pytest.fixture
+def long_range(monkeypatch):
+    """먼 점까지 쓰던 예전 동작으로 시험한다 (MAX_USE_RANGE_M 제한 없음)."""
+    monkeypatch.setattr(scan_to_grid, 'MAX_USE_RANGE_M', 100.0)
 
 
 def make_true_grid():
@@ -61,7 +69,7 @@ def test_odom_left_moves_toward_center():
 # 스캔 -> 격자
 # ---------------------------------------------------------------
 
-def test_scan_from_start_finds_visible_obstacles():
+def test_scan_from_start_finds_visible_obstacles(long_range):
     true_grid = make_true_grid()
     scan = simulate_scan(true_grid, START_POSE)
 
@@ -79,7 +87,7 @@ def test_scan_from_start_finds_visible_obstacles():
     assert (9, 2) in free
 
 
-def test_empty_arena_has_no_obstacles():
+def test_empty_arena_has_no_obstacles(long_range):
     true_grid = GridMap()
     scan = simulate_scan(true_grid, START_POSE)
 
@@ -87,6 +95,18 @@ def test_empty_arena_has_no_obstacles():
 
     assert blocked == set()
     assert (5, 5) in free
+
+
+def test_far_points_are_not_used():
+    # 레이저가 낮은 장애물 위로 넘어가는 먼 곳은 막힘도 빈칸도 아닌 '모름'으로 둔다.
+    true_grid = make_true_grid()
+    scan = simulate_scan(true_grid, START_POSE)
+
+    blocked, free = scan_to_cells(scan, START_POSE)
+
+    assert (8, 5) not in blocked
+    assert (9, 2) in free
+    assert (9, 5) not in free
 
 
 def test_invalid_ranges_are_ignored():
@@ -113,7 +133,7 @@ def test_update_grid_uses_symmetry():
     assert grid.get((3, 9)) == BLOCKED
 
 
-def test_update_grid_clears_cell_when_rays_pass_through():
+def test_update_grid_clears_cell_when_rays_pass_through(long_range):
     # 상대 로봇을 (9, 3)에서 장애물로 봤는데, 지금은 떠나서 광선이 지나간다.
     true_grid = GridMap()
     scan = simulate_scan(true_grid, START_POSE)

@@ -63,6 +63,7 @@ def generate_launch_description():
         Node(
             package='poli_navigation',
             executable='mission1',
+            parameters=[{'require_laser_tf': True}],
             output='screen',
         ),
     ])

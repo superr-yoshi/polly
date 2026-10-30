@@ -40,10 +40,14 @@ WALL_MARGIN_M = 0.05
 
 # 장애물 표면에 맞은 점은 격자 경계에 걸리므로
 # 맞은 면을 가로질러 조금 밀어서 장애물 격자 안쪽으로 넣는다. (TODO: 실측 후 조정)
-HIT_PUSH_M = 0.05
+HIT_PUSH_M = 0.10  # 2026-10-31: 0.05면 로봇 놓는 위치·방향이 몇 cm·몇 도만 어긋나도 벽 점이 통로 칸으로 넘어와 막힘 (실기 확인)
 
 # 한 격자에 이 개수 이상 점이 맞아야 막힘으로 판단한다. (TODO: 실측 후 조정)
 MIN_HITS_PER_CELL = 2
+# 이보다 먼 점은 지도에 쓰지 않는다 (막힘·빈칸 모두 '모름'으로 둔다).
+# 2026-10-31 실기: 장애물(높이 약 20 cm) 윗변과 레이저 높이가 비슷해 약 0.55 m 너머 벽은 레이저가 위로 넘어간다.
+# 임무는 한 칸씩 멈춰 옆 칸만 고르므로 가까운 점(옆 칸의 면은 약 0.3 m)만으로 충분하다. (TODO_MEASURE)
+MAX_USE_RANGE_M = 0.7
 
 # 빈 격자 판단 시 광선을 따라 확인하는 간격, 맞은 지점 앞에서 멈추는 여유
 FREE_STEP_M = 0.1
@@ -167,7 +171,7 @@ def _trace_scan(scan, robot_pose):
         # 광선이 지나간 곳은 비어 있다.
         step = FREE_STEP_M
         see_through = set()
-        while step < distance - FREE_STOP_BEFORE_HIT_M:
+        while step < min(distance - FREE_STOP_BEFORE_HIT_M, MAX_USE_RANGE_M):
             x = laser_x + dir_x * step
             y = laser_y + dir_y * step
             cell = point_to_cell(x, y)
@@ -179,6 +183,9 @@ def _trace_scan(scan, robot_pose):
 
         for cell in see_through:
             see_through_counts[cell] = see_through_counts.get(cell, 0) + 1
+
+        if distance > MAX_USE_RANGE_M:
+            continue
 
         # 광선이 맞은 곳
         hit_x = laser_x + dir_x * distance
