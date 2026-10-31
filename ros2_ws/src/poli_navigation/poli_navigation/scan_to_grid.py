@@ -507,9 +507,9 @@ def wall_in_direction(scan, robot_pose, direction, near_m, far_m, cone=CONE_HALF
     return hits >= CONE_MIN_RAYS
 
 
-def nearest_ahead(scan, robot_pose, axis=None):
+def nearest_ahead(scan, robot_pose, axis=None, half_width=BODY_HALF_WIDTH_M + GUARD_SIDE_M):
     """
-    차체 폭(+GUARD_SIDE_M) 안에서 집게 끝보다 앞에 있는 가장 가까운 점까지 축 기준 거리 (없으면 None).
+    진행선에서 half_width 안, 집게 끝보다 앞에 있는 가장 가까운 점까지 축 기준 거리 (없으면 None).
 
     axis: '앞'의 방향(경기장 각도). 없으면 로봇 방향. 두 칸 주행 감시는 진행선 방향을 준다
     (2026-10-31 실기: 회전이 11도 덜 끝난 순간 로봇 방향 기준 '앞'에 통로 옆 상자 면이 걸려 멈춤).
@@ -533,7 +533,7 @@ def nearest_ahead(scan, robot_pose, axis=None):
         rel_y = laser_y + distance * math.sin(angle) - robot_y
         along = rel_x * cos_a + rel_y * sin_a
         lateral = -rel_x * sin_a + rel_y * cos_a
-        if along >= BODY_FRONT_M and abs(lateral) <= BODY_HALF_WIDTH_M + GUARD_SIDE_M:
+        if along >= BODY_FRONT_M and abs(lateral) <= half_width:
             alongs.append(along)
     if len(alongs) < GUARD_MIN_POINTS:
         return None

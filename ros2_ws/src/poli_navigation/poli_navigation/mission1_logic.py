@@ -178,6 +178,9 @@ CHAIN_WALL_MARGIN_M = 0.12
 # 두 칸 묶기 전 벽 검사의 광선 범위. ±15도면 옆 상자 모서리(약 18도, 0.6 m)가 위치 오차로 들어와
 # 사진 1->3번 같은 통로에서 묶지 않았다 (시뮬레이션 27가지 중 6가지). ±8도면 0가지 (2026-10-31)
 CHAIN_CHECK_CONE_RAD = math.radians(8.0)
+# 두 칸 주행 감시가 보는 폭 (진행선 ±). 막힌 두 번째 칸의 정면 벽은 통로 폭 전체에 걸쳐 있어 잡히고,
+# 통로 옆 상자 면(±0.2 m, 좁은 통로·로봇이 비켜 있으면 더 안쪽)은 빠진다 (2026-10-31 실기: 옆면으로 멈춤)
+CHAIN_GUARD_HALF_WIDTH_M = 0.10
 CHAIN_GUARD_RANGE_M = 0.6
 AREA_GROW_RATIO = 1.05
 
@@ -845,7 +848,8 @@ class Mission1Logic:
         목표 칸 너머 벽(막다른 칸)은 목표 가운데에서 0.2 m 뒤라 멈추지 않는다.
         2026-10-31 실기: 집게 앞 20 cm만 보고 멈추니 막다른 칸 (7,2)에 다 와서 너머 벽에 섰다.
         """
-        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), self._drive_heading)
+        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), self._drive_heading,
+                              CHAIN_GUARD_HALF_WIDTH_M)
         if ahead is None or ahead > CHAIN_GUARD_RANGE_M:
             return False
         dx, dy = self.target[0] - obs.x, self.target[1] - obs.y

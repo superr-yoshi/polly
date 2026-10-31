@@ -931,6 +931,24 @@ def test_chain_guard_uses_drive_axis_not_unfinished_turn_heading():
     assert logic.state == DRIVE
 
 
+def test_chain_guard_ignores_side_walls_when_off_center_in_corridor():
+    """통로에서 로봇이 5 cm 비켜 있어도 옆 상자 면을 앞 벽으로 보지 않는다."""
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((9, 3), (7, 3), (9, 5), (7, 5)):
+        true_grid.mark_blocked(cell)
+    logic = Mission1Logic(point_symmetry=False)
+    x, y = cell_center_m((8, 3))
+    logic.target = cell_center_m((8, 4))
+    logic._drive_heading = math.pi / 2
+    logic._chained = True
+    logic.state = DRIVE
+    pose = (x + 0.05, y - 0.15, math.pi / 2)
+    obs = Observation(x=pose[0], y=pose[1], yaw=pose[2], now=0.0,
+                      scan=simulate_scan(true_grid, pose))
+    logic._drive(obs)
+    assert logic.state == DRIVE
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH
