@@ -134,14 +134,41 @@ def test_start_moves_forward_while_turning_left():
     assert logic.state == DRIVE
 
 
-def test_start_arc_is_small():
+def test_start_arc_is_small_and_does_not_swing():
     logic = Mission2Logic()
-    robot = SimRobot()
+    # 모터 지연이 있어야 실제처럼 지나쳐 돈다 (회전 예측 TURN_LEAD_S가 없으면 약 19도 넘어감)
+    robot = LaggedSimRobot(START_POSE)
 
     # 15 cm 안에 중앙 방향(왼쪽 45도)으로 거의 맞춘다.
     while math.dist((robot.x, robot.y), START_POSE[:2]) < 0.15:
         robot.apply(logic.step(robot.observe()))
     assert abs(heading_error_to(robot.observe(), CENTER_M)) < math.radians(10.0)
+
+    # 그 뒤로 반대쪽으로 크게 넘어가지 않는다.
+    while robot.now < 1.2:
+        robot.apply(logic.step(robot.observe()))
+        assert heading_error_to(robot.observe(), CENTER_M) > -math.radians(8.0)
+
+
+def test_approach_does_not_wobble_when_camera_lag_differs():
+    # 2026-11-01 실기: 큐브 앞에서 좌우로 흔들리다 잡음. 실제 카메라 지연이 가정(0.3 s)과 달라도 곧게.
+    for lag in (0.15, 0.3, 0.45):
+        for target in (CENTER_M, (CENTER_M[0] + 0.2, CENTER_M[1] - 0.2)):
+            logic = Mission2Logic()
+            robot = LaggedSimRobot(START_POSE, camera_lag_s=lag)
+            robot.target = target
+            angulars = []
+            while robot.now < 10.0 and logic.state != PUSH:
+                command = logic.step(robot.observe())
+                robot.apply(command)
+                if logic.state == APPROACH:
+                    angulars.append(command.angular)
+
+            assert logic.state == PUSH, (lag, target)
+            flips = sum(1 for a, b in zip(angulars, angulars[1:])
+                        if a * b < 0 and abs(a - b) > 0.2)
+            assert flips == 0, (lag, target)
+            assert max(map(abs, angulars)) < 0.5, (lag, target)
 
 
 def test_never_enters_danger_zone_in_normal_run():

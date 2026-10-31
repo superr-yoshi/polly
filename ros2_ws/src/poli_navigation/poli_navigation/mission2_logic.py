@@ -43,9 +43,11 @@ VISION_HANDOFF_M = 0.6
 
 # 속도·가감속 (2026-10-31 임무 1과 같은 값, mission1_logic.py 참고)
 DRIVE_SPEED = 0.8
-DRIVE_DECEL = 1.2     # 카메라 전환 지점 앞에서 일정하게 감속
-LINEAR_ACCEL = 1.2
+# 2026-11-01 "전체적으로 느림" -> 가속 1.2 -> 1.6, 감속은 최대(LINEAR_DECEL)로 큐브 바로 앞에서 한 번에.
+# TODO_MEASURE: 출발 때 바퀴가 헛돌거나(엔코더 거리 틀어짐) 앞뒤로 들리면 낮춘다
+LINEAR_ACCEL = 1.6
 LINEAR_DECEL = 2.0
+DRIVE_DECEL = LINEAR_DECEL  # 큐브(중앙이라고 가정) 앞 감속 지점까지 일정하게 감속
 ANGULAR_ACCEL = 15.0
 # 이만큼 판단이 끊기면 그동안 노드가 정지 명령을 보냈다고 보고 0에서 다시 가속한다.
 ACCEL_RESET_S = 0.15
@@ -55,6 +57,8 @@ MIN_TURN_SPEED = 0.6  # 바퀴 약 0.084 m/s = 하드웨어 최저 속도 근처
 # 가속 구간(약 0.7초)에 회전을 겹쳐 제자리 45도 회전(약 0.5초)을 없앤다. 반지름은 처음 약 7~10 cm.
 # TODO_MEASURE: 출발 때 크게 휘청이면 낮춘다
 HEADING_GAIN = 4.0
+# 회전 예측: 모터 지연만큼 지금 회전 속도로 더 돈다고 보고 미리 줄인다 (mission1_logic.TURN_LEAD_S와 같음)
+TURN_LEAD_S = 0.12
 SEARCH_SPEED = 1.0
 
 # 카메라: x_offset 1.0 = 화면 끝 = 약 33도
@@ -72,6 +76,12 @@ CAMERA_AHEAD_M = 0.10
 TARGET_SMOOTHING = 0.5
 # 제자리 맞추기(ALIGN)는 큐브 방향이 이 안이면 끝내고 전진하며 맞춘다.
 ALIGN_DONE_RAD = math.radians(15.0)
+# 이보다 빨리 돌 때는 큐브 위치를 갱신하지 않는다 (카메라 지연 오차 = 회전 속도 x 지연 차이).
+# 2026-11-01 실기: 접근 중 앞에서 좌우로 흔들림. 시뮬레이션에서 실제 지연이 0.15 s면 추정이 ±15 cm 튀었다.
+TARGET_UPDATE_MAX_ANGULAR = 1.5
+# 큐브 접근 중 회전: 부드럽게 (위치 추정 흔들림을 키우지 않게)
+APPROACH_HEADING_GAIN = 2.0
+APPROACH_MAX_ANGULAR = 1.2
 # 이 크기 이상으로 보이면 DRIVE 중에도 바로 카메라 접근 (경기장 밖 빨간 물체는 작게 보여 무시)
 # 600 = 카메라에서 약 1.0 m (2026-11-01 실측 기준). 예전 2000은 약 56 cm라 너무 늦게 봤다.
 SEE_TARGET_MIN_AREA = 600.0
@@ -80,7 +90,7 @@ APPROACH_MAX_OFFSET = 0.6
 # 접근 속도: 멀면 빠르게, 큐브 위치 추정까지 남은 거리로 일정하게 감속해
 # APPROACH_SLOW_AREA(잡는 위치 약 5 cm 전)에서 APPROACH_SLOW_SPEED가 된다.
 # 남은 거리는 마지막 카메라 결과 + 그 뒤 엔코더 이동으로 계산하므로 카메라 지연만큼 지나치지 않는다.
-APPROACH_FAST_SPEED = 0.5
+APPROACH_FAST_SPEED = DRIVE_SPEED  # 2026-11-01 0.5 -> 0.8 (접근 흔들림을 고친 뒤)
 APPROACH_SLOW_SPEED = 0.12
 APPROACH_DECEL = DRIVE_DECEL
 APPROACH_SLOW_AREA = 20000.0  # 카메라에서 약 18 cm (잡기 GRAB_AREA는 약 13 cm, 2026-11-01 실측 기준)
@@ -130,6 +140,8 @@ class Observation:
     holding: Optional[bool] = None
     # 조원 A /gripper/state: 'open' / 'closed' / 'moving'. 알 수 없으면 None
     gripper_state: Optional[str] = None
+    # 카메라 결과를 받은 시각. 같은 결과를 두 번 쓰지 않는다. None이면 매번 새 결과로 본다.
+    vision_stamp: Optional[float] = None
 
 
 @dataclass
@@ -194,6 +206,8 @@ class Mission2Logic:
         # 이 점을 향해 엔코더·IMU 위치로 돈다 (위치는 지연이 작다).
         self.target = None
         self._poses = collections.deque()
+        self._vision_stamp = None
+        self._search_direction = 1.0
         self._area_best = 0.0
         self._area_best_at = None
         self._push_start = None
@@ -204,6 +218,11 @@ class Mission2Logic:
         self._last_command_at = None
 
     def _change_state(self, new_state, obs):
+        if new_state == SEARCH and new_state != self.state:
+            # 전에 본 큐브가 있으면 그쪽으로, 없으면 왼쪽으로 돈다 (도는 중에 방향을 바꾸지 않는다).
+            self._search_direction = 1.0
+            if self.target is not None and distance_to(obs, self.target) > CAMERA_AHEAD_M:
+                self._search_direction = math.copysign(1.0, heading_error_to(obs, self.target))
         self.state = new_state
         self.state_started_at = obs.now
         self._gripper_reached_at = None
@@ -275,10 +294,13 @@ class Mission2Logic:
         }
         return handlers[self.state](obs)
 
-    def _drive_toward(self, obs, target, speed):
+    def _drive_toward(self, obs, target, speed, gain=HEADING_GAIN, max_angular=TURN_SPEED):
         """곡선 주행: 방향 오차만큼 돌면서 cos(오차)만큼 전진한다 (90도 넘게 틀어지면 제자리)."""
         error = heading_error_to(obs, target)
-        angular = clamp(HEADING_GAIN * error, TURN_SPEED)
+        predicted = error - self._last_angular * TURN_LEAD_S
+        if predicted * error < 0.0:
+            predicted = 0.0  # 예측으로 반대쪽으로 꺾지는 않는다
+        angular = clamp(gain * predicted, max_angular)
         linear = speed * max(0.0, math.cos(error))
         return Command(linear=linear, angular=angular)
 
@@ -291,6 +313,16 @@ class Mission2Logic:
 
     def _update_target(self, obs):
         if not obs.detected or obs.area <= 0.0:
+            return
+        if obs.vision_stamp is not None:
+            if obs.vision_stamp == self._vision_stamp:
+                return
+            self._vision_stamp = obs.vision_stamp
+        if abs(self._last_angular) > TARGET_UPDATE_MAX_ANGULAR and self.target is not None:
+            return
+        # 가까우면(잡기 직전) 위치를 고정하고 곧게 들어간다. 큐브가 화면을 채워 x_offset이 흔들린다.
+        if (self.state in (APPROACH, PUSH) and self._area_best >= APPROACH_SLOW_AREA
+                and self.target is not None):
             return
         x, y, yaw = self._pose_at(obs.now - CAMERA_LAG_S)
         bearing = yaw - obs.x_offset * CAMERA_HALF_FOV_RAD
@@ -326,10 +358,10 @@ class Mission2Logic:
             self._target_seen_at = obs.now
             self._change_state(ALIGN if obs.detected else SEARCH, obs)
             return self._run_state(obs)
-        # 카메라 전환 지점에서 APPROACH_FAST_SPEED가 되도록 일정하게 감속
-        remaining = distance - VISION_HANDOFF_M
-        speed = min(DRIVE_SPEED,
-                    math.sqrt(APPROACH_FAST_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
+        # 큐브가 중앙에 있다고 보고, 잡기 직전 감속 지점에서 APPROACH_SLOW_SPEED가 되도록 일정하게 감속
+        remaining = distance - CAMERA_AHEAD_M - area_to_distance(APPROACH_SLOW_AREA)
+        speed = min(DRIVE_SPEED, math.sqrt(
+            APPROACH_SLOW_SPEED ** 2 + 2.0 * DRIVE_DECEL * max(0.0, remaining)))
         return self._drive_toward(obs, CENTER_M, speed)
 
     def _search(self, obs):
@@ -338,11 +370,7 @@ class Mission2Logic:
             self._change_state(ALIGN, obs)
             return self._align(obs)
 
-        # 전에 본 큐브가 있으면 그쪽으로, 없으면 왼쪽으로 돈다.
-        direction = 1.0
-        if self.target is not None:
-            direction = math.copysign(1.0, heading_error_to(obs, self.target))
-        return Command(angular=direction * SEARCH_SPEED)
+        return Command(angular=self._search_direction * SEARCH_SPEED)
 
     def _turn_speed(self, error):
         speed = max(MIN_TURN_SPEED, min(TURN_SPEED, HEADING_GAIN * abs(error)))
@@ -360,6 +388,12 @@ class Mission2Logic:
 
     def _approach(self, obs):
         if self._target_lost(obs) or self.target is None:
+            if self._area_best >= APPROACH_SLOW_AREA:
+                # 바로 앞까지 왔다가 카메라 아래로 사라졌다 = 집게 앞에 있다. 밀며 잡는다.
+                self._push_start = (obs.x, obs.y)
+                self._grab_sent_at = None
+                self._change_state(PUSH, obs)
+                return self._push(obs)
             self._change_state(SEARCH, obs)
             return Command()
 
@@ -383,7 +417,8 @@ class Mission2Logic:
                          - area_to_distance(APPROACH_SLOW_AREA))
             speed = min(APPROACH_FAST_SPEED, math.sqrt(
                 APPROACH_SLOW_SPEED ** 2 + 2.0 * APPROACH_DECEL * max(0.0, remaining)))
-        return self._drive_toward(obs, self.target, speed)
+        return self._drive_toward(
+            obs, self.target, speed, APPROACH_HEADING_GAIN, APPROACH_MAX_ANGULAR)
 
     def _push(self, obs):
         """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가며 끝 GRAB_CLOSE_LEAD_M에서 닫는다."""

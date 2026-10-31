@@ -185,6 +185,7 @@ class Mission2Node(Node):
             observation.detected = vision.detected
             observation.x_offset = vision.x_offset
             observation.area = vision.area
+            observation.vision_stamp = self.vision_received_at
 
         command = self.logic.step(observation)
 
