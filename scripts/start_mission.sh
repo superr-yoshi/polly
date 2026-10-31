@@ -4,6 +4,7 @@
 #   노트북:  ssh poli@<파이IP> '~/polly/scripts/start_mission.sh 1'        # 임무 1
 #            ssh poli@<파이IP> '~/polly/scripts/start_mission.sh 2'        # 임무 2
 #   연습:    ssh poli@<파이IP> '~/polly/scripts/start_mission.sh 1 --test' # 무선을 끄지 않음
+#            ... start_mission.sh 2 --test-noview   # 무선은 켜되 Foxglove·카메라 영상은 끔 (대회와 같은 부하)
 #   멈추기:  ~/polly/scripts/stop_mission.sh
 #
 # 하는 일
@@ -23,8 +24,8 @@ if [ "$MISSION" != "1" ] && [ "$MISSION" != "2" ]; then
   echo "사용법: $0 <1|2> [--test]" >&2
   exit 2
 fi
-if [ -n "$MODE" ] && [ "$MODE" != "--test" ]; then
-  echo "알 수 없는 옵션: $MODE (연습은 --test)" >&2
+if [ -n "$MODE" ] && [ "$MODE" != "--test" ] && [ "$MODE" != "--test-noview" ]; then
+  echo "알 수 없는 옵션: $MODE (연습은 --test 또는 --test-noview)" >&2
   exit 2
 fi
 
@@ -61,6 +62,11 @@ DEBUG_VIEW=false
 EXTRA=""
 if [ "$MODE" = "--test" ]; then
   DEBUG_VIEW=true
+  [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false rolling_decision:=true"
+fi
+# --test-noview: 연습이지만 Foxglove·카메라 영상을 켜지 않는다 (대회와 같은 부하로 시간 재기).
+# 2026-11-01: 시작 2~3초 뒤 Pi 전체가 0.3 s 멈춤 -> Foxglove 재연결 때문인지 확인용
+if [ "$MODE" = "--test-noview" ]; then
   [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false rolling_decision:=true"
 fi
 setsid nohup env --default-signal=INT ros2 launch poli_navigation "mission${MISSION}.launch.py" \
