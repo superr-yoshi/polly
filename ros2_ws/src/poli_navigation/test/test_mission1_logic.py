@@ -913,6 +913,24 @@ def test_chain_not_blocked_by_side_box_corners_in_corridor():
         assert logic.path == [(9, 2), (8, 2), (7, 2)], (dx, dy, dyaw)
 
 
+def test_chain_guard_uses_drive_axis_not_unfinished_turn_heading():
+    """회전이 11도 덜 끝나도 통로 옆 상자 면을 '앞 벽'으로 보지 않는다 (2026-10-31 실기)."""
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((9, 3), (7, 3), (7, 1), (6, 2), (9, 5), (7, 5)):
+        true_grid.mark_blocked(cell)
+    logic = Mission1Logic(point_symmetry=False)
+    logic.maze.observe((8, 2), math.pi)
+    x, y = cell_center_m((8, 2))
+    logic.target = cell_center_m((8, 4))
+    logic._drive_heading = math.pi / 2
+    logic._chained = True
+    logic.state = DRIVE
+    yaw = math.radians(101.0)
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0, scan=simulate_scan(true_grid, (x, y, yaw)))
+    logic._drive(obs)
+    assert logic.state == DRIVE
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

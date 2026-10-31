@@ -845,7 +845,7 @@ class Mission1Logic:
         목표 칸 너머 벽(막다른 칸)은 목표 가운데에서 0.2 m 뒤라 멈추지 않는다.
         2026-10-31 실기: 집게 앞 20 cm만 보고 멈추니 막다른 칸 (7,2)에 다 와서 너머 벽에 섰다.
         """
-        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw))
+        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), self._drive_heading)
         if ahead is None or ahead > CHAIN_GUARD_RANGE_M:
             return False
         dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
