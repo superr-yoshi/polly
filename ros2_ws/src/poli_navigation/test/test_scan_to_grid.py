@@ -21,6 +21,7 @@ from poli_navigation.scan_to_grid import (
     START_POSE,
     update_grid_from_scan,
     wall_offset,
+    wall_yaw_offset,
 )
 from poli_navigation.sim_world import simulate_scan
 import pytest
@@ -274,3 +275,23 @@ def test_wall_offset_pulls_back_to_cell_center():
     dx, dy = wall_offset(scan, START_POSE)
 
     assert abs(dy - 0.05) < 0.02
+
+
+def test_wall_yaw_offset_finds_heading_error():
+    """실제로 4도 더 돌아 있는데 덜 돌았다고 믿으면, 가까운 벽 기울기로 +4도 보정이 나온다."""
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    x, y, yaw = START_POSE
+    for error in (math.radians(4.0), math.radians(-6.0)):
+        scan = simulate_scan(true_grid, (x, y, yaw + error))
+        assert abs(wall_yaw_offset(scan, START_POSE) - error) < math.radians(1.0)
+
+
+def test_wall_yaw_offset_is_zero_when_heading_is_right_or_no_wall():
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    scan = simulate_scan(true_grid, START_POSE)
+    assert abs(wall_yaw_offset(scan, START_POSE)) < math.radians(0.5)
+    # 가운데 칸, 주변이 모두 비어 있으면 가까운 벽이 없다.
+    center = (*cell_center_m((5, 5)), math.pi / 2)
+    assert wall_yaw_offset(simulate_scan(GridMap(), center), center) == 0.0

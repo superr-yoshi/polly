@@ -17,7 +17,12 @@ from poli_navigation.mission2_node import (
     VISION_TIMEOUT,
     yaw_from_quaternion,
 )
-from poli_navigation.scan_to_grid import odom_to_arena, START_POSE, wall_offset
+from poli_navigation.scan_to_grid import (
+    odom_to_arena,
+    START_POSE,
+    wall_offset,
+    wall_yaw_offset,
+)
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
@@ -191,25 +196,42 @@ class Mission1Node(Node):
             return None
         return self.vision
 
-    def fix_pose_with_walls(self, scan, now):
-        """칸 가운데에 멈춰 스캔할 때(SCAN) 가까운 벽까지 거리로 위치를 한 번 바로잡는다."""
-        logic = self.logic
-        if logic.state != SCAN or self.fused is None or scan is None:
-            return
-        if self.wall_fixed_for == logic.state_started_at:
-            return
-        if now - logic.state_started_at < SCAN_SETTLE_S:
-            return
-        self.wall_fixed_for = logic.state_started_at
-        dx, dy = wall_offset(scan, self.pose)
-        if dx == 0.0 and dy == 0.0:
+    def fix_pose_with_walls(self, scan, pose):
+        """
+        가까운 벽으로 방향(yaw)과 위치를 바로잡는다.
+
+        pose = 스캔을 찍던 순간의 경기장 위치 (서 있으면 지금 위치).
+        2026-10-31: 위치만 고치고 방향은 IMU 적분 그대로라 오차가 쌓여 벽에 박았다.
+        """
+        dyaw = wall_yaw_offset(scan, pose)
+        dx, dy = wall_offset(scan, (pose[0], pose[1], pose[2] + dyaw))
+        if dx == 0.0 and dy == 0.0 and dyaw == 0.0:
             return
         # 경기장 좌표 보정량 -> odom 좌표 (odom_to_arena의 반대 회전)
         start_yaw = START_POSE[2]
         self.fused[0] += dx * math.cos(start_yaw) + dy * math.sin(start_yaw)
         self.fused[1] += -dx * math.sin(start_yaw) + dy * math.cos(start_yaw)
+        self.fused[2] += dyaw
         self.pose = odom_to_arena(*self.fused)
-        self.get_logger().info(f'벽 보정: dx={dx:+.3f} m, dy={dy:+.3f} m')
+        self.get_logger().info(
+            f'벽 보정: dx={dx:+.3f} m, dy={dy:+.3f} m, dyaw={math.degrees(dyaw):+.1f}도')
+
+    def make_observation(self, now, scan):
+        x, y, yaw = self.pose
+        observation = Observation(
+            x=x, y=y, yaw=yaw, now=now,
+            scan=scan,
+            holding=self.holding,
+            gripper_state=self.gripper_state,
+        )
+        if scan is not None:
+            observation.scan_time = scan.header.stamp.sec + scan.header.stamp.nanosec * 1e-9
+        vision = self.fresh_vision(now)
+        if vision is not None:
+            observation.detected = vision.detected
+            observation.x_offset = vision.x_offset
+            observation.area = vision.area
+        return observation
 
     def control_step(self):
         now = self.now_seconds()
@@ -245,23 +267,25 @@ class Mission1Node(Node):
                         throttle_duration_sec=3.0)
                 return
 
-        self.fix_pose_with_walls(scan, now)
+        logic = self.logic
+        observation = self.make_observation(now, scan)
+        if logic.state == SCAN:
+            # 칸 가운데에 서서 판단할 때 한 번
+            if (self.wall_fixed_for != logic.state_started_at
+                    and now - logic.state_started_at >= SCAN_SETTLE_S):
+                self.wall_fixed_for = logic.state_started_at
+                self.fix_pose_with_walls(scan, self.pose)
+                observation = self.make_observation(now, scan)
+        elif logic.rolling_scan_ok(observation):
+            # 달리면서 판단할 때: 스캔을 찍던 순간 위치로 보정 (판단도 같은 스캔으로 한다)
+            self.fix_pose_with_walls(scan, logic.scan_pose(observation))
+            observation = self.make_observation(now, scan)
         x, y, yaw = self.pose
 
-        observation = Observation(
-            x=x, y=y, yaw=yaw, now=now,
-            scan=scan,
-            holding=self.holding,
-            gripper_state=self.gripper_state,
-        )
-
-        vision = self.fresh_vision(now)
-        if vision is not None:
-            observation.detected = vision.detected
-            observation.x_offset = vision.x_offset
-            observation.area = vision.area
-
         command = self.logic.step(observation)
+        if self.logic.event is not None:
+            self.get_logger().info(self.logic.event)
+            self.logic.event = None
 
         twist = Twist()
         twist.linear.x = command.linear

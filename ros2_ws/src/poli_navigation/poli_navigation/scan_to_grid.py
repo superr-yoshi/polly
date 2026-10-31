@@ -60,6 +60,13 @@ CONE_MIN_RAYS = 3
 WALL_FIT_MIN_M = 0.10
 WALL_FIT_MAX_M = 0.32
 MAX_POSE_FIX_M = 0.10    # 한 번에 고치는 최대 거리 (잘못 잰 값에 크게 끌려가지 않게)
+# 같은 가까운 벽 면의 기울기로 방향(yaw)도 바로잡는다 (2026-10-31: IMU 방향 오차가 쌓여 벽에 박음).
+# 벽은 모두 경기장 축과 나란하므로, 추정 방향이 e만큼 틀리면 벽 점들이 e만큼 기울어 보인다.
+YAW_FIT_CONE_RAD = math.radians(30.0)  # 방향마다 이 범위 레이저로 벽 직선을 맞춘다
+YAW_FIT_MIN_POINTS = 8
+YAW_FIT_MIN_SPAN_M = 0.08    # 벽 점이 옆으로 이만큼은 퍼져 있어야 기울기를 믿는다
+YAW_FIT_OUTLIER_M = 0.02     # 첫 직선에서 이보다 먼 점(모서리·다른 면)은 빼고 다시 맞춘다
+MAX_YAW_FIX_RAD = math.radians(8.0)  # 한 번에 고치는 최대 각도. TODO_MEASURE
 
 # 빈 격자 판단 시 광선을 따라 확인하는 간격, 맞은 지점 앞에서 멈추는 여유
 FREE_STEP_M = 0.1
@@ -311,6 +318,72 @@ def wall_offset(scan, robot_pose):
         delta = sum(fixes[axis]) / len(fixes[axis]) - current[axis]
         offset.append(max(-MAX_POSE_FIX_M, min(MAX_POSE_FIX_M, delta)))
     return offset[0], offset[1]
+
+
+def _fit_slope(points):
+    """(lateral, along) 점들의 직선 기울기 d(along)/d(lateral). 점이 부족하면 None."""
+    if len(points) < YAW_FIT_MIN_POINTS:
+        return None
+    lats = [p[0] for p in points]
+    if max(lats) - min(lats) < YAW_FIT_MIN_SPAN_M:
+        return None
+    mean_l = sum(lats) / len(lats)
+    mean_a = sum(p[1] for p in points) / len(points)
+    var = sum((lat - mean_l) ** 2 for lat in lats)
+    cov = sum((lat - mean_l) * (a - mean_a) for lat, a in points)
+    slope = cov / var
+    return slope, mean_a - slope * mean_l
+
+
+def wall_yaw_offset(scan, robot_pose):
+    """
+    칸 가운데에서 가까운 벽 면의 기울기로 방향 오차를 잰다.
+
+    상하좌우 ±30도 레이저 중 0.10~0.32 m에 맞은 점(칸 경계의 벽 면)에 직선을 맞춘다.
+    추정 방향이 실제보다 e 작으면 벽 직선의 기울기가 tan(e)로 보인다.
+    반환: 방향 보정량 (rad, 실제 = 추정 + 보정). 벽이 안 보이면 0.
+    """
+    robot_x, robot_y, robot_yaw = robot_pose
+    if point_to_cell(robot_x, robot_y) is None:
+        return 0.0
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    total = 0.0
+    weight = 0
+    for phi in (0.0, math.pi / 2, math.pi, -math.pi / 2):
+        cos_p = math.cos(phi)
+        sin_p = math.sin(phi)
+        points = []
+        for i, distance in enumerate(scan.ranges):
+            if not math.isfinite(distance):
+                continue
+            if not scan.range_min <= distance <= scan.range_max:
+                continue
+            angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+            if abs(math.atan2(math.sin(angle - phi), math.cos(angle - phi))) > YAW_FIT_CONE_RAD:
+                continue
+            rel_x = laser_x + distance * math.cos(angle) - robot_x
+            rel_y = laser_y + distance * math.sin(angle) - robot_y
+            along = rel_x * cos_p + rel_y * sin_p
+            lateral = -rel_x * sin_p + rel_y * cos_p
+            if WALL_FIT_MIN_M <= along <= WALL_FIT_MAX_M:
+                points.append((lateral, along))
+        fit = _fit_slope(points)
+        if fit is None:
+            continue
+        slope, intercept = fit
+        points = [(lat, a) for lat, a in points
+                  if abs(a - (slope * lat + intercept)) <= YAW_FIT_OUTLIER_M]
+        fit = _fit_slope(points)
+        if fit is None:
+            continue
+        total += math.atan(fit[0]) * len(points)
+        weight += len(points)
+    if weight == 0:
+        return 0.0
+    return max(-MAX_YAW_FIX_RAD, min(MAX_YAW_FIX_RAD, total / weight))
 
 
 def update_grid_from_scan(grid, scan, robot_pose):

@@ -38,6 +38,7 @@ from poli_navigation.mission1_logic import (
     SEARCH,
     SEE_TARGET_MIN_AREA,
     STUCK,
+    TURN,
 )
 from poli_navigation.scan_to_grid import point_to_cell, START_POSE
 from poli_navigation.sim_world import sim_camera, simulate_scan
@@ -131,11 +132,13 @@ class SimRobot:
             self.cube = self.gripper_front()
 
 
-def run(logic, robot, max_seconds=MATCH_SECONDS, until=None):
+def run(logic, robot, max_seconds=MATCH_SECONDS, until=None, rolling=False):
     states = []
     while robot.now < max_seconds:
-        # 스캔은 SCAN 상태에서만 쓰므로 그때만 계산한다.
-        obs = robot.observe(with_scan=logic.state == SCAN)
+        # 스캔은 SCAN 상태에서만 쓰므로 그때만 계산한다. (주행 중 판단 시험은 DRIVE에서도)
+        obs = robot.observe(with_scan=logic.state == SCAN or (rolling and logic.state == DRIVE))
+        if rolling and obs.scan is not None:
+            obs.scan_time = robot.now
         robot.apply(logic.step(obs))
         if not states or states[-1] != logic.state:
             states.append(logic.state)
@@ -546,6 +549,100 @@ def test_last_cell_into_start_is_forward():
     logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0))
     assert logic.delivering
     assert not logic.reverse
+
+
+def _rolling_logic(true_grid, y):
+    """(9,1) -> (9,2)로 ROLL_SPEED로 달리는 중, (9,2) 가운데 y 앞에서 스캔을 받은 상태."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    x, y0, yaw = START_POSE
+    logic.step(Observation(x=x, y=y0, yaw=yaw, now=0.0))
+    logic.maze.observe((9, 2), yaw)
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = cell_center_m((9, 2))
+    logic._drive_heading = math.pi / 2
+    logic._has_scan_time = True
+    logic._last_linear = mission1_logic.ROLL_SPEED
+    logic._last_command_at = 1.0
+    logic._speed_changed_at = 0.0
+    pose = (x, logic.target[1] - y, yaw)
+    obs = Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0,
+                      scan=simulate_scan(true_grid, pose), scan_time=1.0)
+    return logic, obs
+
+
+def test_rolling_decision_keeps_driving_straight_without_stopping():
+    logic, obs = _rolling_logic(GridMap(), 0.06)
+    assert logic.rolling_scan_ok(obs)
+    command = logic.step(obs)
+    assert logic.state == DRIVE
+    assert logic.target == cell_center_m((9, 3))
+    assert command.linear > 0.0
+
+
+def test_rolling_decision_with_turn_stops_and_turns_without_scan_wait():
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 3))
+    logic, obs = _rolling_logic(true_grid, 0.06)
+    logic.step(obs)
+    assert logic.state == DRIVE
+    assert logic.target == cell_center_m((9, 2))
+    assert logic.grid.get((9, 3)) == BLOCKED
+    # 가운데에 도착하면 SCAN에서 기다리지 않고 바로 회전한다.
+    x, y = cell_center_m((9, 2))
+    logic.step(Observation(x=x, y=y - 0.02, yaw=math.pi / 2, now=1.05))
+    assert logic.state == TURN
+
+
+def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center():
+    logic, obs = _rolling_logic(GridMap(), 0.06)
+    logic._speed_changed_at = 0.95
+    assert not logic.rolling_scan_ok(obs)
+    logic, obs = _rolling_logic(GridMap(), 0.15)
+    assert not logic.rolling_scan_ok(obs)
+    logic, obs = _rolling_logic(GridMap(), 0.06)
+    logic._last_linear = 0.45
+    assert not logic.rolling_scan_ok(obs)
+
+
+def test_scan_pose_goes_back_to_capture_time_when_moving():
+    logic = Mission1Logic()
+    logic._last_linear = 0.2
+    obs = Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=1.15, scan_time=1.0)
+    x, y, _ = logic.scan_pose(obs)
+    assert abs(x - 1.0) < 1e-9 and abs(y - (1.0 - 0.2 * 0.1)) < 1e-9
+
+
+def test_drive_slows_to_roll_speed_before_cell_center():
+    logic = Mission1Logic()
+    logic._has_scan_time = True
+    logic.target = (1.0, 1.4)
+    logic._drive_heading = math.pi / 2
+    near = logic._drive(Observation(x=1.0, y=1.4 - 0.12, yaw=math.pi / 2, now=0.0)).linear
+    assert abs(near - mission1_logic.ROLL_SPEED) < 1e-9
+
+
+def test_turn_stops_early_by_current_turn_speed():
+    """빠르게 돌고 있으면 더 돌 각도만큼 일찍 회전을 끝낸다."""
+    for angular, expected in ((1.0, DRIVE), (0.0, TURN)):
+        logic = Mission1Logic()
+        logic.state = TURN
+        logic.target = (2.0, 1.0)
+        logic._last_angular = angular
+        logic._turn(Observation(x=1.0, y=1.0, yaw=-math.radians(10.0), now=0.0))
+        assert logic.state == expected
+
+
+def test_full_run_with_rolling_decisions():
+    true_grid = example_grid()
+    logic = Mission1Logic()
+    robot = SimRobot(true_grid)
+    run(logic, robot, until=DONE, rolling=True)
+    assert logic.state == DONE
+    assert distance_to_start(robot.cube) < 0.1
+    blocked = [cell for cell in robot.visited if not true_grid.is_passable(cell)]
+    assert blocked == []
 
 
 def test_search_turns_in_place_when_cube_not_visible():

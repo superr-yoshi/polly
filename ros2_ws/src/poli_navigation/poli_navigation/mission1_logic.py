@@ -112,8 +112,28 @@ ALIGN_GAIN = 1.5  # 2026-10-31 1.0 -> 1.5. TODO_MEASURE: 정렬이 좌우로 흔
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
+# 회전 속도에 맞춘 정지 보정: 지금 각속도로 이 시간만큼 더 돈다고 보고 미리 감속·정지한다.
+# (명령 감속 약 0.1초 + Mega·모터 지연). 2026-10-31 회전을 빠르게 한 뒤 목표각을 넘겨 벽에 박음.
+# TODO_MEASURE: 로그 '회전 후 오차'가 목표를 넘친 쪽(같은 부호로 계속 큼)이면 늘리고, 덜 돈 쪽이면 줄인다
+TURN_LEAD_S = 0.12
+# 회전을 끝내고 이 시간 뒤 방향 오차를 로그로 남긴다 (TURN_LEAD_S 조정용)
+TURN_CHECK_S = 0.3
 # x_offset 1.0 = 화면 끝 (약 33도) -> 0.15 = 약 5도
 ALIGN_TOLERANCE = 0.15
+# 주행 중 판단 (2026-10-31 팀 요청: 판단할 때 멈추지 말 것).
+# 칸 가운데에 가까워지면 ROLL_SPEED까지만 줄이고, 그 속도로 일정하게 달리며 찍힌 스캔으로 다음 칸을 정한다.
+# 다음 칸이 직진이면 멈추지 않고 이어 가고, 회전이면 가운데에 서자마자 (판단 대기 없이) 돈다.
+# 조건에 맞는 스캔을 못 받으면 예전처럼 서서 판단한다 (SCAN).
+ROLLING_DECISION = True
+# TODO_MEASURE: 판단 속도. 스캔 한 바퀴(0.1초) 동안 2 cm 움직인다. 지도가 이상하면 낮춘다
+ROLL_SPEED = 0.2
+ROLL_ZONE_M = 0.14     # 칸 가운데 이 거리 앞부터 ROLL_SPEED로 달린다
+ROLL_WINDOW_M = 0.10   # 스캔을 찍은 위치가 칸 가운데에서 이 안이어야 판단에 쓴다
+# 속도를 바꾼(가감속) 뒤 차체 숙여짐이 가라앉을 때까지. 이 시간 뒤 시작한 스캔만 쓴다. TODO_MEASURE
+ROLL_SETTLE_S = 0.15
+ROLL_STRAIGHT_RAD = math.radians(10.0)  # 다음 칸 방향이 이 안이면 직진으로 보고 멈추지 않는다
+# 스캔 한 바퀴 시간을 모를 때 (LaserScan.scan_time이 0)
+DEFAULT_SCAN_DURATION_S = 0.1
 # 이 안(약 12도)이면 제자리 정렬을 끝까지 하지 않고 전진하면서 방향을 맞춘다 (멈춤 한 번 줄임).
 APPROACH_START_OFFSET = 0.35
 # 접근 중 이보다 벗어나면 다시 제자리 정렬한다.
@@ -195,6 +215,8 @@ class Observation:
     holding: Optional[bool] = None
     # 조원 A /gripper/state: 'open' / 'closed' / 'moving'. 알 수 없으면 None
     gripper_state: Optional[str] = None
+    # scan의 첫 광선 촬영 시각 (LaserScan header.stamp). 모르면 None (주행 중 판단 안 함)
+    scan_time: Optional[float] = None
 
 
 class Mission1Logic:
@@ -224,12 +246,24 @@ class Mission1Logic:
         self._last_linear = 0.0
         self._last_angular = 0.0
         self._last_command_at = None
+        # 마지막으로 속도를 바꾼(가감속) 시각. 주행 중 판단은 그 뒤 안정된 스캔만 쓴다.
+        self._speed_changed_at = 0.0
+        # 주행 중 판단을 이미 끝낸 목표 (회전이 필요해 가운데에 서면 바로 _plan)
+        self._decided_for = None
+        self._has_scan_time = False
+        self._turn_heading = None
+        self._turn_ended_at = None
+        # 노드가 로그로 남길 한 줄 (남긴 뒤 None)
+        self.event = None
         self.stop_reason = None
 
     def _change_state(self, new_state, obs):
         self.state = new_state
         self.state_started_at = obs.now
         self.turn_pulse.reset()
+        if new_state != DRIVE:
+            # 다른 일(대상 발견 등)로 주행이 끊기면 미리 한 판단은 버린다.
+            self._decided_for = None
         self._gripper_reached_at = None
 
     def step(self, obs):
@@ -256,6 +290,8 @@ class Mission1Logic:
             self._last_linear = self._last_angular = 0.0
             dt = ACCEL_RESET_S / 2.0
         command.linear = ramp(command.linear, self._last_linear, LINEAR_ACCEL, LINEAR_DECEL, dt)
+        if abs(command.linear - self._last_linear) > 0.005:
+            self._speed_changed_at = now
         command.angular = ramp(
             command.angular, self._last_angular, ANGULAR_ACCEL, ANGULAR_ACCEL, dt)
         self._last_linear = command.linear
@@ -306,16 +342,72 @@ class Mission1Logic:
             self._change_state(ALIGN, obs)
             return Command()
 
-        update_grid_from_scan(self.grid, obs.scan, (obs.x, obs.y, obs.yaw))
+        self._map_scan(obs.scan, (obs.x, obs.y, obs.yaw))
+        return self._plan(obs)
+
+    def _map_scan(self, scan, pose):
+        update_grid_from_scan(self.grid, scan, pose)
         # 상하좌우 이웃 칸은 방향별 ±15도 레이저 판단으로 덮어쓴다 (사선 오차에 강함).
-        for cell, state in neighbor_states(obs.scan, (obs.x, obs.y, obs.yaw)).items():
+        for cell, state in neighbor_states(scan, pose).items():
             if not self.grid.in_bounds(cell):
                 continue
             if state == BLOCKED:
                 self.grid.mark_blocked(cell)
             else:
                 self.grid.mark_free(cell)
-        return self._plan(obs)
+
+    def scan_pose(self, obs):
+        """스캔을 찍던 순간(한 바퀴 가운데)의 로봇 위치. 달리는 중이면 그만큼 뒤로 돌린다."""
+        if obs.scan_time is None:
+            return obs.x, obs.y, obs.yaw
+        duration = getattr(obs.scan, 'scan_time', 0.0) or DEFAULT_SCAN_DURATION_S
+        back = self._last_linear * max(0.0, obs.now - (obs.scan_time + duration / 2.0))
+        return obs.x - back * math.cos(obs.yaw), obs.y - back * math.sin(obs.yaw), obs.yaw
+
+    def rolling_scan_ok(self, obs):
+        """이 스캔으로 주행 중 판단을 할 수 있는지 (노드도 같은 스캔으로 벽 보정을 한다)."""
+        if not ROLLING_DECISION or self.state != DRIVE or self.delivering or self.target is None:
+            return False
+        if obs.scan is None or obs.scan_time is None or self._decided_for == self.target:
+            return False
+        if abs(self._last_linear) > ROLL_SPEED + 0.01:
+            return False
+        if obs.scan_time < self._speed_changed_at + ROLL_SETTLE_S:
+            return False
+        x, y, _ = self.scan_pose(obs)
+        target_cell = point_to_cell(*self.target)
+        if target_cell is None or point_to_cell(x, y) != target_cell:
+            return False
+        if math.dist(cell_center_m(target_cell), self.target) > 1e-6:
+            return False  # 칸 가운데로 가는 주행만 (놓기 위치 등은 제외)
+        return math.hypot(self.target[0] - x, self.target[1] - y) <= ROLL_WINDOW_M
+
+    def _rolling_decision(self, obs):
+        """달리는 중에 다음 칸을 정한다. 직진이면 목표를 바꿔 계속 가고 True."""
+        x, y, yaw = self.scan_pose(obs)
+        self._map_scan(obs.scan, (x, y, yaw))
+        saved = (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
+                 self.state, self.state_started_at, self.stop_reason)
+        old_reverse = self.reverse
+        # 가운데에 도착했다고 보고 계획한다 (미로 탐색은 이미 이 칸에 들어온 것으로 셌다).
+        center = Observation(x=self.target[0], y=self.target[1], yaw=obs.yaw, now=obs.now)
+        self._plan(center)
+        straight = (
+            self.state == TURN and not self.reverse and not old_reverse
+            and not self.delivering and self.target != saved[0]
+            and saved[1] is not None
+            and abs(math.atan2(math.sin(self._drive_heading - saved[1]),
+                               math.cos(self._drive_heading - saved[1]))) < ROLL_STRAIGHT_RAD)
+        if straight:
+            self.state = DRIVE
+            self._decided_for = None
+            self.event = f'주행 중 판단: 직진 계속 -> {self.path}'
+            return True
+        (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
+         self.state, self.state_started_at, self.stop_reason) = saved
+        self._decided_for = self.target
+        self.event = '주행 중 판단: 가운데에 서서 회전 (판단 대기 없음)'
+        return False
 
     def _plan(self, obs):
         current = point_to_cell(obs.x, obs.y)
@@ -423,12 +515,16 @@ class Mission1Logic:
 
     def _turn(self, obs):
         error = self._travel_heading_error(obs)
+        # 지금 돌고 있는 속도로 더 돌 각도를 빼고 판단한다 (빠를수록 일찍 감속·정지).
+        predicted = error - self._last_angular * TURN_LEAD_S
 
-        if abs(error) < TURN_TOLERANCE_RAD:
+        if abs(predicted) < TURN_TOLERANCE_RAD:
+            self._turn_heading = obs.yaw + error
+            self._turn_ended_at = obs.now
             self._change_state(DRIVE, obs)
             return self._drive(obs)
 
-        return Command(angular=self._turn_toward(error, obs))
+        return Command(angular=self._turn_toward(predicted, obs))
 
     def _drive(self, obs):
         if self._sees_target(obs):
@@ -452,6 +548,13 @@ class Mission1Logic:
                 self._drive_block_scans = 0
                 self._change_state(SCAN, obs)
                 return Command()
+        if self._turn_ended_at is not None and obs.now - self._turn_ended_at >= TURN_CHECK_S:
+            left = math.atan2(math.sin(self._turn_heading - obs.yaw),
+                              math.cos(self._turn_heading - obs.yaw))
+            self.event = f'회전 후 오차 {math.degrees(left):+.1f}도 (음수 = 목표를 넘침)'
+            self._turn_ended_at = None
+        if self.rolling_scan_ok(obs) and self._rolling_decision(obs):
+            return self._drive(obs)
         distance = distance_to(obs, self.target)
         error = self._travel_heading_error(obs)
 
@@ -474,6 +577,10 @@ class Mission1Logic:
             if self.delivering:
                 self._change_state(RELEASE, obs)
                 return Command(gripper=GRIPPER_OPEN)
+            if self._decided_for == self.target:
+                # 달리면서 이미 판단했다 -> 서서 기다리지 않고 바로 돈다.
+                self._decided_for = None
+                return self._plan(obs)
 
             self._change_state(SCAN, obs)
             return Command()
@@ -481,6 +588,14 @@ class Mission1Logic:
         # 목표에 가까워지면 일정한 감속으로 줄여 최저 속도로 도착한다. (출발 가속은 _limit_accel)
         remaining = max(0.0, remaining - ARRIVE_TOLERANCE_M)
         speed = min(DRIVE_SPEED, math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
+        if obs.scan_time is not None:
+            self._has_scan_time = True
+        if (ROLLING_DECISION and self._has_scan_time and not self.delivering
+                and self._decided_for != self.target):
+            # 판단 전에는 가운데 앞 ROLL_ZONE_M부터 ROLL_SPEED로 달린다 (서지 않고 판단할 수 있게).
+            roll_left = max(0.0, remaining - ROLL_ZONE_M)
+            roll = math.sqrt(ROLL_SPEED ** 2 + 2.0 * DRIVE_DECEL * roll_left)
+            speed = min(speed, roll)
         angular = clamp(HEADING_GAIN * error, TURN_SPEED)
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
