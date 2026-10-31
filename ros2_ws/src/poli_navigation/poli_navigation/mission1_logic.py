@@ -31,6 +31,7 @@ from poli_navigation.grid_map import (
     CENTER,
     GridMap,
     MISSION1_START,
+    UNKNOWN,
 )
 from poli_navigation.mission1_maze import Mission1Maze
 from poli_navigation.mission2_logic import (
@@ -497,7 +498,9 @@ class Mission1Logic:
             self.target = self._release_point(path[0], path[1])
             self.delivering = True
         else:
-            self.target = cell_center_m(path[1])
+            # 직진이 이어지면 중간 칸에서 서지 않고 한 번에 간다 (2026-10-31: 칸마다 서면 느림).
+            end = self._straight_end(obs, path)
+            self.target = cell_center_m(path[end])
             self.delivering = False
             # 다음 칸이 뒤쪽이면 180도 돌지 않고 후진한다 (탐색·복귀 모두, 2026-10-31 수아: 복귀도).
             # 출발 격자에 넣는 마지막 칸(위 delivering)은 전진: 큐브가 로봇 앞에 있고 출발 격자는
@@ -509,6 +512,40 @@ class Mission1Logic:
             self.target[1] - drive_origin[1], self.target[0] - drive_origin[0])
         self._change_state(TURN, obs)
         return Command()
+
+    def _straight_end(self, obs, path):
+        """
+        path[1]부터 서지 않고 곧게 갈 수 있는 마지막 칸의 번호.
+
+        복귀: 지나온 칸이라 지도가 있으므로 같은 방향이 이어지는 데까지 (출발 격자 앞에서 멈춤).
+        탐색: 다음 칸의 이웃이 모두 이미 보였고 미로 규칙상 거기서도 직진이면 한 칸 더.
+        서서 찍은 스캔으로 만든 지도만 쓴다 (주행 중 스캔은 위치가 늦어 쓰지 않음).
+        """
+        step_dir = (path[1][0] - path[0][0], path[1][1] - path[0][1])
+        if self.phase == RETURN:
+            end = 1
+            while (end + 1 < len(path) and path[end + 1] != MISSION1_START
+                   and (path[end + 1][0] - path[end][0],
+                        path[end + 1][1] - path[end][1]) == step_dir):
+                end += 1
+            return end
+        middle = path[1]
+        if (self._sees_target(obs) or middle in self.grid.neighbors(CENTER)
+                or abs(heading_error_to(obs, cell_center_m(middle))) > math.pi / 2):
+            return 1
+        x, y = middle
+        around = [(x, y + 1), (x + 1, y), (x, y - 1), (x - 1, y)]
+        visited = self.maze.visited_cells()
+        if any(self.grid.in_bounds(cell) and cell not in visited
+               and self.grid.get(cell) == UNKNOWN for cell in around):
+            return 1
+        travel_yaw = math.atan2(step_dir[1], step_dir[0])
+        after = self.maze.next_cell_from(self.grid, middle, travel_yaw)
+        if after != (middle[0] + step_dir[0], middle[1] + step_dir[1]):
+            return 1
+        path.append(after)
+        self.event = f'두 칸 한 번에: {path[0]} -> {after}'
+        return 2
 
     def _shortest_path(self, current, goals):
         return_grid = GridMap(use_point_symmetry=False)

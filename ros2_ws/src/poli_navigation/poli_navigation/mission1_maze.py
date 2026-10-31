@@ -6,6 +6,7 @@ navigation과 maze 모두 칸을 (x, y)로, 왼쪽 아래부터 1부터 센다 (
 주행 완료는 명령 발행이 아니라 엔코더 위치 변화로 기록한다.
 """
 
+import copy
 import math
 
 from poli_maze.maze_logic import MazeState, step
@@ -36,6 +37,19 @@ class Mission1Maze:
         if direction is None:
             return None
         return step(self.state.cell, direction)
+
+    def next_cell_from(self, grid, cell, yaw):
+        """cell에 yaw 방향으로 들어갔다고 가정했을 때 고를 다음 칸 (상태는 바꾸지 않는다)."""
+        state = copy.copy(self.state)
+        state.visits = dict(self.state.visits)
+        state.walls = {c for c, value in grid.cells.items() if value == BLOCKED}
+        state.cell = cell
+        state.visits[cell] = state.visits.get(cell, 0) + 1
+        state.facing = round((math.pi / 2 - yaw) / (math.pi / 2)) % 4
+        direction = state.choose_next()
+        if direction is None:
+            return None
+        return step(cell, direction)
 
     def visited_cells(self):
         """복귀 경로에 사용할 실제 방문 칸을 반환한다."""

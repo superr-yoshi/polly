@@ -698,6 +698,35 @@ def test_full_run_with_rolling_decisions(monkeypatch):
     assert blocked == []
 
 
+def test_return_drives_straight_run_without_stopping():
+    """복귀 경로가 같은 방향으로 이어지면 꺾는 칸까지 한 번에 간다 (출발 격자 앞에서 끊음)."""
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    for cell in ((9, 2), (9, 3), (9, 4), (9, 5), (8, 5)):
+        logic.maze.observe(cell, math.pi / 2)
+    x, y = cell_center_m((8, 5))
+    logic._plan(Observation(x=x, y=y, yaw=0.0, now=0.0))
+    assert logic.target == cell_center_m((9, 5))
+    x, y = cell_center_m((9, 5))
+    logic._plan(Observation(x=x, y=y, yaw=-math.pi / 2, now=0.0))
+    assert logic.target == cell_center_m((9, 2))
+
+
+def test_explore_chains_two_cells_when_next_cell_is_known_straight():
+    logic = Mission1Logic()
+    for cell in ((8, 2), (8, 3), (9, 3)):
+        logic.grid.mark_free(cell)
+    logic.grid.mark_free((9, 2))
+    x, y, yaw = START_POSE
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    assert logic.target == cell_center_m((9, 3))
+    # (9,2)의 이웃 하나라도 모르면 한 칸만
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    assert logic.target == cell_center_m((9, 2))
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH
