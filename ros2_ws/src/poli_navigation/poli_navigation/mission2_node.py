@@ -31,6 +31,10 @@ VISION_TIMEOUT = 0.5
 # Mega는 같은 명령을 다시 받아도 목표 각도만 다시 정하므로 안전하다.
 GRIPPER_RESEND_PERIOD = 1.0
 
+# 움직이는 동안 이 주기(초)로 속도·카메라·추정 거리를 로그에 남긴다 (실기 분석용)
+MOTION_LOG_PERIOD = 0.2
+MOTION_LOG_STATES = ('DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
+
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
     """Odom 좌표(출발 지점 기준, x = 출발 시 정면) -> 임무 2 경기장 좌표."""
@@ -72,6 +76,7 @@ class Mission2Node(Node):
         self.vision = None
         self.vision_received_at = None
         self.last_state = None
+        self.last_motion_log = 0.0
 
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.gripper_publisher = self.create_publisher(
@@ -200,6 +205,18 @@ class Mission2Node(Node):
         if self.logic.state != self.last_state:
             self.get_logger().info(f'State: {self.logic.state}')
             self.last_state = self.logic.state
+
+        if (self.logic.state in MOTION_LOG_STATES
+                and now - self.last_motion_log >= MOTION_LOG_PERIOD):
+            self.last_motion_log = now
+            target = self.logic.target
+            cam_d = '-' if target is None else f'{self.logic._camera_distance(observation):.2f}'
+            self.get_logger().info(
+                f'Motion: {self.logic.state} pos=({x:.2f},{y:.2f}) yaw={math.degrees(yaw):.0f} '
+                f'cmd=({command.linear:.2f},{command.angular:+.2f}) '
+                f'odom_w={self.angular_speed:+.2f} '
+                f'cam={observation.detected:d} off={observation.x_offset:+.2f} '
+                f'area={observation.area:.0f} cube_d={cam_d}')
 
     def send_gripper(self, command):
         self.gripper_command = command
