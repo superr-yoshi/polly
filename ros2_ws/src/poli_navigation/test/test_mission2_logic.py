@@ -303,7 +303,8 @@ def test_approach_lost_target_goes_to_search():
 class LaggedSimRobot(SimRobot):
     """명령이 늦게 반영되고 카메라 결과도 늦게 오는 로봇 (테스트 전용, SIM_ONLY)."""
 
-    def __init__(self, pose, motor_lag_s=0.2, camera_lag_s=0.3):
+    # 2026-11-01 실기 6회차 로그 기준 (모터 약 0.15 s, 카메라 약 0.1 s)
+    def __init__(self, pose, motor_lag_s=0.15, camera_lag_s=0.1):
         super().__init__(pose=pose)
         self.commands = collections.deque([Command()] * round(motor_lag_s / DT))
         self.camera_lag_steps = round(camera_lag_s / DT)
