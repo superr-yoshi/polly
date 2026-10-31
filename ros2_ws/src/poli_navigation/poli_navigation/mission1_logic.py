@@ -11,6 +11,7 @@ ROS2와 무관한 순수 Python 모듈이다.
   [RETURN]  SCAN -> TURN -> DRIVE -> SCAN ... (출발 격자까지 한 칸씩)
             RELEASE -> DONE
   SCAN에서 스캔을 지도에 반영하고 바로 경로를 다시 계산한다 (PLAN).
+  RETURN에서는 다음 격자가 뒤쪽이면 돌지 않고 후진한다 (출발 격자에 넣는 마지막 칸 제외).
 
 좌표:
 - 경기장 좌표(m), 왼쪽 아래 모서리가 (0, 0)
@@ -36,6 +37,7 @@ from poli_navigation.mission2_logic import (
     GRIPPER_GRAB,
     GRIPPER_OPEN,
     heading_error_to,
+    normalize_angle,
 )
 from poli_navigation.scan_to_grid import point_to_cell, update_grid_from_scan
 from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPulse
@@ -129,6 +131,8 @@ class Mission1Logic:
         self.delivering = False
         # 마지막으로 계산한 경로 (확인용)
         self.path = None
+        # True면 후진으로 간다 (RETURN에서만)
+        self.reverse = False
         self.turn_pulse = TurnPulse()
 
     def _change_state(self, new_state, obs):
@@ -232,6 +236,14 @@ class Mission1Logic:
             self.delivering = False
 
         self._change_state(TURN, obs)
+        # 돌아갈 때 목표가 뒤쪽이면 돌지 않고 후진한다. 출발할 때 한 번 정한다.
+        # 출발 격자에 넣는 칸(delivering)은 전진: 큐브가 로봇 앞에 있고 출발 격자는
+        # 구석이라, 후진으로는 큐브 전체를 격자 안에 넣을 수 없다 (문의 16).
+        self.reverse = (
+            self.phase == RETURN
+            and not self.delivering
+            and abs(heading_error_to(obs, self.target)) > math.pi / 2
+        )
         return Command()
 
     def _shortest_path(self, current, goals):
@@ -267,8 +279,15 @@ class Mission1Logic:
             return math.copysign(TURN_SPEED, error)
         return self.turn_pulse.angular(error, TURN_SPEED, obs.now)
 
-    def _turn(self, obs):
+    def _heading_error(self, obs):
+        """목표 방향 오차. 후진이면 로봇 뒤쪽 기준."""
         error = heading_error_to(obs, self.target)
+        if self.reverse:
+            error = normalize_angle(error + math.pi)
+        return error
+
+    def _turn(self, obs):
+        error = self._heading_error(obs)
 
         if abs(error) < TURN_TOLERANCE_RAD:
             self._change_state(DRIVE, obs)
@@ -278,7 +297,7 @@ class Mission1Logic:
 
     def _drive(self, obs):
         distance = distance_to(obs, self.target)
-        error = heading_error_to(obs, self.target)
+        error = self._heading_error(obs)
 
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
@@ -295,6 +314,9 @@ class Mission1Logic:
         angular = clamp(HEADING_GAIN * error, TURN_SPEED)
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
+        if self.reverse:
+            # TODO_MEASURE: 후진으로 끌 때 큐브가 집게에서 빠지지 않는지 실기 확인
+            linear = -linear
         return Command(linear=linear, angular=angular)
 
     def _stuck(self, obs):

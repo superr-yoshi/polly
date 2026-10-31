@@ -293,6 +293,39 @@ def test_release_point_puts_cube_on_cell_center():
     assert abs(y - (start_y + GRIPPER_REACH_M)) < 1e-9
 
 
+def test_return_reverses_instead_of_turning_around():
+    # 잡은 뒤 다음 격자가 뒤쪽이면 돌지 않고 후진한다.
+    logic = Mission1Logic()
+    robot = SimRobot(GridMap())
+    run(logic, robot, until=GRASP)
+    run(logic, robot, max_seconds=robot.now + 30.0, until=DRIVE)
+
+    assert logic.phase == RETURN
+    assert logic.reverse
+    assert logic.step(robot.observe(with_scan=False)).linear < 0.0
+
+
+def test_last_cell_into_start_is_forward():
+    # 출발 격자로 들어가는 칸은 뒤쪽이어도 전진 (큐브를 격자 안에 넣기 위해)
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    x, y = cell_center_m((9, 2))
+    logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0))
+
+    assert logic.delivering
+    assert not logic.reverse
+
+
+def test_explore_never_reverses():
+    logic = Mission1Logic()
+    x, y = cell_center_m(MISSION1_START)
+    # 출발 방향과 반대로 서 있어도 탐색 중에는 돌아서 전진한다.
+    logic._plan(Observation(x=x, y=y, yaw=-math.pi / 2, now=0.0))
+
+    assert logic.phase == EXPLORE
+    assert not logic.reverse
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH
