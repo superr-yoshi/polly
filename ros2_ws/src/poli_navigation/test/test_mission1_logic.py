@@ -844,6 +844,49 @@ def test_no_repeated_chain_after_wall_stop():
     assert not logic._chained
 
 
+def test_seen_cube_off_axis_is_remembered_and_approached_from_neighbor_cell():
+    """곧게 못 가는 큐브도 위치를 기억해 큐브 칸 옆 칸으로 가서 잡는다 (2026-10-31 팀 결정)."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    x, y = cell_center_m((6, 5))
+    # 서쪽(180도)을 보는데 큐브가 왼쪽 앞에 보임 -> (4,5) 칸 남쪽 치우침
+    logic.step(Observation(x=x, y=y, yaw=math.pi, now=0.0, detected=True,
+                           x_offset=0.3, area=4000.0))
+    cube_cell = point_to_cell(*logic.cube)
+    assert cube_cell[0] < 6
+    goals = logic._cube_goals()
+    assert goals and all(abs(g[0] - cube_cell[0]) + abs(g[1] - cube_cell[1]) == 1 for g in goals)
+    # 큐브 칸 옆 칸에 도착하면 큐브 칸 쪽을 본다
+    goal = goals[0]
+    gx, gy = cell_center_m(goal)
+    logic.state = SCAN
+    logic._plan(Observation(x=gx, y=gy, yaw=0.0, now=1.0))
+    assert logic.state == FACE
+
+
+def test_cube_goal_prefers_neighbor_along_cube_offset():
+    """큐브가 칸 안에서 북쪽으로 12 cm 치우치면 남·북 옆 칸에서 다가간다 (옆으로 비킬 필요 없게)."""
+    logic = Mission1Logic()
+    cx, cy = cell_center_m((3, 5))
+    logic.cube = (cx, cy + 0.12)
+    assert set(logic._cube_goals()) == {(3, 4), (3, 6)}
+
+
+def test_return_turns_at_corner_without_scan_wait():
+    """복귀 중 꺾는 칸에 도착하면 SCAN에서 기다리지 않고 바로 다음 구간으로 돈다."""
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    for cell in ((9, 2), (9, 3), (8, 3)):
+        logic.maze.observe(cell, math.pi / 2)
+    x, y = cell_center_m((8, 3))
+    logic._plan(Observation(x=x, y=y, yaw=0.0, now=0.0))
+    assert logic.target == cell_center_m((9, 3))
+    logic.state = DRIVE
+    x, y = cell_center_m((9, 3))
+    logic._drive(Observation(x=x - 0.01, y=y, yaw=0.0, now=1.0))
+    assert logic.state == TURN
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

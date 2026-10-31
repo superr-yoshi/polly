@@ -47,6 +47,7 @@ from poli_navigation.scan_to_grid import (
     obstacle_ahead,
     point_to_cell,
     scan_to_cells,
+    wall_in_direction,
 )
 from poli_navigation.turn_pulse import HW_MIN_WHEEL_SPEED, TurnPulse
 
@@ -82,6 +83,12 @@ TARGET_LATERAL_MAX_M = 0.06
 CAMERA_HALF_FOV_RAD = math.radians(33.0)
 # 대상 거리 추정: 면적은 거리 제곱에 반비례, 50 cm에서 약 9000 (TODO_MEASURE)
 TARGET_AREA_AT_50CM = 9000.0
+# 큐브가 보였는데 지금 칸에서 곧게 다가갈 수 없으면, 위치를 기억해 두고 큐브 칸의 옆 칸으로 가서 잡는다
+# (2026-10-31 팀 결정: 중앙에 없어도 보이면 잡으러 간다). 큐브가 칸 안에서 치우친 방향이 진행 방향과
+# 같아지는 옆 칸(진행 방향과 직각인 치우침이 이 값 이하)을 고른다. TODO_MEASURE
+CUBE_NEIGHBOR_LATERAL_MAX_M = 0.08
+# 카메라가 바퀴 축보다 앞에 있는 거리 (큐브 위치 추정용). TODO_MEASURE
+CAMERA_AHEAD_M = 0.10
 # 탐색 단계에서 대상을 놓치고 이 시간 동안 못 찾으면 다시 격자 탐색으로 돌아간다 (SEARCH_SPEED로 한 바퀴 남짓).
 # 찾지 못한 중앙 옆 칸은 목표에서 뺀다 (2026-10-31: 큐브가 중앙에 없으면 FACE·SEARCH를 끝없이 반복).
 SEARCH_GIVE_UP_S = 7.0
@@ -286,6 +293,9 @@ class Mission1Logic:
         self._approach_blocked = set()
         # 큐브를 찾다가 못 찾은 중앙 옆 칸 (목표에서 뺀다)
         self._searched_goals = set()
+        # 기억한 큐브 위치 (경기장 m)와 그때 면적 (클수록 가까이서 본 것이라 정확)
+        self.cube = None
+        self._cube_area = 0.0
         self._scan_at_arrival = False
         # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
         self._chained = False
@@ -323,6 +333,7 @@ class Mission1Logic:
         self.maze.observe(point_to_cell(obs.x, obs.y), obs.yaw)
         if self.state_started_at is None:
             self.state_started_at = obs.now
+        self._remember_cube(obs)
 
         command = self._check_dropped(obs)
         if command is None:
@@ -487,7 +498,10 @@ class Mission1Logic:
         if self.grid.get(current) == BLOCKED:
             self.grid.mark_free(current)
 
-        if self.phase == EXPLORE:
+        cube_goals = self._cube_goals() if self.phase == EXPLORE else []
+        if cube_goals:
+            goals = cube_goals
+        elif self.phase == EXPLORE:
             goals = [cell for cell in self.grid.neighbors(CENTER)
                      if cell not in self._searched_goals]
         else:
@@ -496,10 +510,16 @@ class Mission1Logic:
         if current in goals:
             return self._arrived_at_goal(obs)
 
-        if self.phase == EXPLORE:
+        path = None
+        if cube_goals:
+            # 기억한 큐브의 옆 칸까지 지도(모르는 칸은 지나갈 수 있다고 봄)로 최단 경로
+            paths = [self.grid.find_path(current, goal) for goal in cube_goals]
+            paths = [p for p in paths if p is not None]
+            path = min(paths, key=len)[:2] if paths else None
+        if path is None and self.phase == EXPLORE:
             next_cell = self.maze.next_cell(self.grid)
             path = [current, next_cell] if next_cell is not None else None
-        else:
+        elif path is None:
             path = self._shortest_path(current, goals)
         if path is None:
             self.path = None
@@ -559,7 +579,8 @@ class Mission1Logic:
                 end += 1
             return end
         middle = path[1]
-        if (self._sees_target(obs) or middle in self.grid.neighbors(CENTER)
+        if (self._sees_target(obs) or self.cube is not None
+                or middle in self.grid.neighbors(CENTER)
                 or path[0] in self._no_chain_from
                 or abs(heading_error_to(obs, cell_center_m(middle))) > math.pi / 2):
             return 1
@@ -570,6 +591,13 @@ class Mission1Logic:
         # 대신 두 칸 주행 중 목표 칸 가운데보다 앞에 벽이 보이면 멈추고 다시 판단한다 (_drive).
         after = (middle[0] + step_dir[0], middle[1] + step_dir[1])
         if not self.grid.in_bounds(after) or self.grid.get(after) == BLOCKED:
+            return 1
+        # 서서 찍은 스캔에 두 번째 칸 앞면(가운데에서 0.6 m) 근처 벽이 보이면 처음부터 묶지 않는다.
+        # 2026-10-31 실기: 묶고 출발하자마자 앞 벽 감시로 서는 일이 잦았다 (실제로 막힌 칸).
+        travel_yaw = math.atan2(step_dir[1], step_dir[0])
+        if obs.scan is not None and wall_in_direction(
+                obs.scan, (obs.x, obs.y, obs.yaw), travel_yaw,
+                CELL_SIZE_M * 1.5 - CHAIN_WALL_MARGIN_M, CELL_SIZE_M * 1.5 + CHAIN_WALL_MARGIN_M):
             return 1
         if self.maze.state.score(after) >= self.maze.state.score(middle):
             return 1
@@ -605,6 +633,45 @@ class Mission1Logic:
     def _sees_target(self, obs):
         """탐색 중 대상이 충분히 크게 보이는지."""
         return self.phase == EXPLORE and obs.detected and obs.area >= SEE_TARGET_MIN_AREA
+
+    def _remember_cube(self, obs):
+        """탐색 중 큐브가 보이면 경기장 위치를 계산해 기억한다 (더 크게 보일 때만 바꾼다)."""
+        if not self._sees_target(obs) or obs.area <= self._cube_area:
+            return
+        bearing = obs.yaw - obs.x_offset * CAMERA_HALF_FOV_RAD
+        distance = CAMERA_AHEAD_M + 0.5 * math.sqrt(TARGET_AREA_AT_50CM / obs.area)
+        x = obs.x + distance * math.cos(bearing)
+        y = obs.y + distance * math.sin(bearing)
+        if point_to_cell(x, y) is None:
+            return
+        self.cube = (x, y)
+        self._cube_area = obs.area
+
+    def _cube_goals(self):
+        """
+        기억한 큐브를 곧게 잡으러 갈 수 있는 큐브 칸의 옆 칸들.
+
+        큐브가 칸 안에서 치우친 방향이 진행 방향과 같아지는 옆 칸만 (직각 치우침 <= 8 cm).
+        없으면 직각 치우침이 가장 작은 옆 칸. 막힌 칸, 찾다 실패한 칸은 뺀다.
+        """
+        if self.cube is None:
+            return []
+        cube_cell = point_to_cell(*self.cube)
+        center = cell_center_m(cube_cell)
+        offset = (self.cube[0] - center[0], self.cube[1] - center[1])
+        candidates = []
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            cell = (cube_cell[0] + dx, cube_cell[1] + dy)
+            if (not self.grid.in_bounds(cell) or self.grid.get(cell) == BLOCKED
+                    or cell in self._searched_goals):
+                continue
+            # 옆 칸 -> 큐브 칸 방향과 직각인 치우침
+            lateral = abs(offset[0] * dy - offset[1] * dx)
+            candidates.append((lateral, cell))
+        good = [cell for lateral, cell in candidates if lateral <= CUBE_NEIGHBOR_LATERAL_MAX_M]
+        if good:
+            return good
+        return [min(candidates)[1]] if candidates else []
 
     def _target_approach(self, obs, at=None, commit=True):
         """
@@ -740,6 +807,10 @@ class Mission1Logic:
                 # 달리면서 이미 판단했다 -> 서서 기다리지 않고 바로 돈다.
                 self._decided_for = None
                 return self._plan(obs)
+            if self.phase == RETURN:
+                # 복귀는 지나온 칸으로만 가므로 새로 볼 것이 없다 -> 꺾는 칸에서도 서서 스캔하지 않고
+                # 바로 다음 구간으로 (2026-10-31 팀 요청: 왔던 길은 계산 없이 빠르게).
+                return self._plan(obs)
 
             self._change_state(SCAN, obs)
             return Command()
@@ -795,7 +866,9 @@ class Mission1Logic:
     # ------------------------------------------------------------
 
     def _face(self, obs):
-        error = heading_error_to(obs, CENTER_M)
+        # 기억한 큐브가 있으면 큐브 칸 쪽, 없으면 중앙을 본다.
+        cube_cell = point_to_cell(*self.cube) if self.cube is not None else None
+        error = heading_error_to(obs, cell_center_m(cube_cell) if cube_cell else CENTER_M)
 
         if abs(error) < TURN_TOLERANCE_RAD:
             self._change_state(ALIGN if self._target_approach(obs) else SEARCH, obs)
@@ -816,6 +889,10 @@ class Mission1Logic:
             self._searched_goals.add(cell)
             reason = '대상이 보이지만 축 방향이 아님' if unreachable else '대상을 못 찾음'
             self.event = f'{cell}에서 {reason} -> 목표에서 빼고 다시 탐색'
+            if not unreachable:
+                # 기억한 위치에 큐브가 없었다 (잘못 잰 거리 또는 상대가 옮김) -> 잊고 다시 찾는다
+                self.cube = None
+                self._cube_area = 0.0
             self._change_state(SCAN, obs)
             return Command()
 

@@ -479,6 +479,34 @@ def corner_offset(scan, robot_pose):
     return result[0], result[1]
 
 
+def wall_in_direction(scan, robot_pose, direction, near_m, far_m):
+    """
+    로봇 위치에서 direction(경기장 각도) ±CONE_HALF_RAD 광선 중 near_m~far_m에 맞은 점이 있는지.
+
+    두 칸 묶기 전에, 서서 찍은 스캔으로 두 번째 칸 앞면(가운데에서 0.6 m)이 보이는지 본다.
+    """
+    robot_x, robot_y, robot_yaw = robot_pose
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    hits = 0
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance):
+            continue
+        if not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        off = math.atan2(math.sin(angle - direction), math.cos(angle - direction))
+        if abs(off) > CONE_HALF_RAD:
+            continue
+        along = ((laser_x + distance * math.cos(angle) - robot_x) * math.cos(direction)
+                 + (laser_y + distance * math.sin(angle) - robot_y) * math.sin(direction))
+        if near_m <= along <= far_m:
+            hits += 1
+    return hits >= CONE_MIN_RAYS
+
+
 def nearest_ahead(scan, robot_pose):
     """차체 폭(+GUARD_SIDE_M) 안에서 집게 끝보다 앞에 있는 가장 가까운 점까지 축 기준 거리 (없으면 None)."""
     robot_x, robot_y, robot_yaw = robot_pose
