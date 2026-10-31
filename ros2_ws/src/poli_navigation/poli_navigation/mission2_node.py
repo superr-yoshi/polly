@@ -1,5 +1,6 @@
 import math
 import signal
+import time
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
@@ -35,6 +36,8 @@ GRIPPER_RESEND_PERIOD = 1.0
 MOTION_LOG_PERIOD = 0.2
 # 판단 주기가 이보다 벌어지면 경고 (Mega는 0.3 s 명령이 끊기면 멈춘다)
 CONTROL_GAP_WARN_S = 0.15
+# 콜백 하나가 이보다 오래 걸리면 경고 (판단 멈춤 원인 확인용)
+CALLBACK_WARN_S = 0.05
 MOTION_LOG_STATES = ('DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
 
 
@@ -146,6 +149,7 @@ class Mission2Node(Node):
     def scan_callback(self, msg):
         if self.odom_pose is None:
             return
+        started = time.monotonic()
 
         corrected = self.wall_correction.update(
             msg, self.odom_pose, self.angular_speed
@@ -153,6 +157,12 @@ class Mission2Node(Node):
         if corrected and not self.wall_corrected:
             self.get_logger().info('Wall correction active')
             self.wall_corrected = True
+        self.warn_if_slow('scan', started)
+
+    def warn_if_slow(self, name, started):
+        took = time.monotonic() - started
+        if took > CALLBACK_WARN_S:
+            self.get_logger().warn(f'{name} 콜백 {took:.2f} s')
 
     def holding_callback(self, msg):
         self.holding = msg.data
@@ -199,7 +209,9 @@ class Mission2Node(Node):
             observation.area = vision.area
             observation.vision_stamp = self.vision_received_at
 
+        started = time.monotonic()
         command = self.logic.step(observation)
+        self.warn_if_slow('판단', started)
 
         twist = Twist()
         twist.linear.x = command.linear

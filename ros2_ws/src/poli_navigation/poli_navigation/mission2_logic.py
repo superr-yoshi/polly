@@ -62,7 +62,12 @@ MIN_TURN_SPEED = 0.6  # 바퀴 약 0.084 m/s = 하드웨어 최저 속도 근처
 HEADING_GAIN = 4.0
 # 회전 예측: 모터 지연만큼 지금 회전 속도로 더 돈다고 보고 미리 줄인다 (mission1_logic.TURN_LEAD_S와 같음)
 TURN_LEAD_S = 0.12
-SEARCH_SPEED = 1.0
+# 2026-11-01 1.0 -> 1.5 (카메라 지연 0.3 s 동안 26도 = 화면 반폭 33도 안)
+SEARCH_SPEED = 1.5
+# 탐색: 먼저 오른쪽·왼쪽 이 각도까지 훑고(카메라 ±33도라 앞 ±83도), 없으면 왼쪽으로 계속 돈다.
+# 2026-11-01 실기: 큐브가 오른쪽 44도에 있었는데 왼쪽으로만 돌아 300도(5.8 s) 걸렸다.
+SEARCH_SWEEP_RAD = math.radians(50.0)
+SEARCH_SWEEP_DONE_RAD = math.radians(5.0)
 
 # 카메라: x_offset 1.0 = 화면 끝 = 약 33도
 CAMERA_HALF_FOV_RAD = math.radians(33.0)
@@ -88,8 +93,9 @@ TARGET_UPDATE_MAX_ANGULAR = 1.5
 APPROACH_HEADING_GAIN = 2.0
 APPROACH_MAX_ANGULAR = 1.2
 # 이 크기 이상으로 보이면 DRIVE 중에도 바로 카메라 접근 (경기장 밖 빨간 물체는 작게 보여 무시)
-# 600 = 카메라에서 약 1.0 m (2026-11-01 실측 기준). 예전 2000은 약 56 cm라 너무 늦게 봤다.
-SEE_TARGET_MIN_AREA = 600.0
+# 350 = 카메라에서 약 1.35 m (2026-11-01 실측 기준, 카메라 노드 최소 300). 예전 2000은 약 56 cm,
+# 600은 SEARCH로 넘어간 0.1 s 뒤에야 756으로 보여 놓쳤다 (2026-11-01 실기).
+SEE_TARGET_MIN_AREA = 350.0
 # DRIVE 중에 이 안(화면 가운데 쪽)에 보이면 바로 접근한다.
 APPROACH_MAX_OFFSET = 0.6
 # 접근 속도: 멀면 빠르게, 큐브 위치 추정까지 남은 거리로 일정하게 감속해
@@ -98,8 +104,11 @@ APPROACH_MAX_OFFSET = 0.6
 APPROACH_FAST_SPEED = DRIVE_SPEED  # 2026-11-01 0.5 -> 0.8 (접근 흔들림을 고친 뒤)
 # 2026-11-01 "발견하고 너무 느리게 잡음" 0.12 -> 0.25. 잡는 시점을 늦게 오는 카메라 면적 대신
 # 엔코더 위치(고정한 큐브 위치까지 거리)로 정하므로 빨리 들어가도 지나치지 않는다.
-APPROACH_SLOW_SPEED = 0.25
+APPROACH_SLOW_SPEED = 0.4  # 2026-11-01 0.25 -> 0.4 ("조금 비켜 잡아도 되니 속도를 줄이지 말자")
 APPROACH_DECEL = DRIVE_DECEL
+# 이만큼 가까우면(카메라 약 25 cm) 더 틀지 않고 곧게 들어간다 (조금 비켜 잡아도 됨, 2026-11-01).
+# 가까울수록 위치 추정의 작은 오차에도 방향이 크게 바뀌어 막판에 꺾였다 (시뮬레이션).
+APPROACH_STRAIGHT_AREA = 10000.0
 APPROACH_SLOW_AREA = 20000.0  # 카메라에서 약 18 cm (잡기 GRAB_AREA는 약 13 cm, 2026-11-01 실측 기준)
 # 카메라가 대상을 잠깐 놓쳐도 이 시간은 기다린다 (카메라 지연 약 0.3초)
 TARGET_LOST_S = 0.5
@@ -107,7 +116,8 @@ TARGET_LOST_S = 0.5
 # 잡기 (임무 1과 같음)
 GRAB_AREA = 35000.0
 GRAB_PUSH_M = 0.04
-GRAB_CLOSE_LEAD_M = 0.02
+# 2026-11-01 0.02 -> GRAB_PUSH_M: 밀기 시작하자마자 닫는다. 0.4 m/s로 닫히는 0.18 s 동안 약 7 cm 더 들어간다.
+GRAB_CLOSE_LEAD_M = GRAB_PUSH_M
 GRAB_PUSH_SPEED = APPROACH_SLOW_SPEED
 GRAB_PUSH_TIMEOUT_S = 1.0
 APPROACH_STALL_M = 0.06
@@ -221,6 +231,8 @@ class Mission2Logic:
         self._poses = collections.deque()
         self._vision_stamp = None
         self._search_direction = 1.0
+        self._search_start_yaw = 0.0
+        self._search_step = 2
         self._area_best = 0.0
         self._area_best_at = None
         self._push_start = None
@@ -232,10 +244,14 @@ class Mission2Logic:
 
     def _change_state(self, new_state, obs):
         if new_state == SEARCH and new_state != self.state:
-            # 전에 본 큐브가 있으면 그쪽으로, 없으면 왼쪽으로 돈다 (도는 중에 방향을 바꾸지 않는다).
+            # 전에 본 큐브가 있으면 그쪽으로 계속 돈다 (도는 중에 방향을 바꾸지 않는다).
+            # 없으면 오른쪽 -> 왼쪽으로 앞쪽을 먼저 훑는다.
             self._search_direction = 1.0
+            self._search_start_yaw = obs.yaw
+            self._search_step = 0
             if self.target is not None and distance_to(obs, self.target) > CAMERA_AHEAD_M:
                 self._search_direction = math.copysign(1.0, heading_error_to(obs, self.target))
+                self._search_step = 2
         self.state = new_state
         self.state_started_at = obs.now
         self._gripper_reached_at = None
@@ -401,6 +417,14 @@ class Mission2Logic:
             self._change_state(ALIGN, obs)
             return self._align(obs)
 
+        if self._search_step < 2:
+            goal = self._search_start_yaw + (
+                -SEARCH_SWEEP_RAD if self._search_step == 0 else SEARCH_SWEEP_RAD)
+            error = normalize_angle(goal - obs.yaw)
+            if abs(error) < SEARCH_SWEEP_DONE_RAD:
+                self._search_step += 1
+            else:
+                return Command(angular=math.copysign(SEARCH_SPEED, error))
         return Command(angular=self._search_direction * SEARCH_SPEED)
 
     def _turn_speed(self, error):
@@ -456,8 +480,11 @@ class Mission2Logic:
             remaining = seen - area_to_distance(APPROACH_SLOW_AREA)
             speed = min(APPROACH_FAST_SPEED, braking_speed(
                 remaining, self._last_linear, APPROACH_SLOW_SPEED, APPROACH_DECEL))
-        return self._drive_toward(
+        command = self._drive_toward(
             obs, self.target, speed, APPROACH_HEADING_GAIN, APPROACH_MAX_ANGULAR)
+        if self._area_best >= APPROACH_STRAIGHT_AREA:
+            command = Command(linear=speed)
+        return command
 
     def _push(self, obs):
         """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가며 끝 GRAB_CLOSE_LEAD_M에서 닫는다."""

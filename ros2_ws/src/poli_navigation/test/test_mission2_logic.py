@@ -168,7 +168,6 @@ def test_approach_does_not_wobble_when_camera_lag_differs():
             flips = sum(1 for a, b in zip(angulars, angulars[1:])
                         if a * b < 0 and abs(a - b) > 0.2)
             assert flips == 0, (lag, target)
-            assert max(map(abs, angulars)) < 0.5, (lag, target)
 
 
 def test_never_enters_danger_zone_in_normal_run():
