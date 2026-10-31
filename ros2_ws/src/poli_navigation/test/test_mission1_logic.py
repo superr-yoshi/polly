@@ -406,15 +406,32 @@ def test_final_forward_and_reverse_keep_planned_heading():
         assert command.linear < 0 if reverse else command.linear > 0
 
 
-def test_lateral_offset_outside_endpoint_region_is_not_arrival():
-    """진행축만 지났어도 목표에서 멀리 벗어나 있으면 도착 처리하지 않는다."""
+def test_lateral_offset_at_endpoint_stops_and_recenters_without_diagonal():
+    """진행선 끝에서 옆으로 15 cm 벗어나 있으면 대각선으로 꺾지 않고 서서, 가운데로 직각 이동한다."""
     logic = Mission1Logic()
     logic.state = DRIVE
     logic.target = (3.0, 1.4)
     logic._drive_heading = math.pi
     obs = Observation(x=3.02, y=1.25, yaw=math.pi, now=0.0)
     logic._drive(obs)
-    assert logic.state == DRIVE
+    assert logic.state == SCAN
+    logic._plan(obs)
+    assert logic.target == cell_center_m((8, 4))
+    assert abs(logic._drive_heading - math.atan2(0.15, -0.02)) < 1e-6
+
+
+def test_drive_follows_planned_line_with_limited_correction():
+    """목표 점이 옆으로 옮겨져도 진행선 기준 최대 15도까지만 튼다."""
+    logic = Mission1Logic()
+    logic.state = DRIVE
+    logic.target = (3.4, 0.6)
+    logic._drive_heading = math.pi / 2
+    # 진행선에서 왼쪽(-x)으로 15 cm 벗어남, 목표까지 30 cm -> 오른쪽으로 최대 15도만
+    obs = Observation(x=3.25, y=0.3, yaw=math.pi / 2, now=0.0)
+    command = logic._drive(obs)
+    assert command.linear > 0.0
+    expected = mission1_logic.HEADING_GAIN * -mission1_logic.DRIVE_MAX_CORRECTION_RAD
+    assert abs(command.angular - expected) < 1e-9
 
 
 def test_grab_area_pushes_further_and_closes_near_end_of_push():

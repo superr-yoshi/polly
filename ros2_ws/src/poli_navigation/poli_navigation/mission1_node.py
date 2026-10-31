@@ -55,6 +55,12 @@ def mapping_scan_ready(scan_started_at, now, stop_started_at):
             and scan_started_at >= stop_started_at + SCAN_SETTLE_S)
 
 
+# 달리면서 찍은 스캔의 위치 보정은 이만큼만 믿는다 (2026-10-31 실기: 연속 두 보정이 옆으로
+# -7.6 cm, +9.4 cm로 반대여서 대각선 주행). 서서 찍은 스캔은 다 반영한다. TODO_MEASURE
+MOVING_FIX_GAIN = 0.5
+MOVING_FIX_MAX_M = 0.03
+
+
 # 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
 # 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
 # Mega는 같은 명령을 다시 받아도 목표 각도만 다시 정하므로 안전하다.
@@ -197,7 +203,7 @@ class Mission1Node(Node):
             return None
         return self.vision
 
-    def fix_pose_with_walls(self, scan, pose):
+    def fix_pose_with_walls(self, scan, pose, moving=False):
         """
         가까운 벽으로 방향(yaw)과 위치를 바로잡는다.
 
@@ -213,6 +219,11 @@ class Mission1Node(Node):
             dx, source = corner_x, '벽+모서리'
         if dy == 0.0 and corner_y is not None:
             dy, source = corner_y, '벽+모서리'
+        if moving:
+            dx, dy, dyaw = (max(-MOVING_FIX_MAX_M, min(MOVING_FIX_MAX_M, MOVING_FIX_GAIN * dx)),
+                            max(-MOVING_FIX_MAX_M, min(MOVING_FIX_MAX_M, MOVING_FIX_GAIN * dy)),
+                            MOVING_FIX_GAIN * dyaw)
+            source = '주행 중 ' + source
         if dx == 0.0 and dy == 0.0 and dyaw == 0.0:
             return
         # 경기장 좌표 보정량 -> odom 좌표 (odom_to_arena의 반대 회전)
@@ -286,7 +297,7 @@ class Mission1Node(Node):
                 observation = self.make_observation(now, scan)
         elif logic.rolling_scan_ok(observation):
             # 달리면서 판단할 때: 스캔을 찍던 순간 위치로 보정 (판단도 같은 스캔으로 한다)
-            self.fix_pose_with_walls(scan, logic.scan_pose(observation))
+            self.fix_pose_with_walls(scan, logic.scan_pose(observation), moving=True)
             observation = self.make_observation(now, scan)
         x, y, yaw = self.pose
 

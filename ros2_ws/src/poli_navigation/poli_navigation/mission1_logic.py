@@ -117,6 +117,9 @@ MIN_TURN_SPEED = 0.6
 # 2026-10-31 0.6 -> 1.0 (잡기 전체가 느림). 카메라 20 Hz면 한 번에 약 3도라 놓치지 않는다.
 SEARCH_SPEED = 1.0
 HEADING_GAIN = 1.5
+# 진행선에서 옆으로 벗어났을 때 돌아오는 방향 = 옆 오차 x 이득, 최대 각도
+DRIVE_LATERAL_GAIN = 2.0  # rad/m (5 cm -> 약 6도)
+DRIVE_MAX_CORRECTION_RAD = math.radians(15.0)
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
@@ -627,17 +630,23 @@ class Mission1Logic:
         distance = distance_to(obs, self.target)
         error = self._travel_heading_error(obs)
 
-        # 목표 바로 앞에서는 작은 옆 오차가 큰 회전각으로 증폭된다.
-        # 마지막 구간은 계획한 진행축을 유지하고 앞뒤 거리로 도착을 판단한다.
-        near_endpoint = distance < CELL_CENTER_TOLERANCE_M and self._drive_heading is not None
         endpoint_reached = False
         remaining = distance
-        if near_endpoint:
+        if self._drive_heading is not None:
+            # 목표 점을 겨누지 않고 계획한 진행선(출발 가운데 -> 목표 가운데)을 따라간다.
+            # 2026-10-31 실기: 위치 보정으로 목표 점이 옆으로 옮겨지면 점을 겨누느라 대각선·45도 꺾임.
+            # 선에서 벗어나면 최대 DRIVE_MAX_CORRECTION_RAD까지만 틀고, 앞뒤 거리로 도착을 판단한다.
+            # 옆으로 많이 벗어난 채 도착하면 다음 계획에서 칸 가운데로 짧게 옮긴다.
+            axis = self._drive_heading
             dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
-            along = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
+            along = dx * math.cos(axis) + dy * math.sin(axis)
+            lateral = -dx * math.sin(axis) + dy * math.cos(axis)  # 진행선이 로봇 왼쪽이면 +
             endpoint_reached = along <= ARRIVE_TOLERANCE_M
             remaining = along
-            desired_yaw = self._drive_heading + (math.pi if self.reverse else 0.0)
+            # 목표 바로 앞에서는 작은 옆 오차가 큰 회전각으로 증폭되므로 진행축만 유지한다.
+            correction = (0.0 if distance < CELL_CENTER_TOLERANCE_M
+                          else clamp(DRIVE_LATERAL_GAIN * lateral, DRIVE_MAX_CORRECTION_RAD))
+            desired_yaw = axis + correction + (math.pi if self.reverse else 0.0)
             error = math.atan2(math.sin(desired_yaw - obs.yaw), math.cos(desired_yaw - obs.yaw))
 
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
