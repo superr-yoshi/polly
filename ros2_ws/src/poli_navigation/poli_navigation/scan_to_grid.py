@@ -67,6 +67,14 @@ YAW_FIT_MIN_POINTS = 8
 YAW_FIT_MIN_SPAN_M = 0.08    # 벽 점이 옆으로 이만큼은 퍼져 있어야 기울기를 믿는다
 YAW_FIT_OUTLIER_M = 0.02     # 첫 직선에서 이보다 먼 점(모서리·다른 면)은 빼고 다시 맞춘다
 MAX_YAW_FIX_RAD = math.radians(8.0)  # 한 번에 고치는 최대 각도. TODO_MEASURE
+# 차체 바로 앞 장애물 감시 (대상에 다가갈 때. 2026-10-31: 대각선 접근 중 옆 장애물에 박음).
+# 치수는 바퀴 축(base_link) 기준, 2026-10-30 사용자 실측 (집게 포함 길이 33 cm, 축은 뒤에서 16 cm).
+# 큐브(5 cm)는 LiDAR 높이보다 낮아 여기에 걸리지 않는다.
+BODY_FRONT_M = 0.17       # 축 ~ 집게 끝. TODO_MEASURE
+BODY_HALF_WIDTH_M = 0.153  # 바퀴 포함 폭 30.5 cm의 절반. TODO_MEASURE
+GUARD_AHEAD_M = 0.06      # 집게 끝 앞 이 거리 안에 장애물 점이 있으면 멈춘다
+GUARD_SIDE_M = 0.01       # 차체 폭보다 이만큼 넓게 본다 (통로 여유가 한쪽 약 4.7 cm뿐)
+GUARD_MIN_POINTS = 3
 
 # 빈 격자 판단 시 광선을 따라 확인하는 간격, 맞은 지점 앞에서 멈추는 여유
 FREE_STEP_M = 0.1
@@ -384,6 +392,30 @@ def wall_yaw_offset(scan, robot_pose):
     if weight == 0:
         return 0.0
     return max(-MAX_YAW_FIX_RAD, min(MAX_YAW_FIX_RAD, total / weight))
+
+
+def obstacle_ahead(scan, robot_pose):
+    """집게 끝 바로 앞(GUARD_AHEAD_M, 차체 폭 + GUARD_SIDE_M)에 장애물 점이 있는지."""
+    robot_x, robot_y, robot_yaw = robot_pose
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    hits = 0
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance):
+            continue
+        if not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        rel_x = laser_x + distance * math.cos(angle) - robot_x
+        rel_y = laser_y + distance * math.sin(angle) - robot_y
+        along = rel_x * cos_r + rel_y * sin_r
+        lateral = -rel_x * sin_r + rel_y * cos_r
+        if (BODY_FRONT_M <= along <= BODY_FRONT_M + GUARD_AHEAD_M
+                and abs(lateral) <= BODY_HALF_WIDTH_M + GUARD_SIDE_M):
+            hits += 1
+    return hits >= GUARD_MIN_POINTS
 
 
 def update_grid_from_scan(grid, scan, robot_pose):

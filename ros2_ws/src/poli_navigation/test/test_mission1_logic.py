@@ -320,28 +320,65 @@ def test_fine_turn_continues_between_old_pulses_and_slows_near_goal():
         assert logic._turn_toward(-math.radians(10), obs) == -slow
 
 
-def test_camera_alignment_continues_and_stops_when_aligned():
-    """카메라 오차가 크면 제자리에서 연속 정렬한다."""
+def _approaching_logic(origin=(1.0, 1.0), axis=0.0):
+    """출발 칸(origin) 가운데에서 axis 방향으로 대상에 다가가는 중인 상태."""
     logic = Mission1Logic()
-    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0, detected=True, x_offset=-0.45)
-    for now in (0.0, 0.05, 0.10, 0.20):
-        obs.now = now
-        assert logic._align(obs).angular > 0
-    # 거의 맞으면 멈추지 않고 전진하며 맞춘다.
-    obs.x_offset = 0.0
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    logic._approach_axis = axis
+    logic._approach_origin = origin
+    logic._target_seen_at = 0.0
+    return logic
+
+
+def test_align_turns_to_corridor_axis_not_to_target():
+    """대상이 축에서 10도 비껴 보여도 통로 축 방향으로 돈 뒤 접근한다."""
+    logic = Mission1Logic()
+    logic.state = ALIGN
+    logic._approach_axis = 0.0
+    logic._approach_origin = (1.0, 1.0)
+    obs = Observation(x=1.0, y=1.0, yaw=-0.5, now=0.0, detected=True, x_offset=0.0, area=5000.0)
+    assert logic._align(obs).angular > 0.0
+    obs.yaw = 0.0
     command = logic._align(obs)
     assert logic.state == APPROACH
     assert command.linear > 0.0
 
 
-def test_approach_goes_back_to_align_when_far_off_center():
-    logic = Mission1Logic()
-    logic.state = APPROACH
-    logic.state_started_at = 0.0
-    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0, detected=True, x_offset=0.8, area=5000.0)
-    command = logic._approach(obs)
-    assert logic.state == ALIGN
-    assert command.linear == 0.0 and command.angular < 0.0
+def test_approach_steers_back_to_corridor_center_line():
+    """통로 가운데 선에서 옆으로 벗어나면 카메라보다 가운데 선 복귀가 먼저다."""
+    logic = _approaching_logic()
+    # 왼쪽(+y)으로 3 cm 벗어났는데 큐브는 더 왼쪽에 보인다 -> 오른쪽으로 돌아온다.
+    obs = Observation(x=1.2, y=1.03, yaw=0.0, now=0.0, detected=True, x_offset=-0.5, area=5000.0)
+    assert logic._approach(obs).angular < 0.0
+    # 가운데 선 안이면 큐브 쪽(왼쪽)으로 돌되 축에서 10도까지만.
+    obs = Observation(x=1.2, y=1.0, yaw=0.0, now=0.0, detected=True, x_offset=-0.5, area=5000.0)
+    assert logic._approach(obs).angular > 0.0
+    obs.yaw = math.radians(10.0)
+    assert abs(logic._approach(obs).angular) < 1e-9
+
+
+def test_approach_stops_when_obstacle_ahead_of_gripper():
+    true_grid = GridMap()
+    true_grid.mark_blocked((7, 1))
+    y = cell_center_m((8, 1))[1]
+    logic = _approaching_logic(origin=cell_center_m((9, 1)), axis=math.pi)
+    # 장애물 칸 (7,1) 면까지 집게 끝이 약 3 cm
+    pose = (cell_center_m((7, 1))[0] + 0.2 + 0.17 + 0.03, y, math.pi)
+    obs = Observation(x=pose[0], y=pose[1], yaw=math.pi, now=0.0, detected=True, area=5000.0,
+                      scan=simulate_scan(true_grid, pose))
+    assert logic._approach(obs) == Command()
+    assert logic.state == SCAN
+    assert (9, 1) in logic._approach_blocked
+
+
+def test_approach_gives_up_when_target_lost():
+    logic = _approaching_logic()
+    obs = Observation(x=1.1, y=1.0, yaw=0.0, now=0.3, detected=False)
+    assert logic._approach(obs).linear > 0.0  # 잠깐 놓치면 축을 따라 계속
+    obs.now = 0.6
+    logic._approach(obs)
+    assert logic.state == SCAN
 
 
 def test_near_cell_center_stops_instead_of_turning_towards_lateral_error():
@@ -382,9 +419,7 @@ def test_lateral_offset_outside_endpoint_region_is_not_arrival():
 
 def test_grab_area_pushes_further_and_closes_near_end_of_push():
     """면적 기준에 닿으면 GRAB_PUSH_M만큼 곧게 더 들어가고, 끝 GRAB_CLOSE_LEAD_M에서 닫기 시작한다."""
-    logic = Mission1Logic()
-    logic.state = APPROACH
-    logic.state_started_at = 0.0
+    logic = _approaching_logic()
     obs = Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA)
     command = logic._approach(obs)
     assert logic.state == PUSH
@@ -407,9 +442,7 @@ def test_grab_area_pushes_further_and_closes_near_end_of_push():
 
 def test_grab_after_push_when_close_lead_is_zero(monkeypatch):
     monkeypatch.setattr(mission1_logic, 'GRAB_CLOSE_LEAD_M', 0.0)
-    logic = Mission1Logic()
-    logic.state = APPROACH
-    logic.state_started_at = 0.0
+    logic = _approaching_logic()
     obs = Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA)
     assert logic._approach(obs).gripper is None
     obs = Observation(x=1.0 + GRAB_PUSH_M, y=1.0, yaw=0.0, now=0.4)
@@ -418,9 +451,7 @@ def test_grab_after_push_when_close_lead_is_zero(monkeypatch):
 
 
 def test_push_closes_after_timeout_when_wheels_slip():
-    logic = Mission1Logic()
-    logic.state = APPROACH
-    logic.state_started_at = 0.0
+    logic = _approaching_logic()
     logic._approach(Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA))
     logic._push(Observation(x=1.0, y=1.0, yaw=0.0, now=5.0))
     assert logic.state == GRASP
@@ -764,16 +795,48 @@ def test_new_obstacle_in_target_cell_stops_drive(monkeypatch):
     assert logic.grid.get((9, 2)) != BLOCKED
 
 
-def test_target_seen_while_exploring_goes_to_align():
-    # (5,5) 옆이 아니어도 탐색 중 대상이 크게 보이면 바로 정렬한다 (2026-10-31).
+def test_target_seen_while_driving_does_not_turn_toward_it():
+    """주행 중 대상이 보여도 대각선으로 꺾지 않고 칸 가운데까지 간다 (2026-10-31 실기)."""
     logic = Mission1Logic()
     x, y, yaw = START_POSE
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
     logic.step(obs)
-    obs.detected = True
-    obs.area = SEE_TARGET_MIN_AREA + 1.0
-    assert logic._drive(obs) == Command()
+    logic._plan(obs)
+    logic.state = DRIVE
+    obs = Observation(x=x, y=y + 0.1, yaw=yaw, now=1.0, detected=True, x_offset=-0.6,
+                      area=SEE_TARGET_MIN_AREA + 1.0)
+    command = logic._drive(obs)
+    assert logic.state == DRIVE
+    assert command.linear > 0.0 and abs(command.angular) < 0.1
+
+
+def test_target_on_axis_at_cell_center_goes_to_align():
+    logic = Mission1Logic()
+    logic.state = SCAN
+    logic.state_started_at = -1.0
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0, scan=simulate_scan(GridMap(), START_POSE),
+                      detected=True, x_offset=0.1, area=9000.0)
+    logic.step(obs)
     assert logic.state == ALIGN
+    assert logic._approach_axis == math.pi / 2
+
+
+def test_diagonal_or_blocked_target_is_not_approached():
+    x, y, yaw = START_POSE
+    # 대각선 (축에서 약 26도)
+    logic = Mission1Logic()
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, x_offset=0.8, area=9000.0)
+    assert not logic._target_approach(obs)
+    # 축 방향이지만 사이 칸 (9,2)가 막힘 (대상은 두 칸 앞, 약 80 cm)
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 2))
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, x_offset=0.0, area=3500.0)
+    assert not logic._target_approach(obs)
+    # 칸 가운데가 아님
+    logic = Mission1Logic()
+    obs = Observation(x=x, y=y + 0.15, yaw=yaw, now=0.0, detected=True, area=9000.0)
+    assert not logic._target_approach(obs)
 
 
 def test_small_far_target_is_ignored_while_exploring():

@@ -27,6 +27,7 @@ from typing import Optional
 from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
+    CELL_SIZE_M,
     CENTER,
     GridMap,
     MISSION1_START,
@@ -42,6 +43,7 @@ from poli_navigation.mission2_logic import (
 )
 from poli_navigation.scan_to_grid import (
     neighbor_states,
+    obstacle_ahead,
     point_to_cell,
     scan_to_cells,
     update_grid_from_scan,
@@ -67,9 +69,16 @@ SCAN_SETTLE_S = 0.1
 DRIVE_BLOCK_SCANS = 3
 # 주행 중 안전 확인 켜기/끄기. 2026-10-31 실기 시험을 위해 끔 (팀 요청). 대회 전 다시 검토 (TODO)
 DRIVE_BLOCK_CHECK = False
-# 탐색 중 카메라에 대상이 이 크기 이상으로 보이면 (5,5) 옆이 아니어도 바로 정렬·접근한다 (2026-10-31 팀 결정).
+# 탐색 중 카메라에 대상이 이 크기 이상으로 보이면 (5,5) 옆이 아니어도 잡으러 간다 (2026-10-31 팀 결정).
 # 너무 작으면(멀면) 경기장 밖 빨간 물체일 수 있어 무시한다. 50 cm에서 약 9000 (TODO_MEASURE)
+# 단, 칸 가운데에 서 있고 대상이 상하좌우 축 방향(±TARGET_AXIS_TOL_RAD)이며 그 사이 칸이 막히지 않았을 때만.
+# 2026-10-31 실기: 주행 중 보이자마자 대각선으로 다가가다 옆 장애물에 박았다 (통로 여유 한쪽 약 4.7 cm).
 SEE_TARGET_MIN_AREA = 2000.0
+TARGET_AXIS_TOL_RAD = math.radians(15.0)
+# 카메라 x_offset 1.0 = 화면 끝 = 약 33도 (TODO_MEASURE: 실제 화각)
+CAMERA_HALF_FOV_RAD = math.radians(33.0)
+# 대상 거리 추정: 면적은 거리 제곱에 반비례, 50 cm에서 약 9000 (TODO_MEASURE)
+TARGET_AREA_AT_50CM = 9000.0
 # 탐색 단계에서 대상을 놓치고 이 시간 동안 못 찾으면 다시 격자 탐색으로 돌아간다.
 SEARCH_GIVE_UP_S = 10.0
 
@@ -108,7 +117,6 @@ MIN_TURN_SPEED = 0.6
 # 2026-10-31 0.6 -> 1.0 (잡기 전체가 느림). 카메라 20 Hz면 한 번에 약 3도라 놓치지 않는다.
 SEARCH_SPEED = 1.0
 HEADING_GAIN = 1.5
-ALIGN_GAIN = 1.5  # 2026-10-31 1.0 -> 1.5. TODO_MEASURE: 정렬이 좌우로 흔들리면 낮춘다
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
@@ -118,8 +126,6 @@ TURN_TOLERANCE_RAD = math.radians(5.0)
 TURN_LEAD_S = 0.12
 # 회전을 끝내고 이 시간 뒤 방향 오차를 로그로 남긴다 (TURN_LEAD_S 조정용)
 TURN_CHECK_S = 0.3
-# x_offset 1.0 = 화면 끝 (약 33도) -> 0.15 = 약 5도
-ALIGN_TOLERANCE = 0.15
 # 주행 중 판단 (2026-10-31 팀 요청: 판단할 때 멈추지 말 것).
 # 칸 가운데에 가까워지면 ROLL_SPEED까지만 줄이고, 그 속도로 일정하게 달리며 찍힌 스캔으로 다음 칸을 정한다.
 # 다음 칸이 직진이면 멈추지 않고 이어 가고, 회전이면 가운데에 서자마자 (판단 대기 없이) 돈다.
@@ -134,10 +140,14 @@ ROLL_SETTLE_S = 0.15
 ROLL_STRAIGHT_RAD = math.radians(10.0)  # 다음 칸 방향이 이 안이면 직진으로 보고 멈추지 않는다
 # 스캔 한 바퀴 시간을 모를 때 (LaserScan.scan_time이 0)
 DEFAULT_SCAN_DURATION_S = 0.1
-# 이 안(약 12도)이면 제자리 정렬을 끝까지 하지 않고 전진하면서 방향을 맞춘다 (멈춤 한 번 줄임).
-APPROACH_START_OFFSET = 0.35
-# 접근 중 이보다 벗어나면 다시 제자리 정렬한다.
-APPROACH_MAX_OFFSET = 0.5
+# 접근은 축 방향으로 먼저 돌고, 통로 가운데 선에서 APPROACH_LATERAL_MAX_M 안으로만 다닌다.
+# 그 안에서는 카메라로 큐브 쪽으로 방향을 맞추되 축에서 APPROACH_MAX_HEADING_RAD까지만 튼다.
+# TODO_MEASURE: 통로 여유(한쪽 약 4.7 cm) 안. 큐브가 통로 가운데에서 많이 벗어나 있으면 못 잡을 수 있다
+APPROACH_LATERAL_MAX_M = 0.02
+APPROACH_LATERAL_GAIN = 4.0  # rad/m, 가운데 선으로 돌아오는 방향 = 옆 오차 x 이 값 (최대 아래 각도)
+APPROACH_MAX_HEADING_RAD = math.radians(10.0)
+# 접근 중 카메라가 대상을 이 시간 넘게 놓치면 칸 가운데로 돌아가 다시 판단한다
+APPROACH_LOST_S = 0.5
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
@@ -242,6 +252,13 @@ class Mission1Logic:
         self._push_start = None
         self._gripper_reached_at = None
         self._grab_sent_at = None
+        # 대상 접근 축 방향(rad)과 출발 칸 가운데, 접근 중 대상을 마지막으로 본 시각
+        self._approach_axis = None
+        self._approach_origin = None
+        self._target_seen_at = None
+        # 장애물에 막혀 접근을 그만둔 칸 (그 칸에서는 다시 접근하지 않는다)
+        self._approach_blocked = set()
+        self._scan_at_arrival = False
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -264,6 +281,7 @@ class Mission1Logic:
         if new_state != DRIVE:
             # 다른 일(대상 발견 등)로 주행이 끊기면 미리 한 판단은 버린다.
             self._decided_for = None
+            self._scan_at_arrival = False
         self._gripper_reached_at = None
 
     def step(self, obs):
@@ -338,11 +356,11 @@ class Mission1Logic:
             return Command()
         if obs.scan is None:
             return Command()
-        if self._sees_target(obs):
-            self._change_state(ALIGN, obs)
-            return Command()
 
         self._map_scan(obs.scan, (obs.x, obs.y, obs.yaw))
+        if self._target_approach(obs):
+            self._change_state(ALIGN, obs)
+            return Command()
         return self._plan(obs)
 
     def _map_scan(self, scan, pose):
@@ -386,6 +404,12 @@ class Mission1Logic:
         """달리는 중에 다음 칸을 정한다. 직진이면 목표를 바꿔 계속 가고 True."""
         x, y, yaw = self.scan_pose(obs)
         self._map_scan(obs.scan, (x, y, yaw))
+        if self._target_approach(obs, at=self.target, commit=False):
+            # 가운데에서 대상에 축 방향으로 다가갈 수 있다 -> 서서 SCAN에서 다시 확인
+            self._decided_for = self.target
+            self._scan_at_arrival = True
+            self.event = '주행 중 판단: 대상이 보여 가운데에 선다'
+            return False
         saved = (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
                  self.state, self.state_started_at, self.stop_reason)
         old_reverse = self.reverse
@@ -453,6 +477,8 @@ class Mission1Logic:
             self.target = center
             drive_origin = (obs.x, obs.y)
             self.delivering = False
+            # 가운데가 뒤쪽이면 (접근을 그만둔 뒤 등) 돌지 않고 후진한다.
+            self.reverse = abs(heading_error_to(obs, self.target)) > 3 * math.pi / 4
         elif self.phase == RETURN and path[1] == MISSION1_START:
             self.target = self._release_point(path[0], path[1])
             self.delivering = True
@@ -495,8 +521,45 @@ class Mission1Logic:
         return (to_x - dir_x * GRIPPER_REACH_M, to_y - dir_y * GRIPPER_REACH_M)
 
     def _sees_target(self, obs):
-        """탐색 중 대상이 충분히 크게 보이는지 (보이면 위치와 상관없이 잡으러 간다)."""
+        """탐색 중 대상이 충분히 크게 보이는지."""
         return self.phase == EXPLORE and obs.detected and obs.area >= SEE_TARGET_MIN_AREA
+
+    def _target_approach(self, obs, at=None, commit=True):
+        """
+        칸 가운데(at, 없으면 지금 위치)에서 대상에 축 방향으로 곧게 다가갈 수 있는지.
+
+        대상이 상하좌우 축에서 ±TARGET_AXIS_TOL_RAD 안이고, 대상 칸까지 사이 칸이 막히지
+        않았을 때만 True. commit이면 접근 축과 출발 칸을 기억한다.
+        """
+        if not self._sees_target(obs):
+            return False
+        if at is None:
+            cell = point_to_cell(obs.x, obs.y)
+            if cell is None or distance_to(obs, cell_center_m(cell)) > CELL_CENTER_TOLERANCE_M:
+                return False
+        else:
+            cell = point_to_cell(*at)
+        if cell is None or cell in self._approach_blocked:
+            return False
+        # x_offset 음수 = 왼쪽 = 반시계(+)
+        bearing = obs.yaw - obs.x_offset * CAMERA_HALF_FOV_RAD
+        axis = round(bearing / (math.pi / 2)) * (math.pi / 2)
+        off_axis = math.atan2(math.sin(bearing - axis), math.cos(bearing - axis))
+        if abs(off_axis) > TARGET_AXIS_TOL_RAD:
+            return False
+        distance = 0.5 * math.sqrt(TARGET_AREA_AT_50CM / obs.area)
+        cells_away = max(1, round(distance / CELL_SIZE_M))
+        step_x, step_y = round(math.cos(axis)), round(math.sin(axis))
+        for k in range(1, cells_away + 1):
+            between = (cell[0] + k * step_x, cell[1] + k * step_y)
+            if not self.grid.in_bounds(between):
+                return False
+            if k < cells_away and self.grid.get(between) == BLOCKED:
+                return False
+        if commit:
+            self._approach_axis = axis
+            self._approach_origin = cell_center_m(cell)
+        return True
 
     def _arrived_at_goal(self, obs):
         if self.phase == EXPLORE:
@@ -527,9 +590,7 @@ class Mission1Logic:
         return Command(angular=self._turn_toward(predicted, obs))
 
     def _drive(self, obs):
-        if self._sees_target(obs):
-            self._change_state(ALIGN, obs)
-            return Command()
+        # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
         # 진행 중 다음 칸에 장애물이 나타나면 멈춘 뒤 다시 계획한다.
         if (DRIVE_BLOCK_CHECK and obs.scan is not None
                 and obs.scan is not self._last_drive_scan):
@@ -577,7 +638,7 @@ class Mission1Logic:
             if self.delivering:
                 self._change_state(RELEASE, obs)
                 return Command(gripper=GRIPPER_OPEN)
-            if self._decided_for == self.target:
+            if self._decided_for == self.target and not self._scan_at_arrival:
                 # 달리면서 이미 판단했다 -> 서서 기다리지 않고 바로 돈다.
                 self._decided_for = None
                 return self._plan(obs)
@@ -625,13 +686,13 @@ class Mission1Logic:
         error = heading_error_to(obs, CENTER_M)
 
         if abs(error) < TURN_TOLERANCE_RAD:
-            self._change_state(ALIGN if obs.detected else SEARCH, obs)
+            self._change_state(ALIGN if self._target_approach(obs) else SEARCH, obs)
             return Command()
 
         return Command(angular=self._turn_toward(error, obs))
 
     def _search(self, obs):
-        if obs.detected:
+        if self._target_approach(obs):
             self._change_state(ALIGN, obs)
             return Command()
         if self.phase == EXPLORE and obs.now - self.state_started_at > SEARCH_GIVE_UP_S:
@@ -642,35 +703,55 @@ class Mission1Logic:
         return Command(angular=SEARCH_SPEED)
 
     def _align(self, obs):
-        if not obs.detected:
-            self._change_state(SEARCH, obs)
+        """제자리에서 접근 축 방향으로 정확히 돈다 (대상 쪽이 아니라 통로 방향)."""
+        if self._approach_axis is None:
+            self._change_state(SCAN, obs)
             return Command()
-
-        if abs(obs.x_offset) < APPROACH_START_OFFSET:
+        error = math.atan2(math.sin(self._approach_axis - obs.yaw),
+                           math.cos(self._approach_axis - obs.yaw))
+        predicted = error - self._last_angular * TURN_LEAD_S
+        if abs(predicted) < TURN_TOLERANCE_RAD:
+            self._target_seen_at = obs.now
             self._change_state(APPROACH, obs)
             return self._approach(obs)
+        return Command(angular=self._turn_toward(predicted, obs))
 
-        # x_offset 음수 = 왼쪽. 정렬 오차가 작아지면 감속한다.
-        speed = max(MIN_TURN_SPEED, min(TURN_SPEED, ALIGN_GAIN * abs(obs.x_offset)))
-        return Command(angular=math.copysign(speed, -obs.x_offset))
+    def _abort_approach(self, obs, reason):
+        """접근을 그만두고 칸 가운데로 돌아가 다시 판단한다."""
+        self._approach_blocked.add(point_to_cell(*self._approach_origin))
+        self.event = f'접근 중단: {reason}'
+        self._change_state(SCAN, obs)
+        return Command()
 
     def _approach(self, obs):
-        if not obs.detected:
-            self._change_state(SEARCH, obs)
-            return Command()
+        if obs.detected:
+            self._target_seen_at = obs.now
+        elif obs.now - self._target_seen_at > APPROACH_LOST_S:
+            return self._abort_approach(obs, '대상을 놓침')
 
-        if obs.area >= GRAB_AREA:
+        if obs.detected and obs.area >= GRAB_AREA:
             self._push_start = (obs.x, obs.y)
             self._change_state(PUSH, obs)
             return self._push(obs)
-        if abs(obs.x_offset) > APPROACH_MAX_OFFSET:
-            self._change_state(ALIGN, obs)
-            return self._align(obs)
+        if obs.scan is not None and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw)):
+            return self._abort_approach(obs, '집게 앞에 장애물')
 
-        # 다가가면서 방향도 계속 맞춘다.
+        # 통로 가운데 선에서 옆으로 벗어난 거리 (진행 방향 왼쪽이 +)
+        axis = self._approach_axis
+        lateral = (-(obs.x - self._approach_origin[0]) * math.sin(axis)
+                   + (obs.y - self._approach_origin[1]) * math.cos(axis))
+        heading = math.atan2(math.sin(obs.yaw - axis), math.cos(obs.yaw - axis))
+        if abs(lateral) > APPROACH_LATERAL_MAX_M or not obs.detected:
+            # 가운데 선으로 돌아온다 (대상을 잠깐 놓쳤을 때도 축을 따라 곧게).
+            offset = -clamp(APPROACH_LATERAL_GAIN * lateral, APPROACH_MAX_HEADING_RAD)
+        else:
+            # 카메라로 큐브 쪽을 보되 축에서 APPROACH_MAX_HEADING_RAD까지만 튼다.
+            bearing = heading - obs.x_offset * CAMERA_HALF_FOV_RAD
+            offset = clamp(bearing, APPROACH_MAX_HEADING_RAD)
+        desired = axis + offset
+        error = math.atan2(math.sin(desired - obs.yaw), math.cos(desired - obs.yaw))
         speed = APPROACH_SLOW_SPEED if obs.area >= APPROACH_SLOW_AREA else APPROACH_SPEED
-        angular = clamp(-ALIGN_GAIN * obs.x_offset, TURN_SPEED)
-        return Command(linear=speed, angular=angular)
+        return Command(linear=speed, angular=clamp(HEADING_GAIN * error, TURN_SPEED))
 
     def _push(self, obs):
         """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가 큐브를 집게 안쪽까지 넣고 닫는다."""
