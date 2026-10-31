@@ -328,6 +328,7 @@ def _approaching_logic(origin=(1.0, 1.0), axis=0.0):
     logic._approach_axis = axis
     logic._approach_origin = origin
     logic._target_seen_at = 0.0
+    logic._area_best_at = origin
     return logic
 
 
@@ -775,6 +776,16 @@ def test_maze_tie_avoids_arena_edge_cell():
     logic.maze.observe((7, 2), math.pi / 2)
     logic.maze.observe((7, 3), math.pi / 2)
     assert logic.maze.next_cell(logic.grid) == (7, 4)
+
+
+def test_approach_grabs_when_area_stops_growing():
+    """면적이 기준(35000)에 못 미쳐도 6 cm 넘게 가는 동안 안 커지면 큐브가 닿은 것 (2026-10-31)."""
+    logic = _approaching_logic()
+    for i, x in enumerate((1.0, 1.02, 1.04, 1.055)):
+        logic._approach(Observation(x=x, y=1.0, yaw=0.0, now=i * 0.1, detected=True, area=25000.0))
+        assert logic.state == APPROACH
+    logic._approach(Observation(x=1.07, y=1.0, yaw=0.0, now=0.5, detected=True, area=25500.0))
+    assert logic.state == PUSH
 
 
 def test_search_turns_in_place_when_cube_not_visible():

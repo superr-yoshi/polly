@@ -159,6 +159,11 @@ APPROACH_LATERAL_GAIN = 4.0  # rad/m, 가운데 선으로 돌아오는 방향 = 
 APPROACH_MAX_HEADING_RAD = math.radians(10.0)
 # 접근 중 카메라가 대상을 이 시간 넘게 놓치면 칸 가운데로 돌아가 다시 판단한다
 APPROACH_LOST_S = 0.5
+# 면적이 APPROACH_SLOW_AREA를 넘은 뒤 이만큼 더 갔는데 면적이 AREA_GROW_RATIO만큼도 안 커지면
+# 큐브가 집게에 닿아 같이 밀리는 것으로 보고 잡는다 (GRAB_AREA에 못 미쳐도).
+# 2026-10-31 실기 (17:45): 면적이 25000에서 안 커진 채 큐브를 80 cm 밀고 감. TODO_MEASURE
+APPROACH_STALL_M = 0.06
+AREA_GROW_RATIO = 1.05
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
@@ -267,6 +272,9 @@ class Mission1Logic:
         self._approach_axis = None
         self._approach_origin = None
         self._target_seen_at = None
+        # 접근 중 가장 컸던 면적과 그때 위치 (면적이 안 커지는지 본다)
+        self._area_best = 0.0
+        self._area_best_at = None
         # 장애물에 막혀 접근을 그만둔 칸 (그 칸에서는 다시 접근하지 않는다)
         self._approach_blocked = set()
         # 큐브를 찾다가 못 찾은 중앙 옆 칸 (목표에서 뺀다)
@@ -784,6 +792,8 @@ class Mission1Logic:
         predicted = error - self._last_angular * TURN_LEAD_S
         if abs(predicted) < TURN_TOLERANCE_RAD:
             self._target_seen_at = obs.now
+            self._area_best = 0.0
+            self._area_best_at = (obs.x, obs.y)
             self._change_state(APPROACH, obs)
             return self._approach(obs)
         return Command(angular=self._turn_toward(predicted, obs))
@@ -801,7 +811,14 @@ class Mission1Logic:
         elif obs.now - self._target_seen_at > APPROACH_LOST_S:
             return self._abort_approach(obs, '대상을 놓침')
 
-        if obs.detected and obs.area >= GRAB_AREA:
+        if obs.detected and obs.area > self._area_best * AREA_GROW_RATIO:
+            self._area_best = obs.area
+            self._area_best_at = (obs.x, obs.y)
+        stalled = (obs.detected and obs.area >= APPROACH_SLOW_AREA
+                   and math.dist((obs.x, obs.y), self._area_best_at) >= APPROACH_STALL_M)
+        if obs.detected and (obs.area >= GRAB_AREA or stalled):
+            if stalled and obs.area < GRAB_AREA:
+                self.event = f'면적이 {obs.area:.0f}에서 안 커짐 -> 큐브가 닿은 것으로 보고 잡기'
             self._push_start = (obs.x, obs.y)
             self._change_state(PUSH, obs)
             return self._push(obs)
