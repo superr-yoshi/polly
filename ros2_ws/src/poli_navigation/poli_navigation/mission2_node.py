@@ -33,6 +33,8 @@ GRIPPER_RESEND_PERIOD = 1.0
 
 # 움직이는 동안 이 주기(초)로 속도·카메라·추정 거리를 로그에 남긴다 (실기 분석용)
 MOTION_LOG_PERIOD = 0.2
+# 판단 주기가 이보다 벌어지면 경고 (Mega는 0.3 s 명령이 끊기면 멈춘다)
+CONTROL_GAP_WARN_S = 0.15
 MOTION_LOG_STATES = ('DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
 
 
@@ -77,6 +79,7 @@ class Mission2Node(Node):
         self.vision_received_at = None
         self.last_state = None
         self.last_motion_log = 0.0
+        self.last_control_at = None
 
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.gripper_publisher = self.create_publisher(
@@ -179,6 +182,10 @@ class Mission2Node(Node):
 
         x, y, yaw = self.wall_correction.apply(self.odom_pose)
         now = self.now_seconds()
+        if self.last_control_at is not None and now - self.last_control_at > CONTROL_GAP_WARN_S:
+            # 2026-11-01 실기: 큐브를 본 직후 0.46 s 판단이 멈춰 Mega가 바퀴를 세웠다. 원인 확인용
+            self.get_logger().warn(f'판단 주기 지연 {now - self.last_control_at:.2f} s')
+        self.last_control_at = now
 
         observation = Observation(
             x=x, y=y, yaw=yaw, now=now, holding=self.holding,

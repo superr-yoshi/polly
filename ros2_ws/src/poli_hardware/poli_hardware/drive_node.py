@@ -123,6 +123,11 @@ class DriveNode(Node):
         linear, angular = self.watchdog.command(now)
         self.transport.set_wheel_speeds(*twist_to_wheels(self.drive, linear, angular))
 
+        # Mega 연결 전에는 /odom_raw를 내보내지 않는다. 임무 노드는 odom이 와야 움직이므로,
+        # 연결 전에 명령 속도를 올려 두었다가 연결되는 순간 급출발하는 일이 없다 (2026-11-01 실기).
+        if not getattr(self.transport, 'ready', lambda: True)():
+            self._last_t = None
+            return
         v, w = wheels_to_twist(self.drive, *self.transport.read_wheel_speeds())
         if self._last_t is not None:
             self.integrator.step(v, w, now - self._last_t)

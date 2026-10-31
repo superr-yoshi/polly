@@ -77,6 +77,8 @@ TARGET_AREA_AT_50CM = 7070.0 * (0.3 / 0.5) ** 2
 CAMERA_AHEAD_M = 0.10
 # 새 카메라 결과를 큐브 위치 추정에 섞는 비율 (나머지는 이전 추정)
 TARGET_SMOOTHING = 0.5
+# 위치 기록 사이가 이보다 벌어졌으면(판단이 멈춤) 그 구간 위치로 큐브 위치를 계산하지 않는다.
+POSE_HISTORY_GAP_S = 0.12
 # 제자리 맞추기(ALIGN)는 큐브 방향이 이 안이면 끝내고 전진하며 맞춘다.
 ALIGN_DONE_RAD = math.radians(15.0)
 # 이보다 빨리 돌 때는 큐브 위치를 갱신하지 않는다 (카메라 지연 오차 = 회전 속도 x 지연 차이).
@@ -316,10 +318,21 @@ class Mission2Logic:
         return Command(linear=linear, angular=angular)
 
     def _pose_at(self, when):
-        """주어진 시각 when(또는 바로 전)의 위치. 기록이 그보다 짧으면 가장 오래된 위치."""
+        """
+        주어진 시각 when(또는 바로 전)의 위치.
+
+        그 근처 기록이 없으면(판단이 잠깐 멈췄던 구간) None. 2026-11-01 실기: 판단이 0.46 s 멈춘 뒤
+        멈추기 전 위치로 큐브 위치를 계산해 13 cm 가깝게 잡고 일찍 기어갔다.
+        """
+        later = None
         for pose in reversed(self._poses):
             if pose[0] <= when:
+                # when 앞뒤 기록 사이가 벌어졌으면 그 사이 위치를 모른다
+                if later is not None and later[0] - pose[0] > POSE_HISTORY_GAP_S:
+                    return None
                 return pose[1:]
+            later = pose
+        # 기록이 아직 짧으면(막 시작) 가장 오래된 위치
         return self._poses[0][1:]
 
     def _update_target(self, obs):
@@ -335,7 +348,10 @@ class Mission2Logic:
         if (self.state in (APPROACH, PUSH) and self.target is not None
                 and self._area_best >= APPROACH_SLOW_AREA):
             return
-        x, y, yaw = self._pose_at(obs.now - CAMERA_LAG_S)
+        pose = self._pose_at(obs.now - CAMERA_LAG_S)
+        if pose is None:
+            return
+        x, y, yaw = pose
         bearing = yaw - obs.x_offset * CAMERA_HALF_FOV_RAD
         distance = CAMERA_AHEAD_M + area_to_distance(obs.area)
         point = (x + distance * math.cos(bearing), y + distance * math.sin(bearing))
@@ -433,7 +449,11 @@ class Mission2Logic:
         # 잠깐 놓쳤을 때나 가까우면 천천히
         speed = APPROACH_SLOW_SPEED
         if obs.detected and self._area_best < APPROACH_SLOW_AREA:
-            remaining = self._camera_distance(obs) - area_to_distance(APPROACH_SLOW_AREA)
+            # 남은 거리 = 지금 카메라 면적으로 잰 거리 - 카메라 지연 동안 간 거리.
+            # (위치 추정은 빨리 달리며 본 값이라 틀어지기 쉬워 감속에는 쓰지 않는다. 2026-11-01 실기:
+            #  면적으로는 37 cm인데 추정 20 cm라 일찍 0.25 m/s로 0.85 s를 기어갔다)
+            seen = area_to_distance(obs.area) - abs(self._last_linear) * CAMERA_LAG_S
+            remaining = seen - area_to_distance(APPROACH_SLOW_AREA)
             speed = min(APPROACH_FAST_SPEED, braking_speed(
                 remaining, self._last_linear, APPROACH_SLOW_SPEED, APPROACH_DECEL))
         return self._drive_toward(

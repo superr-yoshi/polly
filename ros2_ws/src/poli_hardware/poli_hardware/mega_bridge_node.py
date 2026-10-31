@@ -156,6 +156,10 @@ class MegaTransport:
             self._log.info(f'Mega 모터 상태: {pkt.status_name}')
 
     # ---- 주행 -----------------------------------------------------------
+    def ready(self):
+        """Mega와 연결돼 엔코더 값을 받고 있는지."""
+        return self._ser is not None and self._enc_t is not None
+
     def set_wheel_speeds(self, left, right):
         self._write(make_drive_command(wheel_to_ticks(left, self._ticks),
                                        wheel_to_ticks(right, self._ticks)))
