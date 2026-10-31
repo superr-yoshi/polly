@@ -348,8 +348,8 @@ def test_align_turns_to_corridor_axis_not_to_target():
 def test_approach_steers_back_to_corridor_center_line():
     """통로 가운데 선에서 옆으로 벗어나면 카메라보다 가운데 선 복귀가 먼저다."""
     logic = _approaching_logic()
-    # 왼쪽(+y)으로 3 cm 벗어났는데 큐브는 더 왼쪽에 보인다 -> 오른쪽으로 돌아온다.
-    obs = Observation(x=1.2, y=1.03, yaw=0.0, now=0.0, detected=True, x_offset=-0.5, area=5000.0)
+    # 왼쪽(+y)으로 5 cm 벗어났는데 큐브는 더 왼쪽에 보인다 -> 오른쪽으로 돌아온다.
+    obs = Observation(x=1.2, y=1.05, yaw=0.0, now=0.0, detected=True, x_offset=-0.5, area=5000.0)
     assert logic._approach(obs).angular < 0.0
     # 가운데 선 안이면 큐브 쪽(왼쪽)으로 돌되 축에서 10도까지만.
     obs = Observation(x=1.2, y=1.0, yaw=0.0, now=0.0, detected=True, x_offset=-0.5, area=5000.0)
@@ -727,6 +727,33 @@ def test_explore_chains_two_cells_when_next_cell_is_known_straight():
     assert logic.target == cell_center_m((9, 2))
 
 
+def test_search_give_up_removes_goal_cell_and_explores_elsewhere():
+    """중앙 옆 칸에서 큐브를 못 찾으면 그 칸을 목표에서 빼고 FACE를 반복하지 않는다."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    logic.state = SEARCH
+    logic.state_started_at = 0.0
+    x, y = cell_center_m((5, 6))
+    logic.step(Observation(x=x, y=y, yaw=0.0, now=mission1_logic.SEARCH_GIVE_UP_S + 0.1))
+    assert logic.state == SCAN
+    assert (5, 6) in logic._searched_goals
+    logic._plan(Observation(x=x, y=y, yaw=0.0, now=8.0))
+    assert logic.state != FACE
+
+
+def test_search_stops_spinning_when_target_seen_but_not_reachable():
+    """대상이 보이지만 대각선이면 계속 돌지 않고 바로 다른 곳을 탐색한다."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    logic.state = SEARCH
+    logic.state_started_at = 0.0
+    x, y = cell_center_m((5, 6))
+    obs = Observation(x=x, y=y, yaw=0.0, now=0.5, detected=True, x_offset=0.8, area=5000.0)
+    logic.step(obs)
+    assert logic.state == SCAN
+    assert (5, 6) in logic._searched_goals
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH
@@ -883,6 +910,10 @@ def test_diagonal_or_blocked_target_is_not_approached():
     logic = Mission1Logic()
     logic.grid.mark_blocked((9, 2))
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, x_offset=0.0, area=3500.0)
+    assert not logic._target_approach(obs)
+    # 축에서 13도지만 67 cm 앞이라 옆으로 약 15 cm (2026-10-31 실기)
+    logic = Mission1Logic()
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, x_offset=0.4, area=5000.0)
     assert not logic._target_approach(obs)
     # 칸 가운데가 아님
     logic = Mission1Logic()

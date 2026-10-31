@@ -76,12 +76,16 @@ DRIVE_BLOCK_CHECK = False
 # 2026-10-31 실기: 주행 중 보이자마자 대각선으로 다가가다 옆 장애물에 박았다 (통로 여유 한쪽 약 4.7 cm).
 SEE_TARGET_MIN_AREA = 2000.0
 TARGET_AXIS_TOL_RAD = math.radians(15.0)
+# 큐브가 통로 가운데 선에서 옆으로 이보다 멀면 (거리 x 각도) 접근하지 않는다.
+# 2026-10-31 실기 (17:16): 67 cm 앞 14도(옆 약 16 cm) 큐브에 접근하다 화면 밖으로 놓침. TODO_MEASURE
+TARGET_LATERAL_MAX_M = 0.06
 # 카메라 x_offset 1.0 = 화면 끝 = 약 33도 (TODO_MEASURE: 실제 화각)
 CAMERA_HALF_FOV_RAD = math.radians(33.0)
 # 대상 거리 추정: 면적은 거리 제곱에 반비례, 50 cm에서 약 9000 (TODO_MEASURE)
 TARGET_AREA_AT_50CM = 9000.0
-# 탐색 단계에서 대상을 놓치고 이 시간 동안 못 찾으면 다시 격자 탐색으로 돌아간다.
-SEARCH_GIVE_UP_S = 10.0
+# 탐색 단계에서 대상을 놓치고 이 시간 동안 못 찾으면 다시 격자 탐색으로 돌아간다 (SEARCH_SPEED로 한 바퀴 남짓).
+# 찾지 못한 중앙 옆 칸은 목표에서 뺀다 (2026-10-31: 큐브가 중앙에 없으면 FACE·SEARCH를 끝없이 반복).
+SEARCH_GIVE_UP_S = 7.0
 
 # 격자 가운데에 도착했다고 보는 거리, 가운데에서 벗어났다고 보는 거리
 ARRIVE_TOLERANCE_M = 0.03
@@ -150,7 +154,7 @@ DEFAULT_SCAN_DURATION_S = 0.1
 # 접근은 축 방향으로 먼저 돌고, 통로 가운데 선에서 APPROACH_LATERAL_MAX_M 안으로만 다닌다.
 # 그 안에서는 카메라로 큐브 쪽으로 방향을 맞추되 축에서 APPROACH_MAX_HEADING_RAD까지만 튼다.
 # TODO_MEASURE: 통로 여유(한쪽 약 4.7 cm) 안. 큐브가 통로 가운데에서 많이 벗어나 있으면 못 잡을 수 있다
-APPROACH_LATERAL_MAX_M = 0.02
+APPROACH_LATERAL_MAX_M = 0.035  # 2026-10-31 0.02 -> 0.035 (조금 비켜난 큐브도 잡게)
 APPROACH_LATERAL_GAIN = 4.0  # rad/m, 가운데 선으로 돌아오는 방향 = 옆 오차 x 이 값 (최대 아래 각도)
 APPROACH_MAX_HEADING_RAD = math.radians(10.0)
 # 접근 중 카메라가 대상을 이 시간 넘게 놓치면 칸 가운데로 돌아가 다시 판단한다
@@ -265,6 +269,8 @@ class Mission1Logic:
         self._target_seen_at = None
         # 장애물에 막혀 접근을 그만둔 칸 (그 칸에서는 다시 접근하지 않는다)
         self._approach_blocked = set()
+        # 큐브를 찾다가 못 찾은 중앙 옆 칸 (목표에서 뺀다)
+        self._searched_goals = set()
         self._scan_at_arrival = False
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
@@ -462,7 +468,8 @@ class Mission1Logic:
             self.grid.mark_free(current)
 
         if self.phase == EXPLORE:
-            goals = self.grid.neighbors(CENTER)
+            goals = [cell for cell in self.grid.neighbors(CENTER)
+                     if cell not in self._searched_goals]
         else:
             goals = [MISSION1_START]
 
@@ -599,6 +606,8 @@ class Mission1Logic:
         if abs(off_axis) > TARGET_AXIS_TOL_RAD:
             return False
         distance = 0.5 * math.sqrt(TARGET_AREA_AT_50CM / obs.area)
+        if distance * abs(math.sin(off_axis)) > TARGET_LATERAL_MAX_M:
+            return False
         cells_away = max(1, round(distance / CELL_SIZE_M))
         step_x, step_y = round(math.cos(axis)), round(math.sin(axis))
         for k in range(1, cells_away + 1):
@@ -752,7 +761,15 @@ class Mission1Logic:
         if self._target_approach(obs):
             self._change_state(ALIGN, obs)
             return Command()
-        if self.phase == EXPLORE and obs.now - self.state_started_at > SEARCH_GIVE_UP_S:
+        # 대상이 보이는데 이 칸에서 축 방향으로 닿을 수 없으면 더 돌아도 소용없다
+        # (축 판단은 로봇 방향이 아니라 대상 위치로 정해진다). 2026-10-31 실기: 계속 360도 돎.
+        unreachable = self._sees_target(obs)
+        if self.phase == EXPLORE and (
+                unreachable or obs.now - self.state_started_at > SEARCH_GIVE_UP_S):
+            cell = point_to_cell(obs.x, obs.y)
+            self._searched_goals.add(cell)
+            reason = '대상이 보이지만 축 방향이 아님' if unreachable else '대상을 못 찾음'
+            self.event = f'{cell}에서 {reason} -> 목표에서 빼고 다시 탐색'
             self._change_state(SCAN, obs)
             return Command()
 
