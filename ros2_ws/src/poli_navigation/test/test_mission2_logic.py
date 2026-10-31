@@ -6,6 +6,7 @@ from hw_model import actual_twist
 from poli_navigation.mission2_logic import (
     ALIGN,
     APPROACH,
+    CAMERA_AHEAD_M,
     CENTER_M,
     Command,
     distance_to_danger_line,
@@ -48,8 +49,9 @@ class SimRobot:
         self.gripper_log = []
 
     def observe(self):
-        dx = self.target[0] - self.x
-        dy = self.target[1] - self.y
+        # 카메라는 로봇 중심보다 CAMERA_AHEAD_M 앞에 있다
+        dx = self.target[0] - (self.x + CAMERA_AHEAD_M * math.cos(self.yaw))
+        dy = self.target[1] - (self.y + CAMERA_AHEAD_M * math.sin(self.yaw))
         distance = math.hypot(dx, dy)
         bearing = math.atan2(dy, dx) - self.yaw
         bearing = math.atan2(math.sin(bearing), math.cos(bearing))

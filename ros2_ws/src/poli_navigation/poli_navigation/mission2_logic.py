@@ -61,23 +61,29 @@ SEARCH_SPEED = 1.0
 CAMERA_HALF_FOV_RAD = math.radians(33.0)
 # 카메라 결과는 이만큼 늦게 온다. 그 시각의 위치로 큐브 위치를 계산한다. TODO_MEASURE
 CAMERA_LAG_S = 0.3
-# 큐브 거리 추정: 면적은 거리 제곱에 반비례, 50 cm에서 약 9000 (mission1_logic.py와 같음, TODO_MEASURE)
-TARGET_AREA_AT_50CM = 9000.0
+# 큐브 거리 추정: 면적은 거리 제곱에 반비례.
+# 2026-11-01 실측: 카메라 렌즈 정면 30 cm에서 7070 -> 50 cm 환산 약 2550
+# (mission1_logic.py의 9000은 실측 전 가정. 임무 1은 그 값으로 실기 성공해 그대로 둔다)
+# TODO_MEASURE: 50 cm·1 m에서도 재서 확인
+TARGET_AREA_AT_50CM = 7070.0 * (0.3 / 0.5) ** 2
+# 카메라가 로봇 중심(바퀴 축)보다 앞에 있는 거리 (mission1_logic.py와 같음, TODO_MEASURE)
+CAMERA_AHEAD_M = 0.10
 # 새 카메라 결과를 큐브 위치 추정에 섞는 비율 (나머지는 이전 추정)
 TARGET_SMOOTHING = 0.5
 # 제자리 맞추기(ALIGN)는 큐브 방향이 이 안이면 끝내고 전진하며 맞춘다.
 ALIGN_DONE_RAD = math.radians(15.0)
 # 이 크기 이상으로 보이면 DRIVE 중에도 바로 카메라 접근 (경기장 밖 빨간 물체는 작게 보여 무시)
-SEE_TARGET_MIN_AREA = 2000.0
+# 600 = 카메라에서 약 1.0 m (2026-11-01 실측 기준). 예전 2000은 약 56 cm라 너무 늦게 봤다.
+SEE_TARGET_MIN_AREA = 600.0
 # DRIVE 중에 이 안(화면 가운데 쪽)에 보이면 바로 접근한다.
 APPROACH_MAX_OFFSET = 0.6
 # 접근 속도: 멀면 빠르게, 큐브 위치 추정까지 남은 거리로 일정하게 감속해
-# APPROACH_SLOW_AREA(잡는 위치 약 8 cm 전)에서 APPROACH_SLOW_SPEED가 된다.
+# APPROACH_SLOW_AREA(잡는 위치 약 5 cm 전)에서 APPROACH_SLOW_SPEED가 된다.
 # 남은 거리는 마지막 카메라 결과 + 그 뒤 엔코더 이동으로 계산하므로 카메라 지연만큼 지나치지 않는다.
 APPROACH_FAST_SPEED = 0.5
 APPROACH_SLOW_SPEED = 0.12
 APPROACH_DECEL = DRIVE_DECEL
-APPROACH_SLOW_AREA = 20000.0  # TODO_MEASURE: 잡는 위치 약 8 cm 전
+APPROACH_SLOW_AREA = 20000.0  # 카메라에서 약 18 cm (잡기 GRAB_AREA는 약 13 cm, 2026-11-01 실측 기준)
 # 카메라가 대상을 잠깐 놓쳐도 이 시간은 기다린다 (카메라 지연 약 0.3초)
 TARGET_LOST_S = 0.5
 
@@ -288,7 +294,7 @@ class Mission2Logic:
             return
         x, y, yaw = self._pose_at(obs.now - CAMERA_LAG_S)
         bearing = yaw - obs.x_offset * CAMERA_HALF_FOV_RAD
-        distance = area_to_distance(obs.area)
+        distance = CAMERA_AHEAD_M + area_to_distance(obs.area)
         point = (x + distance * math.cos(bearing), y + distance * math.sin(bearing))
         if self.target is None:
             self.target = point
@@ -373,7 +379,8 @@ class Mission2Logic:
         # 잠깐 놓쳤을 때나 가까우면 천천히
         speed = APPROACH_SLOW_SPEED
         if obs.detected and self._area_best < APPROACH_SLOW_AREA:
-            remaining = distance_to(obs, self.target) - area_to_distance(APPROACH_SLOW_AREA)
+            remaining = (distance_to(obs, self.target) - CAMERA_AHEAD_M
+                         - area_to_distance(APPROACH_SLOW_AREA))
             speed = min(APPROACH_FAST_SPEED, math.sqrt(
                 APPROACH_SLOW_SPEED ** 2 + 2.0 * APPROACH_DECEL * max(0.0, remaining)))
         return self._drive_toward(obs, self.target, speed)
