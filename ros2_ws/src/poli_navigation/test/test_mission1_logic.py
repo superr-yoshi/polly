@@ -385,6 +385,7 @@ def test_approach_gives_up_when_target_lost():
 def test_near_cell_center_stops_instead_of_turning_towards_lateral_error():
     """좌회전 후 다음 칸에 앞 2 cm·옆 5 cm 남으면 우회전하지 않고 정지한다."""
     logic = Mission1Logic()
+    logic.grid.mark_blocked((7, 4))  # 한 칸 주행만 보려고 두 칸 묶기를 막는다
     origin = Observation(x=3.4, y=1.4, yaw=math.pi, now=0.0)
     logic.step(origin)
     logic._plan(origin)
@@ -624,6 +625,7 @@ def _rolling_logic(true_grid, y):
 def test_rolling_decision_keeps_driving_straight_without_stopping(monkeypatch):
     monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     logic, obs = _rolling_logic(GridMap(), 0.06)
+    logic.grid.mark_blocked((9, 4))  # 두 칸 묶기 없이 한 칸 직진 계속만 본다
     assert logic.rolling_scan_ok(obs)
     command = logic.step(obs)
     assert logic.state == DRIVE
@@ -728,11 +730,32 @@ def test_explore_chains_two_cells_when_second_cell_scores_lower():
     logic.maze.state.visits[(9, 3)] = 1
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
     assert logic.target == cell_center_m((9, 2))
-    # 두 번째 칸을 아직 못 봤으면 한 칸만
+    # 두 번째 칸이 미관측이어도 두 칸 (LiDAR가 거기까지 잘 못 본다), 막힘이면 한 칸만
     logic = Mission1Logic()
     logic.grid.mark_free((9, 2))
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    assert logic.target == cell_center_m((9, 3))
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    logic.grid.mark_blocked((9, 3))
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
     assert logic.target == cell_center_m((9, 2))
+
+
+def test_two_cell_drive_stops_when_wall_appears_ahead():
+    """두 칸 한 번에 가다가 두 번째 칸이 막혀 앞에 벽이 보이면 멈추고 다시 판단한다."""
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    x, y, yaw = START_POSE
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    assert logic._chained
+    logic.state = DRIVE
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 3))
+    pose = (x, cell_center_m((9, 3))[1] - 0.2 - 0.17 - 0.10, yaw)  # 집게 끝이 벽 10 cm 앞
+    obs = Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0, scan=simulate_scan(true_grid, pose))
+    assert logic._drive(obs) == Command()
+    assert logic.state == SCAN
 
 
 def test_search_give_up_removes_goal_cell_and_explores_elsewhere():
@@ -820,7 +843,7 @@ def test_maze_explores_free_neighbor_even_when_center_is_enclosed():
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
     logic.step(obs)
     logic._plan(obs)
-    assert logic.path == [(9, 1), (9, 2)]
+    assert logic.path[:2] == [(9, 1), (9, 2)]
     assert logic._turn(obs).linear > 0.0
 
 
@@ -831,7 +854,7 @@ def test_maze_turns_left_when_front_is_blocked():
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
     logic.step(obs)
     logic._plan(obs)
-    assert logic.path == [(9, 1), (8, 1)]
+    assert logic.path[:2] == [(9, 1), (8, 1)]
     command = logic._turn(obs)
     assert command.linear == 0.0
     assert command.angular > 0.0
@@ -889,6 +912,7 @@ def test_return_uses_only_visited_cells():
 def test_new_obstacle_in_target_cell_stops_drive(monkeypatch):
     monkeypatch.setattr(mission1_logic, 'DRIVE_BLOCK_CHECK', True)
     logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 3))  # 두 칸 묶기(앞 벽 감시)와 섞이지 않게
     x, y, yaw = START_POSE
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
     logic.step(obs)

@@ -29,7 +29,6 @@ from poli_navigation.grid_map import (
     cell_center_m,
     CELL_SIZE_M,
     CENTER,
-    FREE,
     GridMap,
     MISSION1_START,
 )
@@ -163,6 +162,9 @@ APPROACH_LOST_S = 0.5
 # 큐브가 집게에 닿아 같이 밀리는 것으로 보고 잡는다 (GRAB_AREA에 못 미쳐도).
 # 2026-10-31 실기 (17:45): 면적이 25000에서 안 커진 채 큐브를 80 cm 밀고 감. TODO_MEASURE
 APPROACH_STALL_M = 0.06
+# 두 칸 한 번에 갈 때 집게 끝 앞 이 거리에 벽이 보이면 멈춘다 (0.45 m/s에서 서는 거리 약 13 cm + 여유).
+# TODO_MEASURE: 두 번째 칸이 막혔을 때 벽 앞에 제때 서는지 확인
+CHAIN_GUARD_AHEAD_M = 0.20
 AREA_GROW_RATIO = 1.05
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
@@ -280,6 +282,8 @@ class Mission1Logic:
         # 큐브를 찾다가 못 찾은 중앙 옆 칸 (목표에서 뺀다)
         self._searched_goals = set()
         self._scan_at_arrival = False
+        # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
+        self._chained = False
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -299,6 +303,8 @@ class Mission1Logic:
         self.state = new_state
         self.state_started_at = obs.now
         self.turn_pulse.reset()
+        if new_state not in (TURN, DRIVE):
+            self._chained = False
         if new_state != DRIVE:
             # 다른 일(대상 발견 등)로 주행이 끊기면 미리 한 판단은 버린다.
             self._decided_for = None
@@ -536,6 +542,7 @@ class Mission1Logic:
         탐색: 그다음 칸도 빈칸이고 점수가 더 작으면(목표 쪽) 한 칸 더.
         서서 찍은 스캔으로 만든 지도만 쓴다 (주행 중 스캔은 위치가 늦어 쓰지 않음).
         """
+        self._chained = False
         step_dir = (path[1][0] - path[0][0], path[1][1] - path[0][1])
         if self.phase == RETURN:
             end = 1
@@ -550,14 +557,17 @@ class Mission1Logic:
             return 1
         # 2026-10-31 팀 규칙: 앞 두 칸이 다 뚫려 있고 두 번째 칸 점수(목표 거리 + 방문 x 10)가
         # 첫 번째 칸보다 작으면 두 칸을 쭉 가고, 크거나 같으면 한 칸씩 가서 확인한다.
-        # 두 번째 칸은 서서 찍은 스캔으로 빈칸이 확인된 경우만 (미관측이면 막혔을 수 있다).
+        # 두 번째 칸은 막힘으로 표시되지 않았으면 된다. LiDAR가 약 0.55 m 너머 상자 위로 넘어가
+        # 두 번째 칸은 대개 미관측이라, 빈칸 확인을 요구하면 거의 묶이지 않았다 (2026-10-31 실기).
+        # 대신 두 칸 주행 중 집게 앞 CHAIN_GUARD_AHEAD_M에 벽이 보이면 멈추고 다시 판단한다 (_drive).
         after = (middle[0] + step_dir[0], middle[1] + step_dir[1])
-        if not self.grid.in_bounds(after) or self.grid.get(after) != FREE:
+        if not self.grid.in_bounds(after) or self.grid.get(after) == BLOCKED:
             return 1
         if self.maze.state.score(after) >= self.maze.state.score(middle):
             return 1
         path.append(after)
         self.event = f'두 칸 한 번에: {path[0]} -> {after}'
+        self._chained = True
         return 2
 
     def _shortest_path(self, current, goals):
@@ -657,6 +667,13 @@ class Mission1Logic:
 
     def _drive(self, obs):
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
+        if (self._chained and obs.scan is not None
+                and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw), CHAIN_GUARD_AHEAD_M)):
+            # 두 칸 한 번에 가는데 두 번째 칸이 막혀 있었다 -> 멈추고 첫 칸 가운데에서 다시 판단
+            self._chained = False
+            self.event = '두 칸 주행 중 앞에 벽 -> 멈추고 다시 판단'
+            self._change_state(SCAN, obs)
+            return Command()
         # 진행 중 다음 칸에 장애물이 나타나면 멈춘 뒤 다시 계획한다.
         if (DRIVE_BLOCK_CHECK and obs.scan is not None
                 and obs.scan is not self._last_drive_scan):

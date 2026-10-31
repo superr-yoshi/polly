@@ -465,8 +465,8 @@ def corner_offset(scan, robot_pose):
     return result[0], result[1]
 
 
-def obstacle_ahead(scan, robot_pose):
-    """집게 끝 바로 앞(GUARD_AHEAD_M, 차체 폭 + GUARD_SIDE_M)에 장애물 점이 있는지."""
+def obstacle_ahead(scan, robot_pose, ahead=GUARD_AHEAD_M):
+    """집게 끝 바로 앞(ahead, 차체 폭 + GUARD_SIDE_M)에 장애물 점이 있는지."""
     robot_x, robot_y, robot_yaw = robot_pose
     cos_r = math.cos(robot_yaw)
     sin_r = math.sin(robot_yaw)
@@ -483,7 +483,7 @@ def obstacle_ahead(scan, robot_pose):
         rel_y = laser_y + distance * math.sin(angle) - robot_y
         along = rel_x * cos_r + rel_y * sin_r
         lateral = -rel_x * sin_r + rel_y * cos_r
-        if (BODY_FRONT_M <= along <= BODY_FRONT_M + GUARD_AHEAD_M
+        if (BODY_FRONT_M <= along <= BODY_FRONT_M + ahead
                 and abs(lateral) <= BODY_HALF_WIDTH_M + GUARD_SIDE_M):
             hits += 1
     return hits >= GUARD_MIN_POINTS
