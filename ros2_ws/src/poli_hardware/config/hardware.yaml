@@ -32,7 +32,7 @@ mega_bridge_node:
   ros__parameters:
     port: /dev/robot_mega      # udev 별칭 (docs/udev_template.md)
     baud: 115200               # docs/serial_protocol.md v2.0
-    open_delay: 2.0            # 포트 열면 Mega 자동 리셋
+    open_delay: 2.0            # 포트 열면 Mega 자동 리셋. 최대 대기 (리셋 뒤 첫 packet이 오면 바로 연결, 실측 약 0.93 s)
     stale_timeout: 1.0         # s, RNG 끊김 경고
     motor_ticks_per_rev: 1320.0  # 바퀴 1회전 엔코더 tick = 30:1 x 11PPR x 4체배 (펌웨어가 4체배로 셈)
                                # TODO_MEASURE: drive_test wheel --revs 10 (PPR 12 변형이면 1440)

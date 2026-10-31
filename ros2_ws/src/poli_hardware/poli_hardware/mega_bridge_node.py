@@ -18,6 +18,8 @@ from poli_hardware.mega_protocol import (
 import rclpy
 
 MAX_GRIP_TRIES = 3
+# 포트를 연 뒤 리셋 전 버퍼 찌꺼기가 다 올 때까지 기다리는 시간 (2026-11-01 실측: 0.05 s 안)
+MEGA_RESET_SETTLE_S = 0.3
 
 
 class MegaTransport:
@@ -72,8 +74,15 @@ class MegaTransport:
     def _open(self):
         import serial  # pyserial (python3-serial)
         ser = serial.Serial(self.port, self.baud, timeout=0.2)
-        time.sleep(self._open_delay)
+        # 포트를 열면 Mega가 리셋된다. 2026-11-01 실측: 리셋 전 버퍼 찌꺼기가 바로 오고,
+        # 약 0.93 s 뒤 새 packet이 온다. 고정 대기(2 s) 대신 리셋 뒤 첫 packet이 오면 바로 연결
+        # (임무 시작 뒤 바퀴가 움직이기까지 약 1 s 단축). open_delay는 최대 대기 시간.
+        time.sleep(MEGA_RESET_SETTLE_S)
         ser.reset_input_buffer()
+        deadline = time.monotonic() + self._open_delay
+        while time.monotonic() < deadline:
+            if ser.readline().startswith(b'$'):
+                break
         self._log.info(f'Mega connected: {self.port} @ {self.baud}')
         return ser
 

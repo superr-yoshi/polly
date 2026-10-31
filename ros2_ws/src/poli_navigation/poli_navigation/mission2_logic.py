@@ -113,7 +113,7 @@ AREA_GROW_RATIO = 1.05
 
 # 집게 기다리기: /gripper/state가 closed면 바로, 모르면 최대 GRASP_WAIT_S
 GRASP_WAIT_S = 1.5
-GRIPPER_MIN_WAIT_S = 0.25
+GRIPPER_MIN_WAIT_S = 0.15  # 2026-11-01 0.25 -> 0.15 (집게 닫힘 0.36 -> 0.18 s)
 GRIPPER_SETTLE_S = 0.1
 
 GRIPPER_OPEN = 'open'
