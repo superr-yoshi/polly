@@ -45,6 +45,7 @@
 
 - 엔코더는 Mega가 4체배로 센다: 바퀴 1바퀴 = 11 PPR × 4 × 30:1 = 약 1320 tick (`hardware.yaml` `motor_ticks_per_rev`, TODO_MEASURE).
 - 바퀴를 손으로 앞으로 돌렸을 때 `$ENC` 값이 줄어들면 `config.h`의 `ENC_L_INVERT`/`ENC_R_INVERT`를 바꾼다 (또는 C1·C2를 바꿔 꽂는다).
+- 2026-10-31 엔코더 배선 수리 뒤 오른쪽 C1·C2가 서로 바뀌어 꽂힌 채 글루건으로 고정했다 → 코드에서 `ENC_R_INVERT 1`로 맞춤. 선을 원래대로 바꾸면 0으로 되돌린다.
 - RRC 때 기록 (2026-10-08): 모터 쪽 흰 플러그 C1·C2 **접점 불량**으로 엔코더 신호가 안 들어간 적이 있다.
   배선 후 `scripts/pc_serial_tester.py`로 바퀴를 손으로 돌려 tick이 변하는지 먼저 확인한다 (`firmware/mega_sensor_controller/README.md`).
 - 엔코더 방향이 반대거나 신호가 없으면 Mega가 폭주 감지로 모터를 끈다 (status `fault_reverse` / `fault_stall`). 노드를 다시 켜야 풀린다.
