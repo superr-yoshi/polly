@@ -20,10 +20,10 @@ udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial' | head
 
 ## 2. `/etc/udev/rules.d/99-robot.rules` (실제 값으로 교체)
 ```
-# RRC Lite, Mega: 2026-10-06 실물에서 확인한 값. 보드를 바꾸면 serial을 다시 확인한다.
+# RRC Lite, Mega: 2026-10-06, RPLIDAR: 2026-10-28 실물에서 확인한 값. 보드를 바꾸면 serial을 다시 확인한다.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5B22016213",           SYMLINK+="robot_rrc",  MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0042", ATTRS{serial}=="557363036313516052E1", SYMLINK+="robot_mega", MODE="0666"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="<LIDAR_VID>", ATTRS{idProduct}=="<LIDAR_PID>", ATTRS{serial}=="<LIDAR_SERIAL>", SYMLINK+="robot_lidar", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="ecdc93041f1ef111bce5c6e40f0f12f8", SYMLINK+="robot_lidar", MODE="0666"
 ```
 
 ## 3. 적용·확인
@@ -38,4 +38,4 @@ ls -l /dev/robot_*
 |---|---|---|---|---|
 | RRC Lite (USB 칩 CH9102, Linux에서 `/dev/ttyACM*`) | 1a86 | 55d4 | 5B22016213 | 2026-10-06 |
 | Arduino Mega 2560 (정품, Linux에서 `/dev/ttyACM*`) | 2341 | 0042 | 557363036313516052E1 | 2026-10-06 |
-| RPLIDAR | | | | |
+| RPLIDAR C1 어댑터 (USB 칩 CP2102N, Linux에서 `/dev/ttyUSB*`) | 10c4 | ea60 | ecdc93041f1ef111bce5c6e40f0f12f8 | 2026-10-28 |

@@ -32,7 +32,7 @@
 | RRC Lite 연결 계획 | 5V 5A 출력 → 라즈베리파이 5 전원 | 전체 결선도는 XL4015 5 V → Pi GPIO 5 V | **Pi 전원 방법 미정** → 팀 결정 후 하나로 |
 | RRC Lite 연결 계획 | 전원 Daygreen 12 V 컨버터 | 결선도는 XL4015 | 실제 쓰는 컨버터로 통일 |
 | HC-SR04 | 주파수 "40Hz" | 초음파 40 kHz | 단위 수정 |
-| AI 카메라 | 연결 "CAM 2" | Pi 5 포트는 CAM0 / CAM1 | 실제 포트로 수정 |
+| AI 카메라 | 연결 "CAM 2" | Pi 5 포트는 CAM/DISP 0 / 1. **실물은 CAM/DISP 1 (J4)** (2026-10-28) | 실제 포트로 수정 |
 | 제품 칸 1개 | 제품명·사양이 비어 있는 표 (RRC Lite 다음) | — | 내용 채우거나 삭제 |
 
 - 원본: `docs/product-spec-claude/product-spec-claude.md` + `assets/` 이미지 23개 (원본 HWP "제품 사양서_임시" 변환본)
@@ -61,7 +61,7 @@
 | 온칩 AI | 입력 텐서 최대 640 × 640, int8 / uint8, 내부 메모리 "약 8" (원문에 단위 없음) |
 | 출력 | Bayer RAW10, ISP 출력(YUV/RGB), ROI, 메타데이터 |
 | 크기 (BIN0003) | 보드 25 × 23.862 mm, 장착 구멍 ø2.2 mm (구멍 간격은 BIN0003 도면 참고) |
-| 연결 | 리본 케이블로 Pi 5 **CAM0**(메인 포트)에 연결. CAM1은 보조. 드라이버는 libcamera |
+| 연결 | 리본 케이블로 Pi 5 **CAM/DISP 1 (J4, HDMI1 옆)**에 연결 (2026-10-28 실물). Ubuntu에는 드라이버가 없어 직접 빌드: `scripts/pi_setup/imx500/README.md` |
 
 주의
 - 초점이 20 cm부터라서 **집게 바로 앞(20 cm 이내)에서는 대상이 흐리게 보일 수 있다.** 접근 마지막 단계에서 `area`, `x_offset` 판단에 영향.

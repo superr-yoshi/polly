@@ -1,5 +1,6 @@
 import math
 
+from hw_model import actual_twist
 from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
@@ -107,9 +108,11 @@ class SimRobot:
         if command.gripper is not None:
             self.gripper_log.append(command.gripper)
 
-        self.yaw += command.angular * DT
-        self.x += command.linear * math.cos(self.yaw) * DT
-        self.y += command.linear * math.sin(self.yaw) * DT
+        # 실제 하드웨어처럼 느린 명령은 0.25 m/s 바퀴 속도로 커진다 (hw_model.py)
+        linear, angular = actual_twist(command.linear, command.angular)
+        self.yaw += angular * DT
+        self.x += linear * math.cos(self.yaw) * DT
+        self.y += linear * math.sin(self.yaw) * DT
         self.now += DT
         self.visited.add(point_to_cell(self.x, self.y))
 

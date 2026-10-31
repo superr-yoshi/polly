@@ -19,6 +19,8 @@ from dataclasses import dataclass
 import math
 from typing import Optional
 
+from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPulse
+
 
 CELL_SIZE_M = 0.4
 ARENA_SIZE_M = 9 * CELL_SIZE_M
@@ -38,16 +40,22 @@ RETREAT_EXIT_MARGIN_M = 0.3
 # SIM_ONLY: 카메라로 전환하는 중앙까지의 거리
 VISION_HANDOFF_M = 0.6
 
-# SIM_ONLY: 속도와 제어 값 (실제 로봇에서 조정)
-DRIVE_SPEED = 0.2
-APPROACH_SPEED = 0.08
+# 속도와 제어 값
+# 조원 A 결정: 주행은 0.25 m/s (docs/interfaces.md 4장). 하드웨어가 바퀴 속도를
+# 0.25 m/s 아래로 내지 않으므로 더 느린 접근 속도는 의미가 없다 (turn_pulse.py).
+DRIVE_SPEED = 0.25
+APPROACH_SPEED = HW_MIN_WHEEL_SPEED
+# 회전 명령 크기는 제자리 회전 속도에 영향이 없다 (실제 약 2.8 rad/s).
+# 주행 중 방향 보정(곡선 주행) 때만 의미가 있다.
 TURN_SPEED = 0.8
 SEARCH_SPEED = 0.6
 HEADING_GAIN = 1.5
 ALIGN_GAIN = 1.0
 
+# TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
-ALIGN_TOLERANCE = 0.1
+# x_offset 1.0 = 화면 끝 (수평 시야 66.3도의 절반 약 33도) -> 0.15 = 약 5도
+ALIGN_TOLERANCE = 0.15
 
 # TODO_MEASURE: 이 크기 이상으로 보이면 집을 수 있는 거리로 판단 (카메라 픽셀 면적)
 GRAB_AREA = 15000.0
@@ -126,10 +134,12 @@ class Mission2Logic:
         self.state_started_at = None
         self.gripper_opened = False
         self._state_before_retreat = TURN
+        self.turn_pulse = TurnPulse()
 
     def _change_state(self, new_state, obs):
         self.state = new_state
         self.state_started_at = obs.now
+        self.turn_pulse.reset()
 
     def step(self, obs):
         if self.state_started_at is None:
@@ -186,6 +196,13 @@ class Mission2Logic:
         linear = speed if abs(error) < math.radians(45.0) else 0.0
         return Command(linear=linear, angular=angular)
 
+    def _turn_toward(self, error, obs):
+        """제자리 회전. 멀면 계속 돌고, 가까우면 끊어서 돈다 (turn_pulse.py)."""
+        if abs(error) > FINE_TURN_RAD:
+            self.turn_pulse.reset()
+            return math.copysign(TURN_SPEED, error)
+        return self.turn_pulse.angular(error, TURN_SPEED, obs.now)
+
     def _turn(self, obs):
         error = heading_error_to(obs, CENTER_M)
 
@@ -193,7 +210,7 @@ class Mission2Logic:
             self._change_state(DRIVE, obs)
             return self._drive(obs)
 
-        return Command(angular=math.copysign(TURN_SPEED, error))
+        return Command(angular=self._turn_toward(error, obs))
 
     def _drive(self, obs):
         if distance_to(obs, CENTER_M) <= VISION_HANDOFF_M:
@@ -208,7 +225,8 @@ class Mission2Logic:
             return Command()
 
         # TODO: 탐색 회전 방향 (현재 왼쪽)
-        return Command(angular=SEARCH_SPEED)
+        # 끊어서 돌아야 카메라가 멈춘 화면에서 대상을 찾는다 (계속 돌면 약 160도/초).
+        return Command(angular=self.turn_pulse.angular(1.0, SEARCH_SPEED, obs.now))
 
     def _align(self, obs):
         if not obs.detected:
@@ -219,7 +237,9 @@ class Mission2Logic:
             self._change_state(APPROACH, obs)
             return Command()
 
-        return Command(angular=clamp(-ALIGN_GAIN * obs.x_offset, TURN_SPEED))
+        # 대상이 화면 안에 있으면 오차가 작으므로 항상 끊어서 돈다. x_offset 음수 = 왼쪽.
+        return Command(
+            angular=self.turn_pulse.angular(-obs.x_offset, TURN_SPEED, obs.now))
 
     def _approach(self, obs):
         if not obs.detected:

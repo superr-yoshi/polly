@@ -169,3 +169,11 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
   바퀴 속도가 0.25 m/s보다 느린 명령은 두 바퀴를 같은 비율로 키워 0.25 m/s로 냅니다 (곡률은 유지, 0은 정지).
   그래서 **실제 속도가 명령보다 빠를 수 있고, 제자리 회전은 약 2.8 rad/s**가 됩니다 (1 rad/s 명령도 동일).
   회전을 IMU 각도로 멈추는 로직은 지나침(overshoot)을 감안해 주세요. 끄려면 `min_wheel_speed: 0.0`.
+
+### 5-4. 담당 1 반영 (2026-10-28) — 최소 속도 보정 대응
+- 임무 코드 속도를 조원 A 결정에 맞춤: `DRIVE_SPEED`·`APPROACH_SPEED` = 0.25 m/s (`mission1/2_logic.py`).
+- 제자리 회전이 약 2.8 rad/s로 고정되므로, **목표 근처(30도 안)·카메라 정렬·탐색 회전은 "0.05초 돌고 0.25초 멈춤"을 반복**한다
+  (`poli_navigation/turn_pulse.py`). 멈춘 동안 IMU·카메라·LiDAR 벽 보정이 따라온다.
+  시뮬레이션(모터 0.2초·카메라 0.3초 지연)에서 계속 도는 방식은 12번 중 1번만 대상을 잡았고, 끊어 도는 방식은 12번 모두 잡았다.
+- `turn_pulse.HW_MIN_WHEEL_SPEED = 0.25`는 `hardware.yaml`의 `min_wheel_speed`와 같아야 한다. **조원 A가 이 값을 바꾸면 알려 주세요.**
+- 실측 필요(TODO_MEASURE): 0.05초 펄스 한 번에 실제로 몇 도 도는지 (`drive_test`). 펄스가 너무 짧아 바퀴가 안 움직이면 `PULSE_S`를 늘린다.
