@@ -523,6 +523,31 @@ def test_turn_slows_down_before_target_angle():
     assert mission1_logic.MIN_TURN_SPEED <= small < 0.8
 
 
+def test_return_reverses_instead_of_turning_around():
+    """잡은 뒤 다음 칸이 뒤쪽이면 돌지 않고 후진한다 (2026-10-31 수아)."""
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    logic.maze.observe((9, 2), math.pi / 2)
+    logic.maze.observe((9, 3), math.pi / 2)
+    x, y = cell_center_m((9, 3))
+    obs = Observation(x=x, y=y, yaw=math.pi / 2, now=0.0)
+    logic._plan(obs)
+    assert logic.path[1] == (9, 2)
+    assert logic.reverse
+    assert logic._turn(obs).linear < 0.0
+
+
+def test_last_cell_into_start_is_forward():
+    """출발 격자로 들어가는 칸은 뒤쪽이어도 전진 (큐브를 격자 안에 넣기 위해)."""
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    logic.maze.observe((9, 2), math.pi / 2)
+    x, y = cell_center_m((9, 2))
+    logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0))
+    assert logic.delivering
+    assert not logic.reverse
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

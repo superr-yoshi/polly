@@ -12,6 +12,7 @@ ROS2와 무관한 순수 Python 모듈이다.
             RELEASE -> DONE
   탐색은 poli_maze의 거리 + 방문 횟수 점수로 이웃 한 칸을 선택한다.
   복귀는 실제 방문한 칸 안에서 출발점까지 경로를 계산한다.
+  다음 칸이 뒤쪽이면 돌지 않고 후진한다 (출발 격자에 넣는 마지막 칸 제외).
 
 좌표:
 - 경기장 좌표(m), 왼쪽 아래 모서리가 (0, 0)
@@ -366,11 +367,11 @@ class Mission1Logic:
         else:
             self.target = cell_center_m(path[1])
             self.delivering = False
-            # 미로 탐색에서 뒤쪽 이웃을 고르면 180도 돌지 않고 후진한다.
-            # 복귀 때는 집게를 진행 방향으로 두어 기존 놓기 위치 계산을 유지한다.
-            self.reverse = (
-                self.phase == EXPLORE
-                and abs(heading_error_to(obs, self.target)) > 3 * math.pi / 4)
+            # 다음 칸이 뒤쪽이면 180도 돌지 않고 후진한다 (탐색·복귀 모두, 2026-10-31 수아: 복귀도).
+            # 출발 격자에 넣는 마지막 칸(위 delivering)은 전진: 큐브가 로봇 앞에 있고 출발 격자는
+            # 구석이라 후진으로는 큐브 전체를 격자 안에 넣을 수 없다 (문의 16).
+            # TODO_MEASURE: 복귀 중 후진으로 끌 때 큐브가 집게에서 빠지지 않는지 실기 확인
+            self.reverse = abs(heading_error_to(obs, self.target)) > 3 * math.pi / 4
 
         self._drive_heading = math.atan2(
             self.target[1] - drive_origin[1], self.target[0] - drive_origin[0])
