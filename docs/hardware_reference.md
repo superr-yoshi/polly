@@ -131,7 +131,7 @@
 소프트웨어 반영
 - 2026-10-29부터 다시 Mega 펌웨어 `gripper.cpp`가 D9로 서보를 움직인다. `mega_bridge_node`가 `$GRIP`을 보내고 `$GST`로 상태를 받는다.
   각도 = (µs − 500) / 2000 × 180. 설정 `firmware/mega_sensor_controller/config.h`: `GRIP_OPEN_DEG` 90 (1500 µs),
-  `GRIP_CLOSE_DEG` 120 (약 1833 µs), 1도당 15 ms (닫힘값은 TODO_MEASURE).
+  `GRIP_CLOSE_DEG` 135 (2000 µs), 1도당 8 ms (2026-10-31 15 → 8, 닫힘값은 TODO_MEASURE).
 - (기록) 2026-10-07~10-29에는 `rrc_adapter_node`가 RRC PWM 서보(func 4)로 펄스를 보냈다.
 
 ## 9. Raspberry Pi 5

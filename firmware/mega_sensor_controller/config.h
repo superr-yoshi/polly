@@ -23,7 +23,8 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 #define GRIP_OPEN_DEG   90     // 1500 us = 열림 (2026-10-30 firmware/servo_test 실측)
 #define GRIP_CLOSE_DEG  135    // 2000 us = 빈 집게가 끝까지 닫히는 값 (2026-10-30 실측). 50 mm 대상을 물면
                                //   서보가 계속 민다 -> 웅 소리·발열을 보고 낮춘다 (TODO_MEASURE: 대상 잡는 값)
-#define GRIP_STEP_MS    15     // 1도 이동 간격 (작을수록 빠름)
+#define GRIP_STEP_MS    8      // 1도 이동 간격 (작을수록 빠름). 2026-10-31 15 -> 8: 90->135도 약 0.68 -> 0.36초
+                               //   (잡기가 느림). DS3218은 5 V에서 약 3.3 ms/도라 따라간다
 
 // ---- 주행 모터: Cytron MDD10 (docs/pin_map.md) ------------------------------
 // D6·D7은 Timer4 PWM (약 490 Hz). Servo 라이브러리는 Mega에서 Timer5(D44~46)를 쓰므로 겹치지 않는다.
