@@ -36,6 +36,8 @@ def generate_launch_description():
         DeclareLaunchArgument('debug_view', default_value='false'),
         # 대회 경기장은 점대칭(규정) -> true. 대칭이 아닌 연습 경기장에서만 false (start_mission.sh --test).
         DeclareLaunchArgument('point_symmetry', default_value='true'),
+        # 칸마다 서지 않는 주행 중 판단. 대회 실행은 검증될 때까지 false, 연습 --test에서 true
+        DeclareLaunchArgument('rolling_decision', default_value='false'),
         # TODO_MEASURE: udev 규칙(docs/udev_template.md) 적용 후 이름 확인
         DeclareLaunchArgument('lidar_port', default_value='/dev/robot_lidar'),
 
@@ -80,7 +82,8 @@ def generate_launch_description():
             package='poli_navigation',
             executable='mission1',
             parameters=[{'require_laser_tf': True,
-                         'point_symmetry': LaunchConfiguration('point_symmetry')}],
+                         'point_symmetry': LaunchConfiguration('point_symmetry'),
+                         'rolling_decision': LaunchConfiguration('rolling_decision')}],
             output='screen',
         ),
     ])

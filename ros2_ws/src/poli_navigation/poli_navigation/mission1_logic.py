@@ -102,18 +102,19 @@ CELL_CENTER_TOLERANCE_M = 0.15
 # 속도와 제어 값 (임무 2와 같은 기준, turn_pulse.py 참고)
 # 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
 # 감속(MIN_DRIVE_SPEED)·느린 접근은 실제로는 0.25 m/s가 된다.
-DRIVE_SPEED = 0.6  # 2026-10-31 0.45 -> 0.6 (최대한 빠르게, 팀 요청). hardware.yaml max_linear와 같게
+# 2026-10-31 0.6 -> 0.8 (전부 써서 빠르게). hardware.yaml max_linear와 같게. 바퀴 약 235 rpm (정격 250)
+DRIVE_SPEED = 0.8
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 # 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
 # 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
 # 40 cm 한 칸 약 2.0초 -> 약 1.6초. TODO_MEASURE: 도착 위치가 밀리면 낮춘다
-DRIVE_DECEL = 0.8  # 2026-10-31 0.5 -> 0.8
+DRIVE_DECEL = 1.2  # 2026-10-31 0.8 -> 1.2
 # 모든 상태 공통 가감속 제한 (step()의 _limit_accel). 급출발·급정지 방지.
 # 속도를 줄일 때는 더 빨리 줄여 계획하지 않은 정지(대상 발견 등)에서 덜 밀리게 한다.
 # TODO_MEASURE: 출발할 때 앞이 들리거나 바퀴가 헛돌면 LINEAR_ACCEL을 낮춘다
-LINEAR_ACCEL = 0.8   # m/s^2, 2026-10-31 0.5 -> 0.8. 한 칸(40 cm)에서 최고 약 0.57 m/s
-LINEAR_DECEL = 1.5   # m/s^2, 0.6 m/s -> 0 약 0.4초 (약 12 cm)
-ANGULAR_ACCEL = 10.0  # rad/s^2, 2026-10-31 6 -> 10 (0 -> 2.5 rad/s 약 0.25초)
+LINEAR_ACCEL = 1.2   # m/s^2, 2026-10-31 0.8 -> 1.2. TODO_MEASURE: 바퀴 헛돎·잡은 큐브 놓침이 보이면 낮춘다
+LINEAR_DECEL = 2.0   # m/s^2, 0.8 m/s -> 0 약 0.4초 (약 16 cm)
+ANGULAR_ACCEL = 15.0  # rad/s^2, 2026-10-31 10 -> 15 (0 -> 3.5 rad/s 약 0.23초)
 # 이만큼 판단이 끊기면 그동안 노드가 정지 명령을 보냈다고 보고 0에서 다시 가속한다.
 ACCEL_RESET_S = 0.15
 # 카메라 접근: 멀 때는 빠르게, 큐브가 커 보이면 천천히 (면적 판단 지연으로 지나치지 않게)
@@ -122,8 +123,10 @@ APPROACH_SLOW_SPEED = 0.12
 APPROACH_SLOW_AREA = 20000.0  # TODO_MEASURE: 잡는 위치 약 15 cm 전
 # 2026-10-31 1.2 -> 1.8 (회전이 느리고 끊김). hardware.yaml max_angular 2.0 안.
 # TODO_MEASURE: 목표각을 지나쳐 되돌아 돌면 TURN_SPEED 또는 TURN_DECEL을 낮춘다 (IMU 지연)
-TURN_SPEED = 2.5  # 2026-10-31 1.8 -> 2.5 (최대한 빠르게). hardware.yaml max_angular 2.6 안
-TURN_DECEL = 6.0  # rad/s^2 (2026-10-31 4 -> 6), 목표각 앞에서 일정하게 감속해 MIN_TURN_SPEED로 도착
+# 2026-10-31 2.5 -> 3.5. hardware.yaml max_angular 3.6 안.
+# TODO_MEASURE: '회전 후 오차'가 계속 음수(넘침)로 크면 TURN_LEAD_S를 올린다
+TURN_SPEED = 3.5
+TURN_DECEL = 10.0  # rad/s^2 (2026-10-31 6 -> 10), 목표각 앞에서 일정하게 감속해 MIN_TURN_SPEED로 도착
 # 연속 회전 감속 하한. 바퀴 속도 약 0.084 m/s = 하드웨어 최저 속도(0.08) 근처.
 # 더 낮추면 바퀴가 섰다 갔다 하며 끊겨 돈다.
 MIN_TURN_SPEED = 0.6
@@ -136,6 +139,8 @@ DRIVE_MAX_CORRECTION_RAD = math.radians(15.0)
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
+# 칸 사이 TURN은 남은 오차가 이 안이면 끝내고 나머지는 달리면서 맞춘다 (2026-10-31: 회전당 약 0.15~0.2초 단축)
+TURN_EXIT_RAD = math.radians(10.0)
 # 회전 속도에 맞춘 정지 보정: 지금 각속도로 이 시간만큼 더 돈다고 보고 미리 감속·정지한다.
 # (명령 감속 약 0.1초 + Mega·모터 지연). 2026-10-31 회전을 빠르게 한 뒤 목표각을 넘겨 벽에 박음.
 # TODO_MEASURE: 로그 '회전 후 오차'가 목표를 넘친 쪽(같은 부호로 계속 큼)이면 늘리고, 덜 돈 쪽이면 줄인다
@@ -214,6 +219,9 @@ GRIPPER_SETTLE_S = 0.1
 GRIPPER_CLOSED = 'closed'
 GRIPPER_OPENED = 'open'
 
+# 출발 칸에 와서 집게를 열지 (True) 잡은 채 끝낼지 (False, 기본). _deliver 참고
+RELEASE_AT_START = False
+
 # 갈 길이 없을 때 다시 스캔하기 전까지 기다리는 시간
 STUCK_RETRY_S = 1.0
 
@@ -266,10 +274,12 @@ class Observation:
 
 class Mission1Logic:
 
-    def __init__(self, point_symmetry=True):
+    def __init__(self, point_symmetry=True, rolling_decision=None):
         # point_symmetry: 대회 규정상 장애물은 점대칭이라 한 칸이 막히면 반대편도 막힘으로 칠한다.
         # 대칭이 아닌 연습 경기장에서는 끈다 (start_mission.sh --test).
         self.grid = GridMap(use_point_symmetry=point_symmetry)
+        # 주행 중 판단 (칸마다 안 서기). 기본은 ROLLING_DECISION, 노드 파라미터로 켤 수 있다 (연습 --test)
+        self.rolling = ROLLING_DECISION if rolling_decision is None else rolling_decision
         self.phase = EXPLORE
         self.state = SCAN
         self.state_started_at = None
@@ -443,7 +453,7 @@ class Mission1Logic:
 
     def rolling_scan_ok(self, obs):
         """이 스캔으로 주행 중 판단을 할 수 있는지 (노드도 같은 스캔으로 벽 보정을 한다)."""
-        if not ROLLING_DECISION or self.state != DRIVE or self.delivering or self.target is None:
+        if not self.rolling or self.state != DRIVE or self.delivering or self.target is None:
             return False
         if obs.scan is None or obs.scan_time is None or self._decided_for == self.target:
             return False
@@ -728,8 +738,7 @@ class Mission1Logic:
             return Command()
 
         # TODO: 출발 격자 안에서 돌아가기 시작한 경우 (보통은 없다)
-        self._change_state(RELEASE, obs)
-        return Command(gripper=GRIPPER_OPEN)
+        return self._deliver(obs)
 
     def _turn_toward(self, error, obs):
         """IMU 각도 오차에 따라 연속 회전하고 목표각 앞에서 일정하게 감속한다."""
@@ -742,7 +751,7 @@ class Mission1Logic:
         # 지금 돌고 있는 속도로 더 돌 각도를 빼고 판단한다 (빠를수록 일찍 감속·정지).
         predicted = error - self._last_angular * TURN_LEAD_S
 
-        if abs(predicted) < TURN_TOLERANCE_RAD:
+        if abs(predicted) < TURN_EXIT_RAD:
             self._turn_heading = obs.yaw + error
             self._turn_ended_at = obs.now
             self._change_state(DRIVE, obs)
@@ -811,8 +820,7 @@ class Mission1Logic:
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
         if distance < ARRIVE_TOLERANCE_M or passed or endpoint_reached:
             if self.delivering:
-                self._change_state(RELEASE, obs)
-                return Command(gripper=GRIPPER_OPEN)
+                return self._deliver(obs)
             if self._decided_for == self.target and not self._scan_at_arrival:
                 # 달리면서 이미 판단했다 -> 서서 기다리지 않고 바로 돈다.
                 self._decided_for = None
@@ -830,7 +838,7 @@ class Mission1Logic:
         speed = min(DRIVE_SPEED, math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
         if obs.scan_time is not None:
             self._has_scan_time = True
-        if (ROLLING_DECISION and self._has_scan_time and not self.delivering
+        if (self.rolling and self._has_scan_time and not self.delivering
                 and self._decided_for != self.target):
             # 판단 전에는 가운데 앞 ROLL_ZONE_M부터 ROLL_SPEED로 달린다 (서지 않고 판단할 수 있게).
             roll_left = max(0.0, remaining - ROLL_ZONE_M)
@@ -1017,6 +1025,19 @@ class Mission1Logic:
     # ------------------------------------------------------------
     # 놓기 (RELEASE -> DONE)
     # ------------------------------------------------------------
+
+    def _deliver(self, obs):
+        """
+        출발 칸에 큐브를 가져왔다.
+
+        규정 3.3.4: 시작 지점으로 '운송'하면 승리 (내려놓을 필요 없음), 3.3.6: 상대가 탈취 가능.
+        그래서 기본은 놓지 않고 잡은 채로 끝낸다 (2026-10-31, 놓기 대기 0.7초도 줄어든다).
+        """
+        if RELEASE_AT_START:
+            self._change_state(RELEASE, obs)
+            return Command(gripper=GRIPPER_OPEN)
+        self._change_state(DONE, obs)
+        return Command()
 
     def _release(self, obs):
         if not self._gripper_done(obs, GRIPPER_OPENED, RELEASE_WAIT_S):

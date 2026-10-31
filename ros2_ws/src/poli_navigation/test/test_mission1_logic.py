@@ -166,17 +166,17 @@ def test_full_run_delivers_cube_to_start_cell():
     assert logic.state == DONE
     assert FACE in states
     assert GRASP in states
-    assert RELEASE in states
+    assert RELEASE not in states  # 놓지 않고 잡은 채로 끝낸다 (규정 3.3.4·3.3.6)
 
     # 큐브가 출발 격자 가운데에 놓여 있어야 한다.
     assert distance_to_start(robot.cube) < 0.1
     assert point_to_cell(*robot.cube) == MISSION1_START
 
-    # 처음에 집게를 열고, 잡은 뒤, 마지막에 놓는다.
+    # 처음에 집게를 열고, 잡은 뒤, 출발 칸에서도 잡은 채로 끝낸다.
     assert robot.gripper_log[0] == GRIPPER_OPEN
     assert GRIPPER_GRAB in robot.gripper_log
-    assert robot.gripper_log[-1] == GRIPPER_OPEN
-    assert robot.holding is False
+    assert robot.gripper_log[-1] == GRIPPER_GRAB
+    assert robot.holding is True
 
 
 def test_full_run_never_enters_blocked_cell():
@@ -565,7 +565,9 @@ def test_drive_arrives_slowly_after_constant_deceleration():
     far = logic._drive(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=0.0)).linear
     near = logic._drive(Observation(x=1.0, y=1.36, yaw=math.pi / 2, now=0.0)).linear
     assert far == mission1_logic.DRIVE_SPEED
-    assert near < 0.15
+    # 남은 4 cm - 도착 여유 3 cm = 1 cm에서 일정 감속 속도
+    limit = math.sqrt(mission1_logic.MIN_DRIVE_SPEED ** 2 + 2 * mission1_logic.DRIVE_DECEL * 0.01)
+    assert near < limit + 1e-6
 
 
 def test_turn_slows_down_before_target_angle():
@@ -573,7 +575,7 @@ def test_turn_slows_down_before_target_angle():
     big = abs(logic._turn_toward(math.radians(90.0), None))
     small = abs(logic._turn_toward(math.radians(6.0), None))
     assert big == mission1_logic.TURN_SPEED
-    assert mission1_logic.MIN_TURN_SPEED <= small < 0.8
+    assert mission1_logic.MIN_TURN_SPEED <= small < mission1_logic.TURN_SPEED / 2
 
 
 def test_return_reverses_instead_of_turning_around():

@@ -74,8 +74,10 @@ class Mission1Node(Node):
         super().__init__('mission1')
 
         # 대회 경기장은 장애물이 점대칭(규정)이라 기본 True. 대칭이 아닌 연습 경기장에서만 false.
+        # rolling_decision: 칸마다 서지 않고 주행 중 판단 (기본 끔, 연습 --test에서 켬)
         self.logic = Mission1Logic(
-            point_symmetry=self.declare_parameter('point_symmetry', True).value)
+            point_symmetry=self.declare_parameter('point_symmetry', True).value,
+            rolling_decision=self.declare_parameter('rolling_decision', False).value)
         self.pose = None
         self.odom_received_at = None
         self.last_motion_at = self.now_seconds()

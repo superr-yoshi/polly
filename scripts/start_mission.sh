@@ -61,7 +61,7 @@ DEBUG_VIEW=false
 EXTRA=""
 if [ "$MODE" = "--test" ]; then
   DEBUG_VIEW=true
-  [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false"
+  [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false rolling_decision:=true"
 fi
 setsid nohup env --default-signal=INT ros2 launch poli_navigation "mission${MISSION}.launch.py" \
   use_fake_hardware:=false debug_view:=$DEBUG_VIEW $EXTRA > "$LOG" 2>&1 < /dev/null &
