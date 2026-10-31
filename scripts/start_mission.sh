@@ -7,6 +7,12 @@
 #            ... start_mission.sh 2 --test-noview   # 무선은 켜되 Foxglove·카메라 영상은 끔 (대회와 같은 부하)
 #   멈추기:  ~/polly/scripts/stop_mission.sh
 #
+#   빠른 시작 (2026-11-01, 엔터 -> 출발 약 4 s -> 0.1 s):
+#     start_mission.sh 2 prepare [--test|--test-noview]   # 시작 선언 전: 모든 노드를 켜고 대기
+#     start_mission.sh go                                  # 시작 신호만 (prepare 때 고른 모드를 따른다)
+#   prepare 상태의 임무 노드는 시작 신호 전에 /cmd_vel·/gripper/command를 내지 않는다 (규정 3.5.6).
+#   무선 차단(대회 모드)은 go 2초 뒤에 한다.
+#
 # 하는 일
 # 1. 실제 하드웨어로 mission<N>.launch.py를 SSH와 분리해서 띄운다 (SSH가 끊겨도 계속 실행).
 #    로그: ~/poli_logs/mission<N>_<시각>.log
@@ -18,10 +24,35 @@
 # 준비: comm_off.sh 맨 위의 rfkill 비밀번호 없이 쓰기 설정 (Pi에서 1회).
 set -u
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
+START_FILE=/tmp/poli_mission_start
+PREPARED_MODE_FILE=/tmp/poli_mission_prepared
+
+# 시작 신호: 가장 빨리 끝나야 하므로 ROS 환경을 불러오지 않는다.
+if [ "${1:-}" = "go" ]; then
+  if [ ! -f "$PREPARED_MODE_FILE" ] || ! pgrep -f "[p]oli_navigation mission[12].launch.py" > /dev/null; then
+    echo "준비된 임무가 없다. 먼저 $0 <1|2> prepare" >&2
+    exit 1
+  fi
+  touch "$START_FILE"
+  echo "시작 신호 보냄"
+  if [ -z "$(cat "$PREPARED_MODE_FILE")" ]; then
+    echo "2초 뒤 Wi-Fi·Bluetooth를 끈다. SSH가 끊기는 것은 정상이다."
+    LOG="$(ls -t "$HOME"/poli_logs/mission*_*.log | head -1)"
+    setsid nohup "$HERE/comm_off.sh" 2 >> "$LOG" 2>&1 < /dev/null &
+  fi
+  exit 0
+fi
+
 MISSION="${1:-}"
+PREPARE=false
+if [ "${2:-}" = "prepare" ]; then
+  PREPARE=true
+  shift
+fi
 MODE="${2:-}"
 if [ "$MISSION" != "1" ] && [ "$MISSION" != "2" ]; then
-  echo "사용법: $0 <1|2> [--test]" >&2
+  echo "사용법: $0 <1|2> [prepare] [--test|--test-noview]  /  $0 go" >&2
   exit 2
 fi
 if [ -n "$MODE" ] && [ "$MODE" != "--test" ] && [ "$MODE" != "--test-noview" ]; then
@@ -29,7 +60,6 @@ if [ -n "$MODE" ] && [ "$MODE" != "--test" ] && [ "$MODE" != "--test-noview" ]; 
   exit 2
 fi
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
 
 if pgrep -f "[p]oli_navigation mission[12].launch.py" > /dev/null; then
@@ -69,8 +99,16 @@ fi
 if [ "$MODE" = "--test-noview" ]; then
   [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false rolling_decision:=true"
 fi
+rm -f "$START_FILE" "$PREPARED_MODE_FILE"
 setsid nohup env --default-signal=INT ros2 launch poli_navigation "mission${MISSION}.launch.py" \
-  use_fake_hardware:=false debug_view:=$DEBUG_VIEW $EXTRA > "$LOG" 2>&1 < /dev/null &
+  use_fake_hardware:=false debug_view:=$DEBUG_VIEW wait_for_start:=$PREPARE $EXTRA \
+  > "$LOG" 2>&1 < /dev/null &
+if [ "$PREPARE" = true ]; then
+  echo "$MODE" > "$PREPARED_MODE_FILE"
+  echo "임무 ${MISSION} 준비 (PID $!), 로그: $LOG"
+  echo "로그에 'Ready'가 나오면 시작 가능: $0 go"
+  exit 0
+fi
 echo "임무 ${MISSION} 시작 (PID $!), 로그: $LOG"
 [ "$DEBUG_VIEW" = true ] && echo "Foxglove: ws://<파이IP>:8765 (/scan, /vision/debug_image/compressed)"
 

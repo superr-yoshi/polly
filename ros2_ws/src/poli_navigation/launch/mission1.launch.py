@@ -34,6 +34,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_fake_hardware', default_value='true'),
         DeclareLaunchArgument('debug_view', default_value='false'),
+        # true: 임무 노드를 미리 켜 두고 시작 신호(start_mission.sh go)를 기다린다
+        DeclareLaunchArgument('wait_for_start', default_value='false'),
         # 대회 경기장은 점대칭(규정) -> true. 대칭이 아닌 연습 경기장에서만 false (start_mission.sh --test).
         DeclareLaunchArgument('point_symmetry', default_value='true'),
         # 칸마다 서지 않는 주행 중 판단. 대회 실행은 검증될 때까지 false, 연습 --test에서 true
@@ -89,7 +91,8 @@ def generate_launch_description():
             executable='mission1',
             parameters=[{'require_laser_tf': True,
                          'point_symmetry': LaunchConfiguration('point_symmetry'),
-                         'rolling_decision': LaunchConfiguration('rolling_decision')}],
+                         'rolling_decision': LaunchConfiguration('rolling_decision'),
+                         'wait_for_start': LaunchConfiguration('wait_for_start')}],
             output='screen',
         ),
     ])

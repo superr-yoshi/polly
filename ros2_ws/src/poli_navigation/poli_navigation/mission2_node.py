@@ -1,4 +1,5 @@
 import math
+import os
 import signal
 import time
 
@@ -38,6 +39,11 @@ MOTION_LOG_PERIOD = 0.2
 CONTROL_GAP_WARN_S = 0.15
 # 콜백 하나가 이보다 오래 걸리면 경고 (판단 멈춤 원인 확인용)
 CALLBACK_WARN_S = 0.05
+
+# 시작 신호 파일 (start_mission.sh go가 만든다). wait_for_start일 때 이 파일이 생기기 전에는
+# /cmd_vel·/gripper/command를 하나도 내지 않는다 (규정 3.5.6, 2026-11-01 팀 결정:
+# 노드를 미리 켜 두고 시작 신호만 보내 엔터 -> 출발 지연을 약 4 s -> 0.1 s로).
+DEFAULT_START_FILE = '/tmp/poli_mission_start'
 MOTION_LOG_STATES = ('DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
 
 
@@ -60,6 +66,10 @@ class Mission2Node(Node):
         super().__init__('mission2')
 
         self.logic = Mission2Logic()
+        self.wait_for_start = self.declare_parameter('wait_for_start', False).value
+        self.start_file = self.declare_parameter('start_file', DEFAULT_START_FILE).value
+        self.started = not self.wait_for_start
+        self.ready_logged = False
         # odom으로 계산한 위치와 회전 속도. 밀리면 실제 위치와 달라진다.
         self.odom_pose = None
         self.angular_speed = 0.0
@@ -185,7 +195,27 @@ class Mission2Node(Node):
             return None
         return self.vision
 
+    def check_start(self):
+        """시작 신호를 기다리는 중이면 False. 신호가 오면 지금 자리를 출발 위치로 다시 잡는다."""
+        if self.started:
+            return True
+        if not self.ready_logged and self.odom_pose is not None and self.vision is not None:
+            self.get_logger().info('Ready: 시작 신호 대기 중 (start_mission.sh go)')
+            self.ready_logged = True
+        if not os.path.exists(self.start_file):
+            return False
+        # 준비 뒤 로봇을 옮겨 놓았어도 되도록 지금 자리를 START_POSE로 본다.
+        self.fused = [0.0, 0.0, 0.0] if self.prev_odom is not None else None
+        if self.fused is not None:
+            self.odom_pose = odom_to_arena(*self.fused)
+        self.wall_correction = WallCorrection()
+        self.started = True
+        self.get_logger().info('Start signal')
+        return True
+
     def control_step(self):
+        if not self.check_start():
+            return
         if self.odom_pose is None:
             # 위치를 아직 모르면 움직이지 않는다.
             return

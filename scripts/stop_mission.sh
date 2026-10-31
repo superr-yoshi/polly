@@ -7,6 +7,8 @@
 set -u
 
 PATTERN="[p]oli_navigation mission[12].launch.py"
+# 준비(prepare) 상태의 시작 신호도 지운다 (start_mission.sh)
+rm -f /tmp/poli_mission_start /tmp/poli_mission_prepared
 
 wait_exit() {
   for _ in $(seq 20); do

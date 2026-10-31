@@ -35,6 +35,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_fake_hardware', default_value='true'),
         DeclareLaunchArgument('debug_view', default_value='false'),
+        # true: 임무 노드를 미리 켜 두고 시작 신호(start_mission.sh go)를 기다린다
+        DeclareLaunchArgument('wait_for_start', default_value='false'),
         # TODO_MEASURE: udev 규칙(docs/udev_template.md) 적용 후 이름 확인
         DeclareLaunchArgument('lidar_port', default_value='/dev/robot_lidar'),
 
@@ -84,6 +86,7 @@ def generate_launch_description():
         Node(
             package='poli_navigation',
             executable='mission2',
+            parameters=[{'wait_for_start': LaunchConfiguration('wait_for_start')}],
             output='screen',
         ),
     ])

@@ -1,4 +1,5 @@
 import math
+import os
 import signal
 
 from geometry_msgs.msg import Twist
@@ -13,6 +14,7 @@ from poli_navigation.mission1_logic import (
     STUCK,
 )
 from poli_navigation.mission2_node import (
+    DEFAULT_START_FILE,
     raise_keyboard_interrupt,
     VISION_TIMEOUT,
     yaw_from_quaternion,
@@ -78,6 +80,11 @@ class Mission1Node(Node):
         self.logic = Mission1Logic(
             point_symmetry=self.declare_parameter('point_symmetry', True).value,
             rolling_decision=self.declare_parameter('rolling_decision', False).value)
+        # 시작 신호 대기 (mission2_node.py DEFAULT_START_FILE 참고)
+        self.wait_for_start = self.declare_parameter('wait_for_start', False).value
+        self.start_file = self.declare_parameter('start_file', DEFAULT_START_FILE).value
+        self.started = not self.wait_for_start
+        self.ready_logged = False
         self.pose = None
         self.odom_received_at = None
         self.last_motion_at = self.now_seconds()
@@ -257,7 +264,25 @@ class Mission1Node(Node):
             observation.area = vision.area
         return observation
 
+    def check_start(self):
+        """시작 신호를 기다리는 중이면 False. 신호가 오면 지금 자리를 출발 위치로 다시 잡는다."""
+        if self.started:
+            return True
+        if not self.ready_logged and self.pose is not None and self.vision is not None:
+            self.get_logger().info('Ready: 시작 신호 대기 중 (start_mission.sh go)')
+            self.ready_logged = True
+        if not os.path.exists(self.start_file):
+            return False
+        if self.fused is not None:
+            self.fused = [0.0, 0.0, 0.0]
+            self.pose = odom_to_arena(*self.fused)
+        self.started = True
+        self.get_logger().info('Start signal')
+        return True
+
     def control_step(self):
+        if not self.check_start():
+            return
         now = self.now_seconds()
         scan = self.fresh_scan(now)
         if (self.pose is None or self.odom_received_at is None
