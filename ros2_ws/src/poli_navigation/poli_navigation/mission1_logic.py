@@ -40,6 +40,7 @@ from poli_navigation.mission2_logic import (
     GRIPPER_GRAB,
     GRIPPER_OPEN,
     heading_error_to,
+    ramp,
 )
 from poli_navigation.scan_to_grid import (
     nearest_ahead,
@@ -240,16 +241,6 @@ GRASP = 'GRASP'
 RELEASE = 'RELEASE'
 DONE = 'DONE'
 STUCK = 'STUCK'
-
-
-def ramp(target, last, accel, decel, dt):
-    """last에서 target으로 dt 동안 accel(빨라질 때)·decel(느려질 때)만큼만 바꾼다."""
-    if target * last < 0.0:
-        # 방향이 바뀌면 먼저 0까지 줄인다.
-        target = 0.0
-    rate = accel if abs(target) > abs(last) else decel
-    step = rate * dt
-    return last + max(-step, min(step, target - last))
 
 
 @dataclass

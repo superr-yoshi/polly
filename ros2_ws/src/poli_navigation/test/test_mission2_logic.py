@@ -12,15 +12,18 @@ from poli_navigation.mission2_logic import (
     DRIVE,
     GRASP,
     GRASP_WAIT_S,
+    GRIPPER_CLOSED,
     GRIPPER_GRAB,
     GRIPPER_OPEN,
+    heading_error_to,
     HOLD,
     Mission2Logic,
     Observation,
+    PUSH,
     RETREAT,
     SEARCH,
     START_POSE,
-    TURN,
+    TARGET_AREA_AT_50CM,
 )
 
 
@@ -29,7 +32,8 @@ DT = 0.05
 # 테스트용 가짜 카메라 (SIM_ONLY)
 CAMERA_HALF_FOV_RAD = math.radians(30.0)
 CAMERA_MAX_RANGE_M = 2.0
-AREA_SCALE = 937.5  # 거리 0.25m에서 면적 15000
+# 로직의 거리 추정과 같은 크기 (50 cm에서 면적 TARGET_AREA_AT_50CM)
+AREA_SCALE = TARGET_AREA_AT_50CM * 0.5 ** 2
 
 
 class SimRobot:
@@ -40,6 +44,7 @@ class SimRobot:
         self.target = target
         self.now = 0.0
         self.holding = None
+        self.gripper_state = None
         self.gripper_log = []
 
     def observe(self):
@@ -64,6 +69,7 @@ class SimRobot:
             x_offset=-bearing / CAMERA_HALF_FOV_RAD if detected else 0.0,
             area=AREA_SCALE / max(distance, 0.01) ** 2 if detected else 0.0,
             holding=self.holding,
+            gripper_state=self.gripper_state,
         )
 
     def apply(self, command):
@@ -101,8 +107,8 @@ def test_full_run_reaches_hold_near_center():
     states = run(logic, robot, until=HOLD)
 
     assert logic.state == HOLD
-    assert states[:2] == [TURN, DRIVE]
-    assert GRASP in states
+    # 출발 곡선 중에 대상이 보이면 서지 않고 바로 카메라 접근
+    assert states == [DRIVE, APPROACH, PUSH, GRASP, HOLD]
 
     # 집는 순간 대상과 가까워야 한다.
     distance = math.hypot(CENTER_M[0] - robot.x, CENTER_M[1] - robot.y)
@@ -113,14 +119,27 @@ def test_full_run_reaches_hold_near_center():
     assert robot.gripper_log[-1] == GRIPPER_GRAB
 
 
-def test_first_turn_is_left_45_degrees():
+def test_start_moves_forward_while_turning_left():
     logic = Mission2Logic()
     robot = SimRobot()
 
-    run(logic, robot, until=DRIVE)
+    # 제자리 45도 회전 없이 첫 명령부터 전진하면서 왼쪽으로 돈다.
+    for _ in range(4):
+        command = logic.step(robot.observe())
+        robot.apply(command)
+        assert command.linear > 0.0
+        assert command.angular > 0.0
+    assert logic.state == DRIVE
 
-    turned = robot.yaw - START_POSE[2]
-    assert abs(turned - math.radians(45.0)) < math.radians(6.0)
+
+def test_start_arc_is_small():
+    logic = Mission2Logic()
+    robot = SimRobot()
+
+    # 15 cm 안에 중앙 방향(왼쪽 45도)으로 거의 맞춘다.
+    while math.dist((robot.x, robot.y), START_POSE[:2]) < 0.15:
+        robot.apply(logic.step(robot.observe()))
+    assert abs(heading_error_to(robot.observe(), CENTER_M)) < math.radians(10.0)
 
 
 def test_never_enters_danger_zone_in_normal_run():
@@ -152,8 +171,8 @@ def test_hold_does_not_move():
 
 def test_search_when_target_not_visible_after_drive():
     logic = Mission2Logic()
-    # 대상이 중앙에서 옆으로 밀려나 있는 경우
-    robot = SimRobot(target=(CENTER_M[0] + 0.5, CENTER_M[1] - 0.5))
+    # 대상이 중앙에서 옆으로 밀려나 있는 경우 (출발 곡선에서 안 보이는 쪽)
+    robot = SimRobot(target=(CENTER_M[0] + 0.5, CENTER_M[1] + 0.5))
 
     states = run(logic, robot, until=HOLD)
 
@@ -176,6 +195,20 @@ def test_grasp_failed_goes_back_to_search():
     # 집게를 다시 열고 탐색부터 다시 시작한다. (이후 재시도)
     assert logic.state == SEARCH
     assert robot.gripper_log[-1] == GRIPPER_OPEN
+
+
+def test_grasp_ends_as_soon_as_gripper_reports_closed():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    started = robot.now
+
+    robot.gripper_state = GRIPPER_CLOSED
+    run(logic, robot, max_seconds=started + GRASP_WAIT_S, until=HOLD)
+
+    # 최대 대기 시간(GRASP_WAIT_S)까지 기다리지 않는다.
+    assert logic.state == HOLD
+    assert robot.now - started < 0.5
 
 
 def test_lost_target_during_hold_goes_back_to_search():
@@ -276,3 +309,16 @@ def test_search_finds_target_with_latency_from_any_heading():
         assert logic.state == HOLD, (start_deg, states)
         # 한 번 찾은 대상을 놓쳐서 다시 찾는 일(SEARCH로 되돌아감)이 없어야 한다.
         assert SEARCH not in states[1:], (start_deg, states)
+
+
+def test_full_run_with_latency_is_fast_and_direct():
+    logic = Mission2Logic()
+    robot = LaggedSimRobot(START_POSE)
+
+    states = run(logic, robot, until=PUSH)
+
+    # 서거나 다시 찾는 일 없이 곡선 -> 카메라 접근 -> 밀어 넣기
+    assert states == [DRIVE, APPROACH, PUSH]
+    # 예전 방식(제자리 45도 회전 + 0.25 m/s 직진)은 집기 시작까지 약 9초 걸렸다.
+    assert robot.now < 3.5
+    assert math.dist((robot.x, robot.y), CENTER_M) < 0.3
