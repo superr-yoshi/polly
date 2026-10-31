@@ -55,9 +55,13 @@ LOG="$LOG_DIR/mission${MISSION}_$(date +%Y%m%d_%H%M%S).log"
 
 # 백그라운드(&)로 띄우면 bash가 SIGINT를 무시 상태로 넘겨서 stop_mission.sh(Ctrl+C와 같은 SIGINT)로
 # 멈추지 않는다 (2026-10-07 Pi에서 확인). env --default-signal로 SIGINT를 되살린다 (coreutils 8.31+).
+# --test(연습)에서는 노트북 Foxglove 확인용 브리지·카메라 영상도 켠다 (대회에서는 끔, 규정 1.3).
+DEBUG_VIEW=false
+[ "$MODE" = "--test" ] && DEBUG_VIEW=true
 setsid nohup env --default-signal=INT ros2 launch poli_navigation "mission${MISSION}.launch.py" \
-  use_fake_hardware:=false > "$LOG" 2>&1 < /dev/null &
+  use_fake_hardware:=false debug_view:=$DEBUG_VIEW > "$LOG" 2>&1 < /dev/null &
 echo "임무 ${MISSION} 시작 (PID $!), 로그: $LOG"
+[ "$DEBUG_VIEW" = true ] && echo "Foxglove: ws://<파이IP>:8765 (/scan, /vision/debug_image/compressed)"
 
 if [ -z "$MODE" ]; then
   echo "2초 뒤 Wi-Fi·Bluetooth를 끈다. SSH가 끊기는 것은 정상이다."

@@ -15,14 +15,17 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     fake = LaunchConfiguration('use_fake_hardware')
+    # 연습 확인용: 카메라 확인 영상 + Foxglove 브리지(노트북에서 /scan·TF·영상 보기).
+    # 대회에서는 끈다 (임무 시작 후 외부 통신 금지, 규정 1.3). start_mission.sh --test에서만 켠다.
+    debug_view = LaunchConfiguration('debug_view')
     hardware = os.path.join(
         get_package_share_directory('poli_hardware'),
         'launch', 'hardware.launch.py'
@@ -30,6 +33,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('use_fake_hardware', default_value='true'),
+        DeclareLaunchArgument('debug_view', default_value='false'),
         # TODO_MEASURE: udev 규칙(docs/udev_template.md) 적용 후 이름 확인
         DeclareLaunchArgument('lidar_port', default_value='/dev/robot_lidar'),
 
@@ -56,8 +60,18 @@ def generate_launch_description():
         Node(
             package='camera_vision',
             executable='red_object_detector',
+            parameters=[{'debug_image_hz': PythonExpression(
+                ["5.0 if '", debug_view, "' == 'true' else 0.0"])}],
             output='screen',
             condition=UnlessCondition(fake),
+        ),
+
+        Node(
+            package='foxglove_bridge',
+            executable='foxglove_bridge',
+            parameters=[{'port': 8765}],
+            output='log',
+            condition=IfCondition(debug_view),
         ),
 
         Node(

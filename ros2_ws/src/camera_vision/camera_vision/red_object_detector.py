@@ -12,6 +12,7 @@ from poli_interfaces.msg import TargetDetection
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from sensor_msgs.msg import CompressedImage
 
 # ---------------------------------------------------------------------------
 # 카메라 설정
@@ -23,6 +24,10 @@ CAMERA_FPS = 30.0
 
 # 발행 주기. 약속은 10Hz 이상. 실제 값은 ros2 topic hz 로 확인한다.
 PUBLISH_HZ = 20.0
+# 연습용 확인 영상 (/vision/debug_image/compressed, JPEG). 노트북 Foxglove로 본다.
+# 대회에서는 외부 통신 금지(규정 1.3)이므로 쓰지 않는다 (start_mission.sh --test에서만 켬).
+DEBUG_IMAGE_SIZE = (320, 240)
+DEBUG_IMAGE_QUALITY = 60
 
 # 빨간 물체를 로봇 기준 왼쪽에 두고 x_offset 이 음수인지 확인. 양수가 나오면(화면이 좌우 반전) True 로 바꾼다.
 # 2026-10-30 확인: 카메라를 케이블이 아래로 가게 단 상태에서 왼쪽 앞 약 50 cm 대상 -> x_offset -0.83 (맞음)
@@ -109,6 +114,15 @@ class RedTargetDetector(Node):
         #          --ros-args -p show_debug:=true
         self.declare_parameter('show_debug', False)
         self.show_debug = self.get_parameter('show_debug').value
+        # 0이면 끔. 켜면 이 주기(Hz)로 외곽선·면적을 그린 작은 영상을 발행한다 (연습용).
+        self.declare_parameter('debug_image_hz', 0.0)
+        self.debug_image_period = 0.0
+        hz = float(self.get_parameter('debug_image_hz').value)
+        if hz > 0.0:
+            self.debug_image_period = 1.0 / hz
+            self.debug_publisher = self.create_publisher(
+                CompressedImage, '/vision/debug_image/compressed', 1)
+        self.last_debug_image = 0.0
 
         self.publisher = self.create_publisher(
             TargetDetection, '/vision/target', 10)
@@ -162,6 +176,33 @@ class RedTargetDetector(Node):
 
         if self.show_debug:
             self.show_debug_windows(frame, mask, contour)
+        if self.debug_image_period > 0.0:
+            self.publish_debug_image(frame, contour, detected, x_offset, area)
+
+    def publish_debug_image(self, frame, contour, detected, x_offset, area):
+        """외곽선과 면적을 그린 작은 JPEG 영상을 주기적으로 발행한다 (연습용)."""
+        now = self.get_clock().now()
+        seconds = now.nanoseconds / 1e9
+        if seconds - self.last_debug_image < self.debug_image_period:
+            return
+        self.last_debug_image = seconds
+        height, width = frame.shape[:2]
+        view = frame.copy()
+        cv2.line(view, (width // 2, 0), (width // 2, height), (255, 255, 0), 1)
+        if contour is not None:
+            cv2.drawContours(view, [contour], -1, (0, 255, 0), 3)
+        text = f'area={area:.0f} x={x_offset:+.2f}' if detected else 'no target'
+        cv2.putText(view, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+        ok, jpeg = cv2.imencode('.jpg', cv2.resize(view, DEBUG_IMAGE_SIZE),
+                                [cv2.IMWRITE_JPEG_QUALITY, DEBUG_IMAGE_QUALITY])
+        if not ok:
+            return
+        msg = CompressedImage()
+        msg.header.stamp = now.to_msg()
+        msg.header.frame_id = 'camera_link'
+        msg.format = 'jpeg'
+        msg.data = jpeg.tobytes()
+        self.debug_publisher.publish(msg)
 
     def show_debug_windows(self, frame, mask, contour):
         """확인용 화면을 띄운다 (모니터가 있을 때만)."""
