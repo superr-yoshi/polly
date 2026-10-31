@@ -19,7 +19,8 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from poli_hardware.calibration import (
-    corrected_ticks_per_rev, corrected_wheel_radius, corrected_wheel_separation)
+    corrected_ticks_per_rev, corrected_wheel_radius, corrected_wheel_separation, trapezoid,
+    trapezoid_scale)
 from poli_hardware.diff_drive import DiffDriveParams, twist_to_wheels, wheels_to_twist
 import rclpy
 from rclpy.node import Node
@@ -29,6 +30,9 @@ from sensor_msgs.msg import Imu
 import yaml
 
 RATE = 20.0  # /cmd_vel 발행 Hz (watchdog 0.3 s보다 충분히 빠르게)
+# 급출발·급정지 방지 가감속 (2026-10-31, 임무 코드 가속 한도와 같은 크기)
+LINEAR_ACCEL = 1.2   # m/s^2
+ANGULAR_ACCEL = 6.0  # rad/s^2
 
 
 def yaw_of(q):
@@ -73,14 +77,20 @@ class DriveTest(Node):
         while time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.05)
 
-    def drive(self, linear, angular, duration):
-        cmd = Twist()
-        cmd.linear.x, cmd.angular.z = linear, angular
-        end = time.monotonic() + duration
+    def drive(self, linear, angular, duration, ramp_time=0.0):
+        """ramp_time 동안 0에서 올리고, 끝 ramp_time 동안 0까지 내린다 (사다리꼴)."""
+        start = time.monotonic()
+        end = start + duration
         next_pub = 0.0
         try:
             while time.monotonic() < end:
                 if time.monotonic() >= next_pub:
+                    cmd = Twist()
+                    # 첫 명령도 0이 아니게 한 주기 뒤 값으로 (0만 보내면 출발이 한 주기 늦다)
+                    scale = trapezoid_scale(
+                        min(time.monotonic() - start + 1.0 / RATE, duration - 1e-3),
+                        duration, ramp_time)
+                    cmd.linear.x, cmd.angular.z = linear * scale, angular * scale
                     self.pub.publish(cmd)
                     next_pub = time.monotonic() + 1.0 / RATE
                 rclpy.spin_once(self, timeout_sec=0.01)
@@ -177,21 +187,23 @@ def effective_twist(p, linear, angular):
 def run(node, a):
     # 시간은 노드가 실제로 낼 속도(제한·최소 속도 보정 후)로 계산한다
     if a.mode == 'straight':
-        lin, ang = math.copysign(abs(a.speed), a.distance), 0.0
-        speed = abs(effective_twist(a.drive, lin, ang)[0])
-        duration = abs(a.distance) / speed
-        what = f'{a.distance:.2f} m 직진 ({speed:.3f} m/s, {duration:.1f} s)'
+        speed = abs(effective_twist(a.drive, abs(a.speed), 0.0)[0])
+        speed, duration, ramp_time = trapezoid(abs(a.distance), speed, LINEAR_ACCEL)
+        lin, ang = math.copysign(speed, a.distance), 0.0
+        what = f'{a.distance:.2f} m 직진 (최고 {speed:.3f} m/s, {duration:.1f} s, 가감속 {LINEAR_ACCEL})'
     elif a.mode == 'rotate':
-        lin, ang = 0.0, math.copysign(abs(a.speed), a.angle)
-        rate = abs(effective_twist(a.drive, lin, ang)[1])
-        duration = math.radians(abs(a.angle)) / rate
-        what = f'제자리 {a.angle:.0f}도 회전 ({rate:.2f} rad/s, {duration:.1f} s)'
+        rate = abs(effective_twist(a.drive, 0.0, abs(a.speed))[1])
+        rate, duration, ramp_time = trapezoid(math.radians(abs(a.angle)), rate, ANGULAR_ACCEL)
+        lin, ang = 0.0, math.copysign(rate, a.angle)
+        what = (f'제자리 {a.angle:.0f}도 회전 (최고 {rate:.2f} rad/s, {duration:.1f} s, '
+                f'가감속 {ANGULAR_ACCEL})')
     else:
         if a.rps is None:
             a.rps = a.drive.max_linear / (2.0 * math.pi * a.wheel_radius)
         lin, ang = a.rps * 2.0 * math.pi * a.wheel_radius, 0.0
         actual_rps = effective_twist(a.drive, lin, ang)[0] / (2.0 * math.pi * a.wheel_radius)
         duration = a.revs / actual_rps
+        ramp_time = 0.0  # 바퀴 띄우고 바퀴 수를 세는 시험이라 일정 속도 그대로
         what = (f'바퀴 {a.revs:.0f}바퀴 ({actual_rps:.3f} rps, {duration:.1f} s)'
                 ' — 바퀴를 띄웠는지 확인!')
 
@@ -208,7 +220,7 @@ def run(node, a):
         return 1
     node.settle(0.3)
     x0, y0, yaw0, imu0 = node.snapshot()
-    node.drive(lin, ang, duration)
+    node.drive(lin, ang, duration, ramp_time)
     node.settle(1.0)
     x1, y1, yaw1, imu1 = node.snapshot()
 

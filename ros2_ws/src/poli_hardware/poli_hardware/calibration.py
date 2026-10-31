@@ -30,6 +30,28 @@ def corrected_ticks_per_rev(current: float, expected_revs: float, counted_revs: 
     return current * expected_revs / counted_revs
 
 
+def trapezoid(amount: float, speed: float, accel: float):
+    """
+    급출발·급정지 없이 amount(거리 m 또는 각도 rad)만큼 가는 사다리꼴 속도.
+
+    accel로 올렸다가 같은 accel로 내린다. 짧아서 speed까지 못 올리면 삼각형.
+    (최고 속도, 전체 시간, 가속 시간)을 돌려준다. 속도 x 시간 넓이 = amount.
+    """
+    _check_positive(amount, speed, accel)
+    peak = min(speed, (amount * accel) ** 0.5)
+    ramp_time = peak / accel
+    return peak, amount / peak + ramp_time, ramp_time
+
+
+def trapezoid_scale(t: float, total: float, ramp_time: float) -> float:
+    """사다리꼴 속도에서 시각 t의 속도 / 최고 속도 (0~1)."""
+    if t <= 0.0 or t >= total:
+        return 0.0
+    if ramp_time <= 0.0:
+        return 1.0
+    return min(1.0, t / ramp_time, (total - t) / ramp_time)
+
+
 def _check_positive(*values):
     if any(v <= 0 for v in values):
         raise ValueError('측정값은 0보다 커야 합니다')
