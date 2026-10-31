@@ -101,33 +101,33 @@ CELL_CENTER_TOLERANCE_M = 0.15
 # 속도와 제어 값 (임무 2와 같은 기준, turn_pulse.py 참고)
 # 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
 # 감속(MIN_DRIVE_SPEED)·느린 접근은 실제로는 0.25 m/s가 된다.
-DRIVE_SPEED = 0.45  # 2026-10-31 0.35 -> 0.45 (전체가 느림, 팀 요청). hardware.yaml max_linear와 같게
+DRIVE_SPEED = 0.6  # 2026-10-31 0.45 -> 0.6 (최대한 빠르게, 팀 요청). hardware.yaml max_linear와 같게
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 # 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
 # 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
 # 40 cm 한 칸 약 2.0초 -> 약 1.6초. TODO_MEASURE: 도착 위치가 밀리면 낮춘다
-DRIVE_DECEL = 0.5
+DRIVE_DECEL = 0.8  # 2026-10-31 0.5 -> 0.8
 # 모든 상태 공통 가감속 제한 (step()의 _limit_accel). 급출발·급정지 방지.
 # 속도를 줄일 때는 더 빨리 줄여 계획하지 않은 정지(대상 발견 등)에서 덜 밀리게 한다.
 # TODO_MEASURE: 출발할 때 앞이 들리거나 바퀴가 헛돌면 LINEAR_ACCEL을 낮춘다
-LINEAR_ACCEL = 0.5   # m/s^2, 0 -> 0.45 m/s 약 0.9초
-LINEAR_DECEL = 1.2   # m/s^2, 0.45 m/s -> 0 약 0.4초 (약 8 cm)
-ANGULAR_ACCEL = 6.0  # rad/s^2, 0 -> 1.8 rad/s 약 0.3초
+LINEAR_ACCEL = 0.8   # m/s^2, 2026-10-31 0.5 -> 0.8. 한 칸(40 cm)에서 최고 약 0.57 m/s
+LINEAR_DECEL = 1.5   # m/s^2, 0.6 m/s -> 0 약 0.4초 (약 12 cm)
+ANGULAR_ACCEL = 10.0  # rad/s^2, 2026-10-31 6 -> 10 (0 -> 2.5 rad/s 약 0.25초)
 # 이만큼 판단이 끊기면 그동안 노드가 정지 명령을 보냈다고 보고 0에서 다시 가속한다.
 ACCEL_RESET_S = 0.15
 # 카메라 접근: 멀 때는 빠르게, 큐브가 커 보이면 천천히 (면적 판단 지연으로 지나치지 않게)
-APPROACH_SPEED = 0.2  # 2026-10-31 0.15 -> 0.2 (전체가 느림)
+APPROACH_SPEED = 0.25  # 2026-10-31 0.2 -> 0.25 (가까우면 APPROACH_SLOW_SPEED)
 APPROACH_SLOW_SPEED = 0.12
 APPROACH_SLOW_AREA = 20000.0  # TODO_MEASURE: 잡는 위치 약 15 cm 전
 # 2026-10-31 1.2 -> 1.8 (회전이 느리고 끊김). hardware.yaml max_angular 2.0 안.
 # TODO_MEASURE: 목표각을 지나쳐 되돌아 돌면 TURN_SPEED 또는 TURN_DECEL을 낮춘다 (IMU 지연)
-TURN_SPEED = 1.8
-TURN_DECEL = 4.0  # rad/s^2, 목표각 앞에서 일정하게 감속해 MIN_TURN_SPEED로 도착
+TURN_SPEED = 2.5  # 2026-10-31 1.8 -> 2.5 (최대한 빠르게). hardware.yaml max_angular 2.6 안
+TURN_DECEL = 6.0  # rad/s^2 (2026-10-31 4 -> 6), 목표각 앞에서 일정하게 감속해 MIN_TURN_SPEED로 도착
 # 연속 회전 감속 하한. 바퀴 속도 약 0.084 m/s = 하드웨어 최저 속도(0.08) 근처.
 # 더 낮추면 바퀴가 섰다 갔다 하며 끊겨 돈다.
 MIN_TURN_SPEED = 0.6
 # 2026-10-31 0.6 -> 1.0 (잡기 전체가 느림). 카메라 20 Hz면 한 번에 약 3도라 놓치지 않는다.
-SEARCH_SPEED = 1.0
+SEARCH_SPEED = 1.3  # 2026-10-31 1.0 -> 1.3
 HEADING_GAIN = 1.5
 # 진행선에서 옆으로 벗어났을 때 돌아오는 방향 = 옆 오차 x 이득, 최대 각도
 DRIVE_LATERAL_GAIN = 2.0  # rad/m (5 cm -> 약 6도)

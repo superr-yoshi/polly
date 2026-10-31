@@ -534,7 +534,7 @@ def test_motion_commands_ramp_up_and_down():
     speeds = []
     for i in range(20):
         speeds.append(logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=i * DT)).linear)
-    assert speeds[0] < 0.05
+    assert speeds[0] <= mission1_logic.LINEAR_ACCEL * mission1_logic.ACCEL_RESET_S / 2 + 1e-9
     limit = mission1_logic.LINEAR_ACCEL * DT + 1e-9
     assert all(b - a <= limit for a, b in zip(speeds, speeds[1:]))
     assert speeds[-1] > 0.3
@@ -555,7 +555,7 @@ def test_ramp_restarts_from_zero_after_gap():
     for i in range(20):
         logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=i * DT))
     command = logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=5.0))
-    assert command.linear < 0.05
+    assert command.linear <= mission1_logic.LINEAR_ACCEL * mission1_logic.ACCEL_RESET_S / 2 + 1e-9
 
 
 def test_drive_arrives_slowly_after_constant_deceleration():
