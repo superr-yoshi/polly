@@ -13,6 +13,11 @@ for i in 1 2 3; do
   ros2 topic pub --once /gripper/command std_msgs/msg/String "{data: open}" > /dev/null 2>&1
   sleep 0.3
 done
-echo "집게: $(timeout 5 ros2 topic echo --once /gripper/state --field data 2>/dev/null | head -1)"
+# /gripper/state는 0.5 s마다 나온다. 처음에는 발견이 늦어 몇 번 다시 기다린다
+for i in 1 2 3; do
+  STATE=$(timeout 3 ros2 topic echo --once /gripper/state --field data 2>/dev/null | head -1)
+  [ -n "$STATE" ] && break
+done
+echo "집게: ${STATE:-확인 못 함 (명령은 보냄, 눈으로 확인)}"
 pkill -INT -f "^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch poli_hardware"
 sleep 2'
