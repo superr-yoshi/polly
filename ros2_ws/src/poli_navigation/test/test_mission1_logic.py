@@ -761,6 +761,22 @@ def test_search_stops_spinning_when_target_seen_but_not_reachable():
     assert (5, 6) in logic._searched_goals
 
 
+def test_maze_tie_avoids_arena_edge_cell():
+    """(8,5)에서 동쪽 (9,5, 가장자리)와 북쪽 (8,6)이 같은 점수면 북쪽 (2026-10-31 실기)."""
+    logic = Mission1Logic()
+    for cell in ((9, 5), (8, 6)):
+        logic.grid.mark_free(cell)
+    logic.grid.mark_blocked((8, 4))  # 실기 지도와 같이 남쪽은 막힘
+    logic.maze.observe((7, 5), 0.0)
+    logic.maze.observe((8, 5), 0.0)
+    assert logic.maze.next_cell(logic.grid) == (8, 6)
+    # 가장자리가 아니면 예전처럼 직진 먼저: (7,3)에서 북쪽 (7,4)와 서쪽 (6,3) 동점 -> 직진
+    logic = Mission1Logic()
+    logic.maze.observe((7, 2), math.pi / 2)
+    logic.maze.observe((7, 3), math.pi / 2)
+    assert logic.maze.next_cell(logic.grid) == (7, 4)
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH
