@@ -46,7 +46,8 @@ SCAN_MAX_AGE = 0.35
 ODOM_TIMEOUT = 0.3  # s, 엔코더 위치 갱신이 끊기면 주행을 멈춘다.
 # TODO_MEASURE: 정지 판정 잡음 허용치. 흔들림이 남으면 최소 대기 시간을 다시 센다.
 STILL_LINEAR_MPS = 0.02
-STILL_ANGULAR_RPS = 0.1
+# 2026-10-31 0.1 -> 0.2: 감속을 세게 한 뒤 작은 흔들림 때문에 정지 확인을 다시 세지 않게
+STILL_ANGULAR_RPS = 0.2
 
 
 def mapping_scan_ready(scan_started_at, now, stop_started_at):
