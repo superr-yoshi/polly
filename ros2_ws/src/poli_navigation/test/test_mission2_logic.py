@@ -116,9 +116,8 @@ def test_full_run_reaches_hold_near_center():
     distance = math.hypot(CENTER_M[0] - robot.x, CENTER_M[1] - robot.y)
     assert distance < 0.3
 
-    # 처음에 집게를 열고, 마지막에 잡는다.
-    assert robot.gripper_log[0] == GRIPPER_OPEN
-    assert robot.gripper_log[-1] == GRIPPER_GRAB
+    # 시작 때 집게 명령 없이(미리 열어 둠, 2026-11-01) 잡을 때 한 번만 닫는다.
+    assert robot.gripper_log == [GRIPPER_GRAB]
 
 
 def test_start_moves_forward_while_turning_left():

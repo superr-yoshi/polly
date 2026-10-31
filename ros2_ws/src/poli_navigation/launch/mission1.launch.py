@@ -64,6 +64,9 @@ def generate_launch_description():
         Node(
             package='camera_vision',
             executable='red_object_detector',
+            # 2026-11-01 실기: 시작 약 2초 뒤 Pi 전체가 0.3 s 멈춰 Mega가 바퀴를 세웠다.
+            # 무거운 카메라·Foxglove는 우선순위를 낮춰 임무·Mega 노드가 먼저 돌게 한다.
+            prefix='nice -n 10',
             parameters=[{'debug_image_hz': PythonExpression(
                 ["5.0 if '", debug_view, "' == 'true' else 0.0"])}],
             output='screen',
@@ -73,6 +76,9 @@ def generate_launch_description():
         Node(
             package='foxglove_bridge',
             executable='foxglove_bridge',
+            # 2026-11-01 실기: 시작 약 2초 뒤 Pi 전체가 0.3 s 멈춰 Mega가 바퀴를 세웠다.
+            # 무거운 카메라·Foxglove는 우선순위를 낮춰 임무·Mega 노드가 먼저 돌게 한다.
+            prefix='nice -n 10',
             parameters=[{'port': 8765}],
             output='log',
             condition=IfCondition(debug_view),

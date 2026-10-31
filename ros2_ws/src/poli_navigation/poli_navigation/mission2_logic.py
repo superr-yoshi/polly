@@ -128,6 +128,11 @@ GRASP_WAIT_S = 1.5
 GRIPPER_MIN_WAIT_S = 0.15  # 2026-11-01 0.25 -> 0.15 (집게 닫힘 0.36 -> 0.18 s)
 GRIPPER_SETTLE_S = 0.1
 
+# 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False: 시작 전에 열어 두므로 필요 없고,
+# Mega 리셋으로 힘이 빠져 더 벌어진 집게가 열기(90도)로 돌아오며 시작 때 한 번 오므려 보였다.
+# 서보는 첫 명령(잡기) 전까지 힘이 빠진 채로 있다 (펌웨어 gripper.cpp).
+OPEN_GRIPPER_AT_START = False
+
 GRIPPER_OPEN = 'open'
 GRIPPER_GRAB = 'grab'
 GRIPPER_CLOSED = 'closed'
@@ -268,8 +273,8 @@ class Mission2Logic:
         if command is None:
             command = self._run_state(obs)
 
-        # 시작 시 집게를 한 번 연다.
-        if not self.gripper_opened and command.gripper is None:
+        # 시작 시 집게를 한 번 연다 (OPEN_GRIPPER_AT_START일 때만).
+        if OPEN_GRIPPER_AT_START and not self.gripper_opened and command.gripper is None:
             command.gripper = GRIPPER_OPEN
             self.gripper_opened = True
 
