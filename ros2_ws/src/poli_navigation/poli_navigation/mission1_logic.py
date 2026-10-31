@@ -7,7 +7,7 @@ ROS2와 무관한 순수 Python 모듈이다.
 
 전략 (docs/mission_strategy.md 2장):
   [EXPLORE] SCAN -> TURN -> DRIVE -> SCAN ... (중앙 옆 격자까지 한 칸씩)
-            FACE -> SEARCH / ALIGN -> APPROACH -> GRASP
+            FACE -> SEARCH / ALIGN -> APPROACH -> PUSH -> GRASP
   [RETURN]  SCAN -> TURN -> DRIVE -> SCAN ... (출발 격자까지 한 칸씩)
             RELEASE -> DONE
   탐색은 poli_maze의 거리 + 방문 횟수 점수로 이웃 한 칸을 선택한다.
@@ -45,7 +45,7 @@ from poli_navigation.scan_to_grid import (
     scan_to_cells,
     update_grid_from_scan,
 )
-from poli_navigation.turn_pulse import FINE_TURN_RAD, HW_MIN_WHEEL_SPEED, TurnPulse
+from poli_navigation.turn_pulse import HW_MIN_WHEEL_SPEED, TurnPulse
 
 
 CENTER_M = cell_center_m(CENTER)
@@ -58,7 +58,9 @@ GRIPPER_REACH_M = 0.13
 
 # SIM_ONLY: 멈춘 뒤 스캔할 때까지 기다리는 시간 (움직이며 찍힌 스캔을 쓰지 않게)
 # TODO_MEASURE: 최소 안정 시간. 실물 노드는 정지 확인 후 이 시간이 지난 스캔만 쓴다.
-SCAN_SETTLE_S = 0.2
+# 2026-10-31 0.2 -> 0.1: 칸마다 판단이 오래 걸림. 차체 흔들림은 노드가 IMU·엔코더로 따로 확인한다.
+# 멈춘 뒤 지도가 이상하게(통로가 막힘으로) 바뀌면 다시 늘린다.
+SCAN_SETTLE_S = 0.1
 # 주행 중 다음 칸이 막혀 보이는 스캔이 이만큼 연속이어야 멈춘다.
 # 출발 순간 차체가 숙여져 LiDAR가 바닥·장애물 윗변을 앞칸 장애물로 보는 것을 거른다 (2026-10-31 실기)
 DRIVE_BLOCK_SCANS = 3
@@ -77,34 +79,74 @@ CELL_CENTER_TOLERANCE_M = 0.1
 # 속도와 제어 값 (임무 2와 같은 기준, turn_pulse.py 참고)
 # 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
 # 감속(MIN_DRIVE_SPEED)·느린 접근은 실제로는 0.25 m/s가 된다.
-DRIVE_SPEED = 0.35  # 2026-10-31 0.25 -> 0.35 (전체가 느림, 팀 요청)
+DRIVE_SPEED = 0.45  # 2026-10-31 0.35 -> 0.45 (전체가 느림, 팀 요청). hardware.yaml max_linear와 같게
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
-SLOWDOWN_GAIN = 1.5  # 감속을 도착 약 0.23 m 전부터
-# 한 칸 주행 출발 가속 (m/s^2). 0 -> 0.25 m/s에 약 0.6초 (2026-10-31 급출발 방지)
-DRIVE_ACCEL = 0.4
-APPROACH_SPEED = 0.15  # 최저 속도(0.08)에 묶여 너무 느렸음 (2026-10-31)
-TURN_SPEED = 1.2  # 2026-10-31 0.8 -> 1.2 (IMU로 각도를 재므로 빨라도 정확)
-# SIM_ONLY: 연속 회전 감속 하한. 실물에서 목표각 초과·정렬 진동을 확인할 것.
+# 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
+# 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
+# 40 cm 한 칸 약 2.0초 -> 약 1.6초. TODO_MEASURE: 도착 위치가 밀리면 낮춘다
+DRIVE_DECEL = 0.5
+# 모든 상태 공통 가감속 제한 (step()의 _limit_accel). 급출발·급정지 방지.
+# 속도를 줄일 때는 더 빨리 줄여 계획하지 않은 정지(대상 발견 등)에서 덜 밀리게 한다.
+# TODO_MEASURE: 출발할 때 앞이 들리거나 바퀴가 헛돌면 LINEAR_ACCEL을 낮춘다
+LINEAR_ACCEL = 0.5   # m/s^2, 0 -> 0.45 m/s 약 0.9초
+LINEAR_DECEL = 1.2   # m/s^2, 0.45 m/s -> 0 약 0.4초 (약 8 cm)
+ANGULAR_ACCEL = 6.0  # rad/s^2, 0 -> 1.8 rad/s 약 0.3초
+# 이만큼 판단이 끊기면 그동안 노드가 정지 명령을 보냈다고 보고 0에서 다시 가속한다.
+ACCEL_RESET_S = 0.15
+# 카메라 접근: 멀 때는 빠르게, 큐브가 커 보이면 천천히 (면적 판단 지연으로 지나치지 않게)
+APPROACH_SPEED = 0.2  # 2026-10-31 0.15 -> 0.2 (전체가 느림)
+APPROACH_SLOW_SPEED = 0.12
+APPROACH_SLOW_AREA = 20000.0  # TODO_MEASURE: 잡는 위치 약 15 cm 전
+# 2026-10-31 1.2 -> 1.8 (회전이 느리고 끊김). hardware.yaml max_angular 2.0 안.
+# TODO_MEASURE: 목표각을 지나쳐 되돌아 돌면 TURN_SPEED 또는 TURN_DECEL을 낮춘다 (IMU 지연)
+TURN_SPEED = 1.8
+TURN_DECEL = 4.0  # rad/s^2, 목표각 앞에서 일정하게 감속해 MIN_TURN_SPEED로 도착
+# 연속 회전 감속 하한. 바퀴 속도 약 0.084 m/s = 하드웨어 최저 속도(0.08) 근처.
+# 더 낮추면 바퀴가 섰다 갔다 하며 끊겨 돈다.
 MIN_TURN_SPEED = 0.6
-SEARCH_SPEED = 0.6
+# 2026-10-31 0.6 -> 1.0 (잡기 전체가 느림). 카메라 20 Hz면 한 번에 약 3도라 놓치지 않는다.
+SEARCH_SPEED = 1.0
 HEADING_GAIN = 1.5
-ALIGN_GAIN = 1.0
+ALIGN_GAIN = 1.5  # 2026-10-31 1.0 -> 1.5. TODO_MEASURE: 정렬이 좌우로 흔들리면 낮춘다
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
 # x_offset 1.0 = 화면 끝 (약 33도) -> 0.15 = 약 5도
 ALIGN_TOLERANCE = 0.15
+# 이 안(약 12도)이면 제자리 정렬을 끝까지 하지 않고 전진하면서 방향을 맞춘다 (멈춤 한 번 줄임).
+APPROACH_START_OFFSET = 0.35
+# 접근 중 이보다 벗어나면 다시 제자리 정렬한다.
+APPROACH_MAX_OFFSET = 0.5
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
 # (아래가 화면 밖으로 잘려 사실상 최댓값) -> 집게 안에 들어온 순간 잡도록 조금 낮춤 (TODO_MEASURE: 경기장에서 재확인)
 # TODO_MEASURE: 2026-10-31 사용자 요청으로 35000. 실제 접근 중 이 면적에 도달하는지 재확인.
+# 35000에서도 큐브가 집게 안쪽까지 안 들어왔다 (면적이 화면 아래 잘림으로 포화) ->
+# 면적을 더 올리지 않고 GRAB_AREA에 닿은 뒤 엔코더로 GRAB_PUSH_M만큼 더 들어가서 닫는다.
 GRAB_AREA = 35000.0
+# TODO_MEASURE: 큐브가 집게 안쪽 끝에 닿는 거리. 아직 얕으면 늘리고, 큐브를 앞으로 밀어내면 줄인다
+GRAB_PUSH_M = 0.04
+GRAB_PUSH_SPEED = APPROACH_SLOW_SPEED
+# 바퀴가 미끄러져 엔코더 거리가 안 늘어도 이 시간 뒤에는 닫는다 (보통 약 0.35초)
+GRAB_PUSH_TIMEOUT_S = 1.0
+# 밀어 넣기가 이만큼 남았을 때 집게를 닫기 시작한다 (닫기와 밀기를 겹쳐 시간 단축). 0 = 다 밀고 닫기.
+# 펌웨어 1도/8ms에서 처음 약 20도(약 0.16초, 0.12 m/s로 약 2 cm)는 집게 끝이 큐브(50 mm)에
+# 닿지 않는 각도라고 보고, 그 동안만 겹친다. 더 일찍 닫으면 큐브가 깊이 들어가기 전에 집게가 닿는다.
+# TODO_MEASURE: 큐브가 다시 얕게 잡히거나 집게에 밀려 튕기면 줄이거나 0
+GRAB_CLOSE_LEAD_M = 0.02
 
-# 집게가 닫히는 시간, 열리는 시간 (조원 A: 약 1.2초, 서보 40<->120도, 1도/15ms)
-# TODO_MEASURE: 서보 각도가 실측 후 바뀌면 다시 확인
+# 집게가 닫히고 열리기를 기다리는 최대 시간. /gripper/state가 없을 때(모를 때)는 이만큼 기다린다.
+# 2026-10-31 펌웨어 값: 90<->135도, 1도/8ms = 약 0.36초 (옛 추정 1.2초로 정한 1.5초를 그대로 기다려 느렸다)
 GRASP_WAIT_S = 1.5
 RELEASE_WAIT_S = 1.5
+# /gripper/state가 원하는 값(closed/open)이 되면 최대 시간을 기다리지 않고 넘어간다 (interfaces.md 4-2).
+# 명령 직후에는 지난 상태가 남아 있을 수 있어 최소 시간은 기다린다 (실제 동작은 약 0.36초라 그 전엔 끝날 수 없음).
+GRIPPER_MIN_WAIT_S = 0.25
+# Mega가 목표 각도에 닿았다고 알린 뒤 서보가 실제로 따라가 힘을 줄 때까지의 여유. TODO_MEASURE
+GRIPPER_SETTLE_S = 0.1
+GRIPPER_CLOSED = 'closed'
+GRIPPER_OPENED = 'open'
 
 # 갈 길이 없을 때 다시 스캔하기 전까지 기다리는 시간
 STUCK_RETRY_S = 1.0
@@ -119,10 +161,21 @@ FACE = 'FACE'
 SEARCH = 'SEARCH'
 ALIGN = 'ALIGN'
 APPROACH = 'APPROACH'
+PUSH = 'PUSH'
 GRASP = 'GRASP'
 RELEASE = 'RELEASE'
 DONE = 'DONE'
 STUCK = 'STUCK'
+
+
+def ramp(target, last, accel, decel, dt):
+    """last에서 target으로 dt 동안 accel(빨라질 때)·decel(느려질 때)만큼만 바꾼다."""
+    if target * last < 0.0:
+        # 방향이 바뀌면 먼저 0까지 줄인다.
+        target = 0.0
+    rate = accel if abs(target) > abs(last) else decel
+    step = rate * dt
+    return last + max(-step, min(step, target - last))
 
 
 @dataclass
@@ -139,6 +192,8 @@ class Observation:
     area: float = 0.0
     # 조원 A 집게 상태. 알 수 없으면 None
     holding: Optional[bool] = None
+    # 조원 A /gripper/state: 'open' / 'closed' / 'moving'. 알 수 없으면 None
+    gripper_state: Optional[str] = None
 
 
 class Mission1Logic:
@@ -160,17 +215,21 @@ class Mission1Logic:
         self.reverse = False
         self._drive_block_scans = 0
         self._last_drive_scan = None
-        self._drive_speed = 0.0
-        self._drive_time = None
         self._drive_heading = None
+        self._push_start = None
+        self._gripper_reached_at = None
+        self._grab_sent_at = None
+        # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
+        self._last_linear = 0.0
+        self._last_angular = 0.0
+        self._last_command_at = None
         self.stop_reason = None
 
     def _change_state(self, new_state, obs):
         self.state = new_state
         self.state_started_at = obs.now
         self.turn_pulse.reset()
-        self._drive_speed = 0.0
-        self._drive_time = None
+        self._gripper_reached_at = None
 
     def step(self, obs):
         self.maze.observe(point_to_cell(obs.x, obs.y), obs.yaw)
@@ -186,6 +245,21 @@ class Mission1Logic:
             command.gripper = GRIPPER_OPEN
             self.gripper_opened = True
 
+        return self._limit_accel(command, obs.now)
+
+    def _limit_accel(self, command, now):
+        """급출발·급정지 방지: 직전 명령에서 가감속 한도만큼만 바꾼다 (상태가 바뀌어도 이어서)."""
+        dt = None if self._last_command_at is None else now - self._last_command_at
+        if dt is None or dt < 0.0 or dt > ACCEL_RESET_S:
+            # 처음이거나 판단이 끊긴 동안 노드가 정지 명령을 보냈다 -> 정지 상태에서 시작
+            self._last_linear = self._last_angular = 0.0
+            dt = ACCEL_RESET_S / 2.0
+        command.linear = ramp(command.linear, self._last_linear, LINEAR_ACCEL, LINEAR_DECEL, dt)
+        command.angular = ramp(
+            command.angular, self._last_angular, ANGULAR_ACCEL, ANGULAR_ACCEL, dt)
+        self._last_linear = command.linear
+        self._last_angular = command.angular
+        self._last_command_at = now
         return command
 
     def _check_dropped(self, obs):
@@ -209,6 +283,7 @@ class Mission1Logic:
             SEARCH: self._search,
             ALIGN: self._align,
             APPROACH: self._approach,
+            PUSH: self._push,
             GRASP: self._grasp,
             RELEASE: self._release,
             DONE: self._done,
@@ -340,8 +415,9 @@ class Mission1Logic:
         return Command(gripper=GRIPPER_OPEN)
 
     def _turn_toward(self, error, obs):
-        """IMU 각도 오차에 따라 연속 회전하고 목표 근처에서 감속한다."""
-        speed = max(MIN_TURN_SPEED, min(TURN_SPEED, TURN_SPEED * abs(error) / FINE_TURN_RAD))
+        """IMU 각도 오차에 따라 연속 회전하고 목표각 앞에서 일정하게 감속한다."""
+        remaining = max(0.0, abs(error) - TURN_TOLERANCE_RAD)
+        speed = min(TURN_SPEED, math.sqrt(MIN_TURN_SPEED ** 2 + 2.0 * TURN_DECEL * remaining))
         return math.copysign(speed, error)
 
     def _turn(self, obs):
@@ -382,10 +458,12 @@ class Mission1Logic:
         # 마지막 구간은 계획한 진행축을 유지하고 앞뒤 거리로 도착을 판단한다.
         near_endpoint = distance < CELL_CENTER_TOLERANCE_M and self._drive_heading is not None
         endpoint_reached = False
+        remaining = distance
         if near_endpoint:
             dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
             along = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
             endpoint_reached = along <= ARRIVE_TOLERANCE_M
+            remaining = along
             desired_yaw = self._drive_heading + (math.pi if self.reverse else 0.0)
             error = math.atan2(math.sin(desired_yaw - obs.yaw), math.cos(desired_yaw - obs.yaw))
 
@@ -399,19 +477,12 @@ class Mission1Logic:
             self._change_state(SCAN, obs)
             return Command()
 
-        # 목표에 가까워지면 속도를 줄인다.
-        speed = max(MIN_DRIVE_SPEED, min(DRIVE_SPEED, SLOWDOWN_GAIN * distance))
-        # 급출발 방지: 직전 속도에서 DRIVE_ACCEL만큼씩만 올린다.
-        if self._drive_time is not None:
-            elapsed = max(0.0, obs.now - self._drive_time)
-            speed = min(speed, self._drive_speed + DRIVE_ACCEL * elapsed)
-        else:
-            speed = min(speed, MIN_DRIVE_SPEED)
+        # 목표에 가까워지면 일정한 감속으로 줄여 최저 속도로 도착한다. (출발 가속은 _limit_accel)
+        remaining = max(0.0, remaining - ARRIVE_TOLERANCE_M)
+        speed = min(DRIVE_SPEED, math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
         angular = clamp(HEADING_GAIN * error, TURN_SPEED)
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
-        self._drive_speed = linear
-        self._drive_time = obs.now
         return Command(linear=-linear if self.reverse else linear, angular=angular)
 
     def _travel_heading_error(self, obs):
@@ -431,7 +502,7 @@ class Mission1Logic:
         return Command()
 
     # ------------------------------------------------------------
-    # 큐브 잡기 (FACE -> SEARCH / ALIGN -> APPROACH -> GRASP)
+    # 큐브 잡기 (FACE -> SEARCH / ALIGN -> APPROACH -> PUSH -> GRASP)
     # ------------------------------------------------------------
 
     def _face(self, obs):
@@ -459,9 +530,9 @@ class Mission1Logic:
             self._change_state(SEARCH, obs)
             return Command()
 
-        if abs(obs.x_offset) < ALIGN_TOLERANCE:
+        if abs(obs.x_offset) < APPROACH_START_OFFSET:
             self._change_state(APPROACH, obs)
-            return Command()
+            return self._approach(obs)
 
         # x_offset 음수 = 왼쪽. 정렬 오차가 작아지면 감속한다.
         speed = max(MIN_TURN_SPEED, min(TURN_SPEED, ALIGN_GAIN * abs(obs.x_offset)))
@@ -473,16 +544,52 @@ class Mission1Logic:
             return Command()
 
         if obs.area >= GRAB_AREA:
-            self._change_state(GRASP, obs)
-            return Command(gripper=GRIPPER_GRAB)
+            self._push_start = (obs.x, obs.y)
+            self._change_state(PUSH, obs)
+            return self._push(obs)
+        if abs(obs.x_offset) > APPROACH_MAX_OFFSET:
+            self._change_state(ALIGN, obs)
+            return self._align(obs)
 
         # 다가가면서 방향도 계속 맞춘다.
+        speed = APPROACH_SLOW_SPEED if obs.area >= APPROACH_SLOW_AREA else APPROACH_SPEED
         angular = clamp(-ALIGN_GAIN * obs.x_offset, TURN_SPEED)
-        return Command(linear=APPROACH_SPEED, angular=angular)
+        return Command(linear=speed, angular=angular)
+
+    def _push(self, obs):
+        """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가 큐브를 집게 안쪽까지 넣고 닫는다."""
+        # 큐브가 너무 가까워 카메라 값(잘림·놓침)은 믿지 않고 엔코더 거리만 본다.
+        pushed = math.hypot(obs.x - self._push_start[0], obs.y - self._push_start[1])
+        if pushed >= GRAB_PUSH_M or obs.now - self.state_started_at > GRAB_PUSH_TIMEOUT_S:
+            closing = self._grab_sent_at is not None
+            self._change_state(GRASP, obs)
+            if closing:
+                return Command()
+            self._grab_sent_at = obs.now
+            return Command(gripper=GRIPPER_GRAB)
+        command = Command(linear=GRAB_PUSH_SPEED)
+        if self._grab_sent_at is None and pushed >= GRAB_PUSH_M - GRAB_CLOSE_LEAD_M:
+            # 남은 거리를 밀면서 닫기 시작한다.
+            command.gripper = GRIPPER_GRAB
+            self._grab_sent_at = obs.now
+        return command
+
+    def _gripper_done(self, obs, wanted, max_wait, since=None):
+        """집게가 wanted 상태에 닿고 GRIPPER_SETTLE_S가 지났거나, 최대 시간이 지났는지."""
+        waited = obs.now - (self.state_started_at if since is None else since)
+        if waited >= max_wait:
+            return True
+        if waited < GRIPPER_MIN_WAIT_S or obs.gripper_state != wanted:
+            return False
+        if self._gripper_reached_at is None:
+            self._gripper_reached_at = obs.now
+        return obs.now - self._gripper_reached_at >= GRIPPER_SETTLE_S
 
     def _grasp(self, obs):
-        if obs.now - self.state_started_at < GRASP_WAIT_S:
+        # 닫기는 밀어 넣는 동안 이미 시작했을 수 있다 -> 명령을 보낸 시각부터 센다.
+        if not self._gripper_done(obs, GRIPPER_CLOSED, GRASP_WAIT_S, since=self._grab_sent_at):
             return Command()
+        self._grab_sent_at = None
 
         if obs.holding is False:
             self._change_state(SEARCH, obs)
@@ -498,7 +605,7 @@ class Mission1Logic:
     # ------------------------------------------------------------
 
     def _release(self, obs):
-        if obs.now - self.state_started_at < RELEASE_WAIT_S:
+        if not self._gripper_done(obs, GRIPPER_OPENED, RELEASE_WAIT_S):
             return Command()
 
         self._change_state(DONE, obs)

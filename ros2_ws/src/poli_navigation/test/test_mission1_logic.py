@@ -12,6 +12,7 @@ from poli_navigation.grid_map import (
 )
 from poli_navigation.mission1_logic import (
     ALIGN,
+    APPROACH,
     CENTER_M,
     Command,
     DONE,
@@ -19,6 +20,9 @@ from poli_navigation.mission1_logic import (
     DRIVE_BLOCK_SCANS,
     EXPLORE,
     FACE,
+    GRAB_AREA,
+    GRAB_CLOSE_LEAD_M,
+    GRAB_PUSH_M,
     GRASP,
     GRASP_WAIT_S,
     GRIPPER_GRAB,
@@ -26,6 +30,8 @@ from poli_navigation.mission1_logic import (
     GRIPPER_REACH_M,
     Mission1Logic,
     Observation,
+    PUSH,
+    ramp,
     RELEASE,
     RETURN,
     SCAN,
@@ -312,14 +318,27 @@ def test_fine_turn_continues_between_old_pulses_and_slows_near_goal():
 
 
 def test_camera_alignment_continues_and_stops_when_aligned():
-    """카메라 오차가 남으면 연속 정렬하고 허용 범위에서는 정지한다."""
+    """카메라 오차가 크면 제자리에서 연속 정렬한다."""
     logic = Mission1Logic()
-    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0, detected=True, x_offset=-0.3)
+    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0, detected=True, x_offset=-0.45)
     for now in (0.0, 0.05, 0.10, 0.20):
         obs.now = now
         assert logic._align(obs).angular > 0
+    # 거의 맞으면 멈추지 않고 전진하며 맞춘다.
     obs.x_offset = 0.0
-    assert logic._align(obs) == Command()
+    command = logic._align(obs)
+    assert logic.state == APPROACH
+    assert command.linear > 0.0
+
+
+def test_approach_goes_back_to_align_when_far_off_center():
+    logic = Mission1Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    obs = Observation(x=0.0, y=0.0, yaw=0.0, now=0.0, detected=True, x_offset=0.8, area=5000.0)
+    command = logic._approach(obs)
+    assert logic.state == ALIGN
+    assert command.linear == 0.0 and command.angular < 0.0
 
 
 def test_near_cell_center_stops_instead_of_turning_towards_lateral_error():
@@ -356,6 +375,152 @@ def test_lateral_offset_outside_endpoint_region_is_not_arrival():
     obs = Observation(x=3.02, y=1.25, yaw=math.pi, now=0.0)
     logic._drive(obs)
     assert logic.state == DRIVE
+
+
+def test_grab_area_pushes_further_and_closes_near_end_of_push():
+    """면적 기준에 닿으면 GRAB_PUSH_M만큼 곧게 더 들어가고, 끝 GRAB_CLOSE_LEAD_M에서 닫기 시작한다."""
+    logic = Mission1Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    obs = Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA)
+    command = logic._approach(obs)
+    assert logic.state == PUSH
+    assert command.linear > 0.0 and command.angular == 0.0
+    assert command.gripper is None
+    # 카메라가 큐브를 놓쳐도 엔코더 거리로 계속 민다.
+    obs = Observation(x=1.0 + GRAB_PUSH_M - GRAB_CLOSE_LEAD_M - 0.005, y=1.0, yaw=0.0, now=0.1)
+    assert logic._push(obs).gripper is None
+    obs = Observation(x=1.0 + GRAB_PUSH_M - GRAB_CLOSE_LEAD_M, y=1.0, yaw=0.0, now=0.2)
+    command = logic._push(obs)
+    assert command.linear > 0.0 and command.gripper == GRIPPER_GRAB
+    obs = Observation(x=1.0 + GRAB_PUSH_M, y=1.0, yaw=0.0, now=0.35)
+    assert logic._push(obs) == Command()
+    assert logic.state == GRASP
+    # 닫힘 대기는 grab을 보낸 시각(0.2)부터 센다.
+    logic._grasp(Observation(x=1.04, y=1.0, yaw=0.0, now=0.5, gripper_state='closed'))
+    logic._grasp(Observation(x=1.04, y=1.0, yaw=0.0, now=0.65, gripper_state='closed'))
+    assert logic.phase == RETURN
+
+
+def test_grab_after_push_when_close_lead_is_zero(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'GRAB_CLOSE_LEAD_M', 0.0)
+    logic = Mission1Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    obs = Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA)
+    assert logic._approach(obs).gripper is None
+    obs = Observation(x=1.0 + GRAB_PUSH_M, y=1.0, yaw=0.0, now=0.4)
+    assert logic._push(obs) == Command(gripper=GRIPPER_GRAB)
+    assert logic.state == GRASP
+
+
+def test_push_closes_after_timeout_when_wheels_slip():
+    logic = Mission1Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    logic._approach(Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA))
+    logic._push(Observation(x=1.0, y=1.0, yaw=0.0, now=5.0))
+    assert logic.state == GRASP
+
+
+def _grasping_logic():
+    logic = Mission1Logic()
+    logic.state = GRASP
+    logic.state_started_at = 0.0
+    return logic
+
+
+def test_grasp_ends_soon_after_gripper_reports_closed():
+    """집게가 다 닫혔다고(/gripper/state closed) 알리면 1.5초를 다 기다리지 않는다."""
+    logic = _grasping_logic()
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=0.7, gripper_state='closed'))
+    assert logic.state == GRASP
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=0.8, gripper_state='closed'))
+    assert logic.state == SCAN and logic.phase == RETURN
+
+
+def test_grasp_ignores_old_closed_state_right_after_command():
+    logic = _grasping_logic()
+    for now in (0.05, 0.1, 0.2):
+        logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=now, gripper_state='closed'))
+    assert logic.state == GRASP
+
+
+def test_grasp_waits_full_time_without_gripper_state():
+    logic = _grasping_logic()
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=1.0, gripper_state='moving'))
+    assert logic.state == GRASP
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S))
+    assert logic.state == SCAN
+
+
+def test_release_ends_soon_after_gripper_reports_open():
+    logic = Mission1Logic()
+    logic.state = RELEASE
+    logic.state_started_at = 0.0
+    logic._release(Observation(x=1.0, y=1.0, yaw=0.0, now=0.7, gripper_state='open'))
+    logic._release(Observation(x=1.0, y=1.0, yaw=0.0, now=0.8, gripper_state='open'))
+    assert logic.state == DONE
+
+
+def test_ramp_limits_change_and_passes_through_zero():
+    assert ramp(0.45, 0.0, 0.5, 1.2, 0.05) == 0.025
+    assert abs(ramp(0.0, 0.45, 0.5, 1.2, 0.05) - 0.39) < 1e-9
+    # 전진 중 후진 명령은 먼저 0까지 줄인다 (부호가 한 번에 바뀌지 않음).
+    assert ramp(-0.2, 0.02, 0.5, 1.2, 0.05) == 0.0
+
+
+def test_motion_commands_ramp_up_and_down():
+    """주행 시작은 천천히 올리고, 정지 명령도 한 번에 0으로 떨어뜨리지 않는다."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = (1.0, 3.0)
+    logic._drive_heading = math.pi / 2
+    speeds = []
+    for i in range(20):
+        speeds.append(logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=i * DT)).linear)
+    assert speeds[0] < 0.05
+    limit = mission1_logic.LINEAR_ACCEL * DT + 1e-9
+    assert all(b - a <= limit for a, b in zip(speeds, speeds[1:]))
+    assert speeds[-1] > 0.3
+    logic.state = STUCK
+    logic.state_started_at = 20 * DT
+    stopping = logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=20 * DT)).linear
+    assert 0.0 < stopping < speeds[-1]
+
+
+def test_ramp_restarts_from_zero_after_gap():
+    """노드가 판단을 건너뛴 동안 정지 명령을 보냈으면 다시 0부터 가속한다."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = (1.0, 3.0)
+    logic._drive_heading = math.pi / 2
+    for i in range(20):
+        logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=i * DT))
+    command = logic.step(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=5.0))
+    assert command.linear < 0.05
+
+
+def test_drive_arrives_slowly_after_constant_deceleration():
+    logic = Mission1Logic()
+    logic.target = (1.0, 1.4)
+    logic._drive_heading = math.pi / 2
+    far = logic._drive(Observation(x=1.0, y=1.0, yaw=math.pi / 2, now=0.0)).linear
+    near = logic._drive(Observation(x=1.0, y=1.36, yaw=math.pi / 2, now=0.0)).linear
+    assert far == mission1_logic.DRIVE_SPEED
+    assert near < 0.15
+
+
+def test_turn_slows_down_before_target_angle():
+    logic = Mission1Logic()
+    big = abs(logic._turn_toward(math.radians(90.0), None))
+    small = abs(logic._turn_toward(math.radians(6.0), None))
+    assert big == mission1_logic.TURN_SPEED
+    assert mission1_logic.MIN_TURN_SPEED <= small < 0.8
 
 
 def test_search_turns_in_place_when_cube_not_visible():

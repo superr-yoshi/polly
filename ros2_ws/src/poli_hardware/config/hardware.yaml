@@ -9,8 +9,8 @@
   ros__parameters:
     wheel_radius: 0.0325       # 65 mm 바퀴 기준. 직선 1~2 m 주행으로 보정 (TODO_MEASURE)
     wheel_separation: 0.279    # 바퀴 포함 폭 305 mm - 바퀴 폭 26 mm (2026-10-30 줄자). 제자리 회전으로 보정 (TODO_MEASURE)
-    max_linear: 0.35           # m/s, 2026-10-31 0.25 -> 0.35 (임무 1 주행 속도). 초기 실내 제한 (무부하 이론 최고 약 1.12 m/s)
-    max_angular: 1.5           # rad/s, 2026-10-31 1.0 -> 1.5 (임무 1 회전 1.2 rad/s)
+    max_linear: 0.45           # m/s, 2026-10-31 0.35 -> 0.45 (임무 1 주행 속도 DRIVE_SPEED). 무부하 이론 최고 약 1.12 m/s
+    max_angular: 2.0           # rad/s, 2026-10-31 1.5 -> 2.0 (임무 1 회전 TURN_SPEED 1.8 rad/s)
     max_wheel_rpm: 250.0       # JGB37-520 정격 부하 250 RPM (무부하 330). 제품 사양서_E: 연속 주행은 정격 부근
     min_wheel_speed: 0.08      # m/s. 2026-10-31 0.25 -> 0.08 (MDD10 저속 가능, 급출발·급정지 해결). 0 = 끔. 이보다 느린 바퀴 명령은 두 바퀴를 같은 비율로 키움
                                # RRC 공장 펌웨어 PWM 25 % 미만 컷 때문에 도입 (2026-10-08). 제자리 회전도 약 2.8 rad/s

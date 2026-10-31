@@ -32,6 +32,11 @@ CONTROL_PERIOD = 0.05
 # 수신 시각 외에 첫 광선의 촬영 시각도 검사해 정지 전 스캔을 배제한다.
 # TODO_MEASURE: RPLIDAR C1 실제 전송 주기 (보통 10Hz)
 SCAN_TIMEOUT = 0.2
+# 지도 갱신에 쓰는 스캔의 최대 나이 (첫 광선 촬영 시각 기준).
+# sllidar는 스캔 시작 시각을 찍어 받는 순간 이미 약 0.1초(한 바퀴)다. 0.2초로 두면 전송이
+# 조금만 늦어도 정지 후 찍은 멀쩡한 스캔을 버리고 다음 스캔을 기다렸다 (2026-10-31 판단 지연).
+# 정지 전 스캔은 촬영 시각 조건(정지 + SCAN_SETTLE_S 이후)으로 따로 거른다.
+SCAN_MAX_AGE = 0.35
 ODOM_TIMEOUT = 0.3  # s, 엔코더 위치 갱신이 끊기면 주행을 멈춘다.
 # TODO_MEASURE: 정지 판정 잡음 허용치. 흔들림이 남으면 최소 대기 시간을 다시 센다.
 STILL_LINEAR_MPS = 0.02
@@ -40,7 +45,7 @@ STILL_ANGULAR_RPS = 0.1
 
 def mapping_scan_ready(scan_started_at, now, stop_started_at):
     """정지 안정 시간이 지난 뒤 촬영한 최신 스캔인지 확인한다."""
-    return (0.0 <= now - scan_started_at <= SCAN_TIMEOUT
+    return (0.0 <= now - scan_started_at <= SCAN_MAX_AGE
             and scan_started_at >= stop_started_at + SCAN_SETTLE_S)
 
 
@@ -74,11 +79,15 @@ class Mission1Node(Node):
         self.fused = None
         self.wall_fixed_for = None
         self.holding = None
+        self.gripper_state = None
         self.vision = None
         self.vision_received_at = None
         self.scan = None
         self.scan_received_at = None
         self.last_state = None
+        # 칸마다 판단(SCAN)에 걸린 시간을 나눠 보기 위한 SCAN 시작·정지 확인 시각
+        self.scan_entered_at = None
+        self.scan_stop_started_at = None
         self.last_phase = None
         self.last_path = None
 
@@ -95,6 +104,9 @@ class Mission1Node(Node):
         self.create_subscription(Imu, '/imu/data', self.imu_callback, 50)
         self.create_subscription(
             Bool, '/gripper/holding', self.holding_callback, 10
+        )
+        self.create_subscription(
+            String, '/gripper/state', self.gripper_state_callback, 10
         )
         self.create_subscription(
             TargetDetection, '/vision/target', self.vision_callback, 10
@@ -153,6 +165,9 @@ class Mission1Node(Node):
     def holding_callback(self, msg):
         self.holding = msg.data
 
+    def gripper_state_callback(self, msg):
+        self.gripper_state = msg.data
+
     def vision_callback(self, msg):
         self.vision = msg
         self.vision_received_at = self.now_seconds()
@@ -179,7 +194,7 @@ class Mission1Node(Node):
     def fix_pose_with_walls(self, scan, now):
         """칸 가운데에 멈춰 스캔할 때(SCAN) 가까운 벽까지 거리로 위치를 한 번 바로잡는다."""
         logic = self.logic
-        if logic.state != SCAN or self.fused is None:
+        if logic.state != SCAN or self.fused is None or scan is None:
             return
         if self.wall_fixed_for == logic.state_started_at:
             return
@@ -201,17 +216,25 @@ class Mission1Node(Node):
         scan = self.fresh_scan(now)
         if (self.pose is None or self.odom_received_at is None
                 or now - self.odom_received_at > ODOM_TIMEOUT
-                or scan is None
                 or (self.require_laser_tf and not self.laser_mount.ready)):
             self.stop()
             self.get_logger().warn(
-                '출발/주행 대기: 최신 odom·scan 및 LiDAR TF 필요',
+                '출발/주행 대기: 최신 odom 및 LiDAR TF 필요',
                 throttle_duration_sec=3.0)
+            return
+
+        # 스캔은 멈춰서 지도를 갱신하는 SCAN에서만 꼭 필요하다.
+        # 회전·주행 중에 스캔이 조금 늦었다고 멈추면 급정지 후 급출발하며 끊겨 움직였다 (2026-10-31).
+        if scan is None and self.logic.state == SCAN:
+            self.stop()
+            self.get_logger().warn('스캔 대기: 최신 LiDAR 스캔 없음', throttle_duration_sec=3.0)
             return
 
         if self.logic.state == SCAN and self.logic.state_started_at is not None:
             scan_started_at = scan.header.stamp.sec + scan.header.stamp.nanosec * 1e-9
             stop_started_at = max(self.logic.state_started_at, self.last_motion_at)
+            self.scan_entered_at = self.logic.state_started_at
+            self.scan_stop_started_at = stop_started_at
             if not mapping_scan_ready(scan_started_at, now, stop_started_at):
                 self.stop()
                 if now - self.logic.state_started_at > 1.0:
@@ -229,6 +252,7 @@ class Mission1Node(Node):
             x=x, y=y, yaw=yaw, now=now,
             scan=scan,
             holding=self.holding,
+            gripper_state=self.gripper_state,
         )
 
         vision = self.fresh_vision(now)
@@ -252,6 +276,11 @@ class Mission1Node(Node):
             self.last_phase = self.logic.phase
 
         if self.logic.state != self.last_state:
+            if self.last_state == SCAN and self.scan_entered_at is not None:
+                # 정지 확인이 늦으면 차체 흔들림, 그 뒤가 길면 스캔 대기가 원인이다.
+                self.get_logger().info(
+                    f'판단 시간 {now - self.scan_entered_at:.2f}s '
+                    f'(정지 확인까지 {self.scan_stop_started_at - self.scan_entered_at:.2f}s)')
             self.get_logger().info(
                 f'State: {self.logic.state}; pose=({x:.3f}, {y:.3f}, '
                 f'{math.degrees(yaw):.1f}deg); target={self.logic.target}; '
