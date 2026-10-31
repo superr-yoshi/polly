@@ -66,7 +66,11 @@ YAW_FIT_CONE_RAD = math.radians(30.0)  # 방향마다 이 범위 레이저로 �
 YAW_FIT_MIN_POINTS = 8
 YAW_FIT_MIN_SPAN_M = 0.08    # 벽 점이 옆으로 이만큼은 퍼져 있어야 기울기를 믿는다
 YAW_FIT_OUTLIER_M = 0.02     # 첫 직선에서 이보다 먼 점(모서리·다른 면)은 빼고 다시 맞춘다
-MAX_YAW_FIX_RAD = math.radians(8.0)  # 한 번에 고치는 최대 각도. TODO_MEASURE
+# 2026-10-31 실기: 벽 하나만 보고 고치니 +8 -> -8도처럼 튀었다 (손으로 놓은 상자마다 몇 도씩 돌아가 있음).
+# -> 서로 다른 면 두 개 이상이 YAW_AGREE_RAD 안에서 같을 때만, 잰 값의 YAW_FIX_GAIN만큼, 최대 MAX_YAW_FIX_RAD.
+YAW_AGREE_RAD = math.radians(2.0)
+YAW_FIX_GAIN = 0.5
+MAX_YAW_FIX_RAD = math.radians(3.0)  # 한 번에 고치는 최대 각도. TODO_MEASURE
 # 차체 바로 앞 장애물 감시 (대상에 다가갈 때. 2026-10-31: 대각선 접근 중 옆 장애물에 박음).
 # 치수는 바퀴 축(base_link) 기준, 2026-10-30 사용자 실측 (집게 포함 길이 33 cm, 축은 뒤에서 16 cm).
 # 큐브(5 cm)는 LiDAR 높이보다 낮아 여기에 걸리지 않는다.
@@ -349,7 +353,7 @@ def wall_yaw_offset(scan, robot_pose):
 
     상하좌우 ±30도 레이저 중 0.10~0.32 m에 맞은 점(칸 경계의 벽 면)에 직선을 맞춘다.
     추정 방향이 실제보다 e 작으면 벽 직선의 기울기가 tan(e)로 보인다.
-    반환: 방향 보정량 (rad, 실제 = 추정 + 보정). 벽이 안 보이면 0.
+    반환: 방향 보정량 (rad, 실제에 가까워지는 쪽). 두 면 이상이 맞지 않으면 0.
     """
     robot_x, robot_y, robot_yaw = robot_pose
     if point_to_cell(robot_x, robot_y) is None:
@@ -358,8 +362,7 @@ def wall_yaw_offset(scan, robot_pose):
     sin_r = math.sin(robot_yaw)
     laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
     laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
-    total = 0.0
-    weight = 0
+    estimates = []
     for phi in (0.0, math.pi / 2, math.pi, -math.pi / 2):
         cos_p = math.cos(phi)
         sin_p = math.sin(phi)
@@ -387,11 +390,14 @@ def wall_yaw_offset(scan, robot_pose):
         fit = _fit_slope(points)
         if fit is None:
             continue
-        total += math.atan(fit[0]) * len(points)
-        weight += len(points)
-    if weight == 0:
+        estimates.append((math.atan(fit[0]), len(points)))
+    if len(estimates) < 2:
         return 0.0
-    return max(-MAX_YAW_FIX_RAD, min(MAX_YAW_FIX_RAD, total / weight))
+    angles = [angle for angle, _ in estimates]
+    if max(angles) - min(angles) > YAW_AGREE_RAD:
+        return 0.0
+    mean = sum(angle * n for angle, n in estimates) / sum(n for _, n in estimates)
+    return max(-MAX_YAW_FIX_RAD, min(MAX_YAW_FIX_RAD, YAW_FIX_GAIN * mean))
 
 
 def obstacle_ahead(scan, robot_pose):

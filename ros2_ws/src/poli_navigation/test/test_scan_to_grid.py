@@ -278,13 +278,23 @@ def test_wall_offset_pulls_back_to_cell_center():
 
 
 def test_wall_yaw_offset_finds_heading_error():
-    """실제로 4도 더 돌아 있는데 덜 돌았다고 믿으면, 가까운 벽 기울기로 +4도 보정이 나온다."""
+    """실제로 4도 더 돌아 있는데 덜 돌았다고 믿으면, 여러 벽이 같은 기울기라 +2도(절반) 보정."""
     true_grid = GridMap()
     true_grid.mark_blocked((9, 2))
     x, y, yaw = START_POSE
-    for error in (math.radians(4.0), math.radians(-6.0)):
-        scan = simulate_scan(true_grid, (x, y, yaw + error))
-        assert abs(wall_yaw_offset(scan, START_POSE) - error) < math.radians(1.0)
+    for error, expected in ((4.0, 2.0), (-4.0, -2.0), (-10.0, -3.0)):
+        scan = simulate_scan(true_grid, (x, y, yaw + math.radians(error)))
+        assert abs(math.degrees(wall_yaw_offset(scan, START_POSE)) - expected) < 0.6
+
+
+def test_wall_yaw_offset_ignores_single_or_disagreeing_walls():
+    """벽 면이 하나뿐이면 (상자 하나가 비뚤어져 있을 수 있어) 고치지 않는다."""
+    x, y = cell_center_m((5, 4))
+    pose = (x, y, math.pi / 2)
+    one_wall = GridMap()
+    one_wall.mark_blocked((5, 5))
+    scan = simulate_scan(one_wall, (x, y, math.pi / 2 + math.radians(4.0)))
+    assert wall_yaw_offset(scan, pose) == 0.0
 
 
 def test_wall_yaw_offset_is_zero_when_heading_is_right_or_no_wall():
