@@ -46,7 +46,6 @@ from poli_navigation.scan_to_grid import (
     obstacle_ahead,
     point_to_cell,
     scan_to_cells,
-    update_grid_from_scan,
 )
 from poli_navigation.turn_pulse import HW_MIN_WHEEL_SPEED, TurnPulse
 
@@ -392,15 +391,13 @@ class Mission1Logic:
 
     def _map_scan(self, scan, pose, center=None):
         """
-        스캔을 지도에 반영한다.
+        스캔으로 상하좌우 이웃 칸만 지도에 반영한다 (방향별 ±15도 레이저, center 기준 거리).
 
-        center(달리면서 찍은 스캔의 칸 가운데)가 있으면 상하좌우 이웃 칸만 그 가운데 기준으로
-        판단한다. 광선 전체를 밀어 넣는 갱신은 서서 찍은 스캔에서만 한다 (2026-10-31: 가운데
-        몇 cm 앞에서 찍은 스캔으로 하니 통로 칸이 막힘으로 찍혀 STUCK·왕복).
+        멀리 있는 칸까지 광선으로 칠하는 갱신(update_grid_from_scan)은 쓰지 않는다. 멀리 맞은 점은
+        위치·방향 오차가 커져 통로 칸을 막힘으로 잘못 찍었다 (2026-10-31 실기: (8,3)을 못 골라
+        돌아감, 주행 중 스캔으로는 STUCK·왕복). 미로는 이웃 칸만 쓰고, 먼 칸은 '모름'으로 두었다가
+        옆에 가서 직접 본다. 시뮬레이션 규정 예시 63.4 s -> 63.5 s로 시간 차이 없음.
         """
-        if center is None:
-            update_grid_from_scan(self.grid, scan, pose)
-        # 상하좌우 이웃 칸은 방향별 ±15도 레이저 판단으로 덮어쓴다 (사선 오차에 강함).
         for cell, state in neighbor_states(scan, pose, center).items():
             if not self.grid.in_bounds(cell):
                 continue
@@ -760,7 +757,7 @@ class Mission1Logic:
 
     def _stuck(self, obs):
         # 상대 로봇이 길을 막고 있을 수 있다. 기다렸다가 다시 스캔한다.
-        # (상대가 떠났으면 update_grid_from_scan이 지도에서 지운다)
+        # (상대가 떠났으면 다시 볼 때 neighbor_states가 빈칸으로 바꾼다)
         if obs.now - self.state_started_at < STUCK_RETRY_S:
             return Command()
 

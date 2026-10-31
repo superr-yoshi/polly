@@ -135,8 +135,8 @@ class SimRobot:
 def run(logic, robot, max_seconds=MATCH_SECONDS, until=None, rolling=False):
     states = []
     while robot.now < max_seconds:
-        # 스캔은 SCAN 상태에서만 쓰므로 그때만 계산한다. (주행 중 판단 시험은 DRIVE에서도)
-        obs = robot.observe(with_scan=logic.state == SCAN or (rolling and logic.state == DRIVE))
+        # 실제 로봇처럼 주행·접근 중에도 스캔을 준다 (두 칸 주행 중 앞 벽 감시, 접근 중 장애물 감시).
+        obs = robot.observe(with_scan=logic.state in (SCAN, DRIVE, APPROACH))
         if rolling and obs.scan is not None:
             obs.scan_time = robot.now
         robot.apply(logic.step(obs))
