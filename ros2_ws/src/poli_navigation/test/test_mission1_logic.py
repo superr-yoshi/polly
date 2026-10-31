@@ -897,6 +897,22 @@ def test_chain_after_90_degree_turn_even_with_small_heading_error():
     assert logic.path == [(9, 2), (8, 2), (7, 2)]
 
 
+def test_chain_not_blocked_by_side_box_corners_in_corridor():
+    """사진 1->3번: 통로 양옆 상자 모서리가 위치 오차로 보여도 두 칸을 묶는다 (2026-10-31 실기)."""
+    import itertools
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((9, 3), (7, 3), (7, 1), (6, 2), (6, 3)):
+        true_grid.mark_blocked(cell)
+    x, y = cell_center_m((9, 2))
+    for dx, dy, dyaw in itertools.product((-0.03, 0.0, 0.03), (-0.03, 0.0, 0.03), (-3, 0, 3)):
+        logic = Mission1Logic(point_symmetry=False)
+        logic.grid.mark_blocked((9, 3))
+        logic.maze.observe((9, 2), math.pi / 2)
+        scan = simulate_scan(true_grid, (x + dx, y + dy, math.pi / 2 + math.radians(dyaw)))
+        logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0, scan=scan))
+        assert logic.path == [(9, 2), (8, 2), (7, 2)], (dx, dy, dyaw)
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

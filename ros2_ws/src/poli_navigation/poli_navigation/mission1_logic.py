@@ -175,6 +175,9 @@ APPROACH_STALL_M = 0.06
 # 막힌 두 번째 칸의 면은 목표 가운데 0.2 m 앞, 막다른 칸 너머 벽은 0.2 m 뒤에 있다.
 # LiDAR가 상자 위로 넘어가지 않는 거리(축에서 CHAIN_GUARD_RANGE_M) 안의 점만 쓴다. TODO_MEASURE
 CHAIN_WALL_MARGIN_M = 0.12
+# 두 칸 묶기 전 벽 검사의 광선 범위. ±15도면 옆 상자 모서리(약 18도, 0.6 m)가 위치 오차로 들어와
+# 사진 1->3번 같은 통로에서 묶지 않았다 (시뮬레이션 27가지 중 6가지). ±8도면 0가지 (2026-10-31)
+CHAIN_CHECK_CONE_RAD = math.radians(8.0)
 CHAIN_GUARD_RANGE_M = 0.6
 AREA_GROW_RATIO = 1.05
 
@@ -600,7 +603,8 @@ class Mission1Logic:
         travel_yaw = math.atan2(step_dir[1], step_dir[0])
         if obs.scan is not None and wall_in_direction(
                 obs.scan, (obs.x, obs.y, obs.yaw), travel_yaw,
-                CELL_SIZE_M * 1.5 - CHAIN_WALL_MARGIN_M, CELL_SIZE_M * 1.5 + CHAIN_WALL_MARGIN_M):
+                CELL_SIZE_M * 1.5 - CHAIN_WALL_MARGIN_M, CELL_SIZE_M * 1.5 + CHAIN_WALL_MARGIN_M,
+                CHAIN_CHECK_CONE_RAD):
             return 1
         if self.maze.state.score(after) >= self.maze.state.score(middle):
             return 1

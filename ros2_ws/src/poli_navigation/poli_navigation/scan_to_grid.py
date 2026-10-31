@@ -479,9 +479,9 @@ def corner_offset(scan, robot_pose):
     return result[0], result[1]
 
 
-def wall_in_direction(scan, robot_pose, direction, near_m, far_m):
+def wall_in_direction(scan, robot_pose, direction, near_m, far_m, cone=CONE_HALF_RAD):
     """
-    로봇 위치에서 direction(경기장 각도) ±CONE_HALF_RAD 광선 중 near_m~far_m에 맞은 점이 있는지.
+    로봇 위치에서 direction(경기장 각도) ±cone 광선 중 near_m~far_m에 맞은 점이 있는지.
 
     두 칸 묶기 전에, 서서 찍은 스캔으로 두 번째 칸 앞면(가운데에서 0.6 m)이 보이는지 본다.
     """
@@ -498,7 +498,7 @@ def wall_in_direction(scan, robot_pose, direction, near_m, far_m):
             continue
         angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
         off = math.atan2(math.sin(angle - direction), math.cos(angle - direction))
-        if abs(off) > CONE_HALF_RAD:
+        if abs(off) > cone:
             continue
         along = ((laser_x + distance * math.cos(angle) - robot_x) * math.cos(direction)
                  + (laser_y + distance * math.sin(angle) - robot_y) * math.sin(direction))
