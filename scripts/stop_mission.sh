@@ -1,6 +1,7 @@
 #!/bin/bash
-# start_mission.sh로 띄운 임무를 멈춘다 (Pi에서 실행).
-# 먼저 Ctrl+C와 같은 SIGINT를 보낸다 (launch가 노드에 SIGINT -> node_runner가 모터 정지 명령 후 종료).
+# start_mission.sh로 띄운 임무를 멈춘다 (Pi에서 실행). 노트북에서는 scripts/laptop/stop.sh.
+# 먼저 임무 노드를 바로 끝내 바퀴를 세우고 (아래 1), 나머지 노드를 정리한다 (아래 2).
+# 2)에서는 Ctrl+C와 같은 SIGINT를 보낸다 (launch가 노드에 SIGINT -> node_runner가 모터 정지 명령 후 종료).
 # 10초 안에 안 끝나면 SIGTERM을 보낸다 (node_runner는 SIGTERM에도 모터를 멈춘다).
 # [p]처럼 쓴 것은 pgrep이 이 명령을 실행한 셸 자신을 찾지 않게 하려는 것이다.
 set -u
@@ -15,6 +16,16 @@ wait_exit() {
   return 1
 }
 
+# 1) 먼저 임무 노드만 바로 끝낸다 (kill -9, 즉시 정지). 바퀴 명령이 끊기면 하드웨어 노드의
+#    /cmd_vel 0.3초 timeout과 Mega 펌웨어 0.3초 timeout이 바퀴를 세운다 (하드웨어 노드는 살려 둔다).
+#    2026-10-31: 임무 노드가 SIGINT에 끝나지 않아 정지 명령 뒤에도 로봇이 계속 돌았다.
+NODE_PIDS="$(pgrep -f "[l]ib/poli_navigation/mission[12] ")"
+if [ -n "$NODE_PIDS" ]; then
+  kill -KILL $NODE_PIDS
+  echo "임무 노드 즉시 정지 (바퀴는 0.3초 안에 선다)."
+fi
+
+# 2) 나머지(하드웨어·LiDAR·카메라 노드)는 SIGINT로 정리한다.
 PIDS="$(pgrep -f "$PATTERN")"
 if [ -z "$PIDS" ]; then
   echo "실행 중인 임무가 없다."
