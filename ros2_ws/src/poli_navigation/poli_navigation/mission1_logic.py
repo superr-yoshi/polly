@@ -42,6 +42,7 @@ from poli_navigation.mission2_logic import (
     heading_error_to,
 )
 from poli_navigation.scan_to_grid import (
+    nearest_ahead,
     neighbor_states,
     obstacle_ahead,
     point_to_cell,
@@ -87,7 +88,8 @@ SEARCH_GIVE_UP_S = 7.0
 
 # 격자 가운데에 도착했다고 보는 거리, 가운데에서 벗어났다고 보는 거리
 ARRIVE_TOLERANCE_M = 0.03
-CELL_CENTER_TOLERANCE_M = 0.1
+# 2026-10-31 0.10 -> 0.15: 상자가 40 cm 격자에서 조금만 어긋나도 가운데로 되돌아가며 후진했다 (팀 요청)
+CELL_CENTER_TOLERANCE_M = 0.15
 
 # 속도와 제어 값 (임무 2와 같은 기준, turn_pulse.py 참고)
 # 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
@@ -161,9 +163,11 @@ APPROACH_LOST_S = 0.5
 # 큐브가 집게에 닿아 같이 밀리는 것으로 보고 잡는다 (GRAB_AREA에 못 미쳐도).
 # 2026-10-31 실기 (17:45): 면적이 25000에서 안 커진 채 큐브를 80 cm 밀고 감. TODO_MEASURE
 APPROACH_STALL_M = 0.06
-# 두 칸 한 번에 갈 때 집게 끝 앞 이 거리에 벽이 보이면 멈춘다 (0.45 m/s에서 서는 거리 약 13 cm + 여유).
-# TODO_MEASURE: 두 번째 칸이 막혔을 때 벽 앞에 제때 서는지 확인
-CHAIN_GUARD_AHEAD_M = 0.20
+# 두 칸 한 번에 갈 때 목표 칸 가운데보다 앞(CHAIN_WALL_MARGIN_M 여유)에 벽이 보이면 멈춘다.
+# 막힌 두 번째 칸의 면은 목표 가운데 0.2 m 앞, 막다른 칸 너머 벽은 0.2 m 뒤에 있다.
+# LiDAR가 상자 위로 넘어가지 않는 거리(축에서 CHAIN_GUARD_RANGE_M) 안의 점만 쓴다. TODO_MEASURE
+CHAIN_WALL_MARGIN_M = 0.12
+CHAIN_GUARD_RANGE_M = 0.6
 AREA_GROW_RATIO = 1.05
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
@@ -248,8 +252,10 @@ class Observation:
 
 class Mission1Logic:
 
-    def __init__(self):
-        self.grid = GridMap()
+    def __init__(self, point_symmetry=True):
+        # point_symmetry: 대회 규정상 장애물은 점대칭이라 한 칸이 막히면 반대편도 막힘으로 칠한다.
+        # 대칭이 아닌 연습 경기장에서는 끈다 (start_mission.sh --test).
+        self.grid = GridMap(use_point_symmetry=point_symmetry)
         self.phase = EXPLORE
         self.state = SCAN
         self.state_started_at = None
@@ -283,6 +289,9 @@ class Mission1Logic:
         self._scan_at_arrival = False
         # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
         self._chained = False
+        # 두 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
+        self._no_chain_from = set()
+        self._drive_origin_cell = None
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -503,6 +512,7 @@ class Mission1Logic:
         self.path = path
         center = cell_center_m(current)
         drive_origin = center
+        self._drive_origin_cell = center
 
         if distance_to(obs, center) > CELL_CENTER_TOLERANCE_M:
             # 격자 가운데에서 벗어나 있으면 먼저 가운데로 돌아간다.
@@ -550,13 +560,14 @@ class Mission1Logic:
             return end
         middle = path[1]
         if (self._sees_target(obs) or middle in self.grid.neighbors(CENTER)
+                or path[0] in self._no_chain_from
                 or abs(heading_error_to(obs, cell_center_m(middle))) > math.pi / 2):
             return 1
         # 2026-10-31 팀 규칙: 앞 두 칸이 다 뚫려 있고 두 번째 칸 점수(목표 거리 + 방문 x 10)가
         # 첫 번째 칸보다 작으면 두 칸을 쭉 가고, 크거나 같으면 한 칸씩 가서 확인한다.
         # 두 번째 칸은 막힘으로 표시되지 않았으면 된다. LiDAR가 약 0.55 m 너머 상자 위로 넘어가
         # 두 번째 칸은 대개 미관측이라, 빈칸 확인을 요구하면 거의 묶이지 않았다 (2026-10-31 실기).
-        # 대신 두 칸 주행 중 집게 앞 CHAIN_GUARD_AHEAD_M에 벽이 보이면 멈추고 다시 판단한다 (_drive).
+        # 대신 두 칸 주행 중 목표 칸 가운데보다 앞에 벽이 보이면 멈추고 다시 판단한다 (_drive).
         after = (middle[0] + step_dir[0], middle[1] + step_dir[1])
         if not self.grid.in_bounds(after) or self.grid.get(after) == BLOCKED:
             return 1
@@ -664,10 +675,11 @@ class Mission1Logic:
 
     def _drive(self, obs):
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
-        if (self._chained and obs.scan is not None
-                and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw), CHAIN_GUARD_AHEAD_M)):
-            # 두 칸 한 번에 가는데 두 번째 칸이 막혀 있었다 -> 멈추고 첫 칸 가운데에서 다시 판단
+        if self._chained and obs.scan is not None and self._wall_before_target(obs):
+            # 두 칸 한 번에 가는데 두 번째 칸이 막혀 있었다 -> 멈추고 첫 칸 가운데에서 다시 판단.
+            # 출발 칸에서는 다시 묶지 않는다 (2026-10-31 실기: 같은 두 칸 계획·정지를 0.3초마다 반복).
             self._chained = False
+            self._no_chain_from.add(point_to_cell(*self._drive_origin_cell))
             self.event = '두 칸 주행 중 앞에 벽 -> 멈추고 다시 판단'
             self._change_state(SCAN, obs)
             return Command()
@@ -747,6 +759,20 @@ class Mission1Logic:
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
         return Command(linear=-linear if self.reverse else linear, angular=angular)
+
+    def _wall_before_target(self, obs):
+        """
+        두 칸 주행 중 목표 칸 가운데보다 앞에 벽이 보이는지 (두 번째 칸이 막혀 있었다).
+
+        목표 칸 너머 벽(막다른 칸)은 목표 가운데에서 0.2 m 뒤라 멈추지 않는다.
+        2026-10-31 실기: 집게 앞 20 cm만 보고 멈추니 막다른 칸 (7,2)에 다 와서 너머 벽에 섰다.
+        """
+        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw))
+        if ahead is None or ahead > CHAIN_GUARD_RANGE_M:
+            return False
+        dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
+        to_target = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
+        return ahead < to_target - CHAIN_WALL_MARGIN_M
 
     def _travel_heading_error(self, obs):
         """후진할 때 목표 반대쪽으로 차체 정면을 유지한다."""

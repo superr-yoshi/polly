@@ -72,7 +72,9 @@ class Mission1Node(Node):
     def __init__(self):
         super().__init__('mission1')
 
-        self.logic = Mission1Logic()
+        # 대회 경기장은 장애물이 점대칭(규정)이라 기본 True. 대칭이 아닌 연습 경기장에서만 false.
+        self.logic = Mission1Logic(
+            point_symmetry=self.declare_parameter('point_symmetry', True).value)
         self.pose = None
         self.odom_received_at = None
         self.last_motion_at = self.now_seconds()

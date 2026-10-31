@@ -811,6 +811,39 @@ def test_approach_grabs_when_area_stops_growing():
     assert logic.state == PUSH
 
 
+def test_two_cell_drive_does_not_stop_for_wall_beyond_target():
+    """막다른 칸(목표 칸 너머가 벽)은 다 와서 너머 벽을 보고 서지 않는다 (2026-10-31 실기)."""
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    x, y, yaw = START_POSE
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    assert logic._chained and logic.target == cell_center_m((9, 3))
+    logic.state = DRIVE
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 4))
+    pose = (x, cell_center_m((9, 3))[1] - 0.10, yaw)  # 목표 가운데 10 cm 앞, 너머 벽은 30 cm
+    obs = Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0, scan=simulate_scan(true_grid, pose))
+    logic._drive(obs)
+    assert logic.state == DRIVE
+
+
+def test_no_repeated_chain_after_wall_stop():
+    """앞 벽으로 멈춘 칸에서는 다시 두 칸을 묶지 않는다 (같은 계획·정지 무한 반복 방지)."""
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    x, y, yaw = START_POSE
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    logic.state = DRIVE
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 3))
+    pose = (x, cell_center_m((9, 3))[1] - 0.2 - 0.17 - 0.10, yaw)
+    logic._drive(Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0,
+                             scan=simulate_scan(true_grid, pose)))
+    assert logic.state == SCAN
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=2.0))
+    assert not logic._chained
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH
@@ -975,7 +1008,7 @@ def test_diagonal_or_blocked_target_is_not_approached():
     assert not logic._target_approach(obs)
     # 칸 가운데가 아님
     logic = Mission1Logic()
-    obs = Observation(x=x, y=y + 0.15, yaw=yaw, now=0.0, detected=True, area=9000.0)
+    obs = Observation(x=x, y=y + 0.2, yaw=yaw, now=0.0, detected=True, area=9000.0)
     assert not logic._target_approach(obs)
 
 

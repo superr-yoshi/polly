@@ -19,7 +19,9 @@ wait_exit() {
 # 1) 먼저 임무 노드만 바로 끝낸다 (kill -9, 즉시 정지). 바퀴 명령이 끊기면 하드웨어 노드의
 #    /cmd_vel 0.3초 timeout과 Mega 펌웨어 0.3초 timeout이 바퀴를 세운다 (하드웨어 노드는 살려 둔다).
 #    2026-10-31: 임무 노드가 SIGINT에 끝나지 않아 정지 명령 뒤에도 로봇이 계속 돌았다.
-NODE_PIDS="$(pgrep -f "[l]ib/poli_navigation/mission[12] ")"
+# 실제 노드 프로세스(/usr/bin/python3 .../lib/poli_navigation/missionN)만 잡는다.
+# (이 문자열을 담은 다른 셸 명령까지 잡지 않게 맨 앞을 고정한다. 2026-10-31)
+NODE_PIDS="$(pgrep -f "^/usr/bin/python3 [^ ]*/lib/poli_navigation/mission[12]( |$)")"
 if [ -n "$NODE_PIDS" ]; then
   kill -KILL $NODE_PIDS
   echo "임무 노드 즉시 정지 (바퀴는 0.3초 안에 선다)."

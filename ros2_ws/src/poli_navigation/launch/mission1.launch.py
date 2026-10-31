@@ -34,6 +34,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_fake_hardware', default_value='true'),
         DeclareLaunchArgument('debug_view', default_value='false'),
+        # 대회 경기장은 점대칭(규정) -> true. 대칭이 아닌 연습 경기장에서만 false (start_mission.sh --test).
+        DeclareLaunchArgument('point_symmetry', default_value='true'),
         # TODO_MEASURE: udev 규칙(docs/udev_template.md) 적용 후 이름 확인
         DeclareLaunchArgument('lidar_port', default_value='/dev/robot_lidar'),
 
@@ -77,7 +79,8 @@ def generate_launch_description():
         Node(
             package='poli_navigation',
             executable='mission1',
-            parameters=[{'require_laser_tf': True}],
+            parameters=[{'require_laser_tf': True,
+                         'point_symmetry': LaunchConfiguration('point_symmetry')}],
             output='screen',
         ),
     ])

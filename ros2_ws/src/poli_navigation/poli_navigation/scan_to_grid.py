@@ -64,7 +64,9 @@ CONE_MIN_RAYS = 3
 # 칸 가운데에 멈췄을 때 가까운 벽(칸 경계, 중심에서 0.2 m)까지 거리로 위치를 바로잡는다 (2026-10-31 팀 요청).
 WALL_FIT_MIN_M = 0.10
 WALL_FIT_MAX_M = 0.32
-MAX_POSE_FIX_M = 0.10    # 한 번에 고치는 최대 거리 (잘못 잰 값에 크게 끌려가지 않게)
+# 한 번에 고치는 최대 거리 (잘못 잰 값에 크게 끌려가지 않게). 2026-10-31 0.10 -> 0.06: 상자가 몇 cm
+# 어긋난 연습 경기장에서 한 번에 크게 옮겨져 가운데로 되돌아가는 후진이 잦았다 (팀 요청)
+MAX_POSE_FIX_M = 0.06
 # 같은 가까운 벽 면의 기울기로 방향(yaw)도 바로잡는다 (2026-10-31: IMU 방향 오차가 쌓여 벽에 박음).
 # 벽은 모두 경기장 축과 나란하므로, 추정 방향이 e만큼 틀리면 벽 점들이 e만큼 기울어 보인다.
 YAW_FIT_CONE_RAD = math.radians(30.0)  # 방향마다 이 범위 레이저로 벽 직선을 맞춘다
@@ -475,6 +477,32 @@ def corner_offset(scan, robot_pose):
         deltas.sort()
         result.append(max(-MAX_POSE_FIX_M, min(MAX_POSE_FIX_M, deltas[len(deltas) // 2])))
     return result[0], result[1]
+
+
+def nearest_ahead(scan, robot_pose):
+    """차체 폭(+GUARD_SIDE_M) 안에서 집게 끝보다 앞에 있는 가장 가까운 점까지 축 기준 거리 (없으면 None)."""
+    robot_x, robot_y, robot_yaw = robot_pose
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    alongs = []
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance):
+            continue
+        if not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        rel_x = laser_x + distance * math.cos(angle) - robot_x
+        rel_y = laser_y + distance * math.sin(angle) - robot_y
+        along = rel_x * cos_r + rel_y * sin_r
+        lateral = -rel_x * sin_r + rel_y * cos_r
+        if along >= BODY_FRONT_M and abs(lateral) <= BODY_HALF_WIDTH_M + GUARD_SIDE_M:
+            alongs.append(along)
+    if len(alongs) < GUARD_MIN_POINTS:
+        return None
+    alongs.sort()
+    return alongs[GUARD_MIN_POINTS - 1]
 
 
 def obstacle_ahead(scan, robot_pose, ahead=GUARD_AHEAD_M):
