@@ -712,15 +712,22 @@ def test_return_drives_straight_run_without_stopping():
     assert logic.target == cell_center_m((9, 2))
 
 
-def test_explore_chains_two_cells_when_next_cell_is_known_straight():
-    logic = Mission1Logic()
-    for cell in ((8, 2), (8, 3), (9, 3)):
-        logic.grid.mark_free(cell)
-    logic.grid.mark_free((9, 2))
+def test_explore_chains_two_cells_when_second_cell_scores_lower():
+    """앞 두 칸이 빈칸이고 두 번째 칸 점수가 더 작으면(목표 쪽) 두 칸을 쭉 간다."""
     x, y, yaw = START_POSE
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    logic.grid.mark_free((9, 3))
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
     assert logic.target == cell_center_m((9, 3))
-    # (9,2)의 이웃 하나라도 모르면 한 칸만
+    # 두 번째 칸을 이미 지나갔으면(방문 +10) 점수가 커서 한 칸만
+    logic = Mission1Logic()
+    logic.grid.mark_free((9, 2))
+    logic.grid.mark_free((9, 3))
+    logic.maze.state.visits[(9, 3)] = 1
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    assert logic.target == cell_center_m((9, 2))
+    # 두 번째 칸을 아직 못 봤으면 한 칸만
     logic = Mission1Logic()
     logic.grid.mark_free((9, 2))
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))

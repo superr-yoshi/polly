@@ -29,9 +29,9 @@ from poli_navigation.grid_map import (
     cell_center_m,
     CELL_SIZE_M,
     CENTER,
+    FREE,
     GridMap,
     MISSION1_START,
-    UNKNOWN,
 )
 from poli_navigation.mission1_maze import Mission1Maze
 from poli_navigation.mission2_logic import (
@@ -525,7 +525,7 @@ class Mission1Logic:
         path[1]부터 서지 않고 곧게 갈 수 있는 마지막 칸의 번호.
 
         복귀: 지나온 칸이라 지도가 있으므로 같은 방향이 이어지는 데까지 (출발 격자 앞에서 멈춤).
-        탐색: 다음 칸의 이웃이 모두 이미 보였고 미로 규칙상 거기서도 직진이면 한 칸 더.
+        탐색: 그다음 칸도 빈칸이고 점수가 더 작으면(목표 쪽) 한 칸 더.
         서서 찍은 스캔으로 만든 지도만 쓴다 (주행 중 스캔은 위치가 늦어 쓰지 않음).
         """
         step_dir = (path[1][0] - path[0][0], path[1][1] - path[0][1])
@@ -540,15 +540,13 @@ class Mission1Logic:
         if (self._sees_target(obs) or middle in self.grid.neighbors(CENTER)
                 or abs(heading_error_to(obs, cell_center_m(middle))) > math.pi / 2):
             return 1
-        x, y = middle
-        around = [(x, y + 1), (x + 1, y), (x, y - 1), (x - 1, y)]
-        visited = self.maze.visited_cells()
-        if any(self.grid.in_bounds(cell) and cell not in visited
-               and self.grid.get(cell) == UNKNOWN for cell in around):
+        # 2026-10-31 팀 규칙: 앞 두 칸이 다 뚫려 있고 두 번째 칸 점수(목표 거리 + 방문 x 10)가
+        # 첫 번째 칸보다 작으면 두 칸을 쭉 가고, 크거나 같으면 한 칸씩 가서 확인한다.
+        # 두 번째 칸은 서서 찍은 스캔으로 빈칸이 확인된 경우만 (미관측이면 막혔을 수 있다).
+        after = (middle[0] + step_dir[0], middle[1] + step_dir[1])
+        if not self.grid.in_bounds(after) or self.grid.get(after) != FREE:
             return 1
-        travel_yaw = math.atan2(step_dir[1], step_dir[0])
-        after = self.maze.next_cell_from(self.grid, middle, travel_yaw)
-        if after != (middle[0] + step_dir[0], middle[1] + step_dir[1]):
+        if self.maze.state.score(after) >= self.maze.state.score(middle):
             return 1
         path.append(after)
         self.event = f'두 칸 한 번에: {path[0]} -> {after}'
