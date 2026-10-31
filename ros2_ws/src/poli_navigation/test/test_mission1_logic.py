@@ -620,7 +620,8 @@ def _rolling_logic(true_grid, y):
     return logic, obs
 
 
-def test_rolling_decision_keeps_driving_straight_without_stopping():
+def test_rolling_decision_keeps_driving_straight_without_stopping(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     logic, obs = _rolling_logic(GridMap(), 0.06)
     assert logic.rolling_scan_ok(obs)
     command = logic.step(obs)
@@ -629,7 +630,8 @@ def test_rolling_decision_keeps_driving_straight_without_stopping():
     assert command.linear > 0.0
 
 
-def test_rolling_decision_with_turn_stops_and_turns_without_scan_wait():
+def test_rolling_decision_with_turn_stops_and_turns_without_scan_wait(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     true_grid = GridMap()
     true_grid.mark_blocked((9, 3))
     logic, obs = _rolling_logic(true_grid, 0.06)
@@ -643,7 +645,8 @@ def test_rolling_decision_with_turn_stops_and_turns_without_scan_wait():
     assert logic.state == TURN
 
 
-def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center():
+def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     logic, obs = _rolling_logic(GridMap(), 0.06)
     logic._speed_changed_at = 0.95
     assert not logic.rolling_scan_ok(obs)
@@ -662,7 +665,8 @@ def test_scan_pose_goes_back_to_capture_time_when_moving():
     assert abs(x - 1.0) < 1e-9 and abs(y - (1.0 - 0.2 * 0.1)) < 1e-9
 
 
-def test_drive_slows_to_roll_speed_before_cell_center():
+def test_drive_slows_to_roll_speed_before_cell_center(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     logic = Mission1Logic()
     logic._has_scan_time = True
     logic.target = (1.0, 1.4)
@@ -682,7 +686,8 @@ def test_turn_stops_early_by_current_turn_speed():
         assert logic.state == expected
 
 
-def test_full_run_with_rolling_decisions():
+def test_full_run_with_rolling_decisions(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     true_grid = example_grid()
     logic = Mission1Logic()
     robot = SimRobot(true_grid)
