@@ -43,6 +43,11 @@ WALL_MARGIN_M = 0.05
 # 맞은 면을 가로질러 조금 밀어서 장애물 격자 안쪽으로 넣는다. (TODO: 실측 후 조정)
 HIT_PUSH_M = 0.10  # 2026-10-31: 0.05면 로봇 놓는 위치·방향이 몇 cm·몇 도만 어긋나도 벽 점이 통로 칸으로 넘어와 막힘 (실기 확인)
 
+# 칸 모서리에서 가로·세로 경계까지 둘 다 이보다 가까운 점은 어느 칸인지 확실하지 않아 막힘 판단에 쓰지 않는다.
+# 2026-10-31 실기: 위아래가 상자인 통로 칸 (8,3)이, 위치가 3 cm만 틀려도 옆 상자 모서리 점이
+# 밀려 들어와 막힘으로 찍혔다 (미로가 그 칸을 못 골라 돌아감). TODO_MEASURE
+CORNER_IGNORE_M = 0.05
+
 # 한 격자에 이 개수 이상 점이 맞아야 막힘으로 판단한다. (TODO: 실측 후 조정)
 MIN_HITS_PER_CELL = 2
 # 이보다 먼 점은 지도에 쓰지 않는다 (막힘·빈칸 모두 '모름'으로 둔다).
@@ -149,6 +154,13 @@ def hit_to_cell(hit_x, hit_y, dir_x, dir_y):
     return point_to_cell(hit_x, hit_y)
 
 
+def near_cell_corner(x, y):
+    """칸 모서리 근처(가로·세로 경계 모두 CORNER_IGNORE_M 안)인지."""
+    dist_to_x_line = abs(x - round(x / CELL_SIZE_M) * CELL_SIZE_M)
+    dist_to_y_line = abs(y - round(y / CELL_SIZE_M) * CELL_SIZE_M)
+    return dist_to_x_line < CORNER_IGNORE_M and dist_to_y_line < CORNER_IGNORE_M
+
+
 def scan_to_cells(scan, robot_pose):
     """
     스캔 한 번으로 막힌 격자와 빈 격자를 판단한다.
@@ -229,7 +241,7 @@ def _trace_scan(scan, robot_pose):
         hit_x = laser_x + dir_x * distance
         hit_y = laser_y + dir_y * distance
 
-        if is_near_wall(hit_x, hit_y):
+        if is_near_wall(hit_x, hit_y) or near_cell_corner(hit_x, hit_y):
             continue
 
         cell = hit_to_cell(hit_x, hit_y, dir_x, dir_y)

@@ -341,3 +341,18 @@ def test_corner_offset_none_along_continuous_walls():
     x, y = cell_center_m((9, 3))
     scan = simulate_scan(true_grid, (x, y, math.pi / 2))
     assert corner_offset(scan, (x, y, math.pi / 2))[1] is None
+
+
+def test_corridor_between_boxes_not_blocked_with_small_pose_error():
+    """위아래가 상자인 통로 칸 (8,3)이 위치 3 cm·3도 오차로 막힘이 되면 안 된다 (2026-10-31 실기)."""
+    import itertools
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((9, 3), (7, 3), (7, 1), (6, 2), (6, 3)):
+        true_grid.mark_blocked(cell)
+    for cell, yaw in (((9, 1), math.pi / 2), ((9, 2), math.pi / 2), ((7, 2), math.pi)):
+        x, y = cell_center_m(cell)
+        for dx, dy, dyaw in itertools.product((-0.03, 0.0, 0.03), (-0.03, 0.0, 0.03), (-3, 0, 3)):
+            scan = simulate_scan(true_grid, (x + dx, y + dy, yaw + math.radians(dyaw)))
+            blocked, _ = scan_to_cells(scan, (x, y, yaw))
+            assert (8, 3) not in blocked, (cell, dx, dy, dyaw)
+            assert (9, 3) in blocked or (7, 3) in blocked
