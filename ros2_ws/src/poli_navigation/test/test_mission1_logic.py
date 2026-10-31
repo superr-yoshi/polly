@@ -887,6 +887,16 @@ def test_return_turns_at_corner_without_scan_wait():
     assert logic.state == TURN
 
 
+def test_chain_after_90_degree_turn_even_with_small_heading_error():
+    """90도 옆 칸으로 두 칸 갈 때 로봇 방향이 1도 틀어져 있어도 묶는다 (2026-10-31 실기)."""
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 3))
+    logic.maze.observe((9, 2), math.pi / 2)
+    x, y = cell_center_m((9, 2))
+    logic._plan(Observation(x=x, y=y, yaw=math.radians(89.0), now=0.0))
+    assert logic.path == [(9, 2), (8, 2), (7, 2)]
+
+
 def test_search_turns_in_place_when_cube_not_visible():
     logic = Mission1Logic()
     logic.state = SEARCH

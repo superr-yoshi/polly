@@ -583,7 +583,9 @@ class Mission1Logic:
         if (self._sees_target(obs) or self.cube is not None
                 or middle in self.grid.neighbors(CENTER)
                 or path[0] in self._no_chain_from
-                or abs(heading_error_to(obs, cell_center_m(middle))) > math.pi / 2):
+                # 후진(뒤쪽 칸)일 때만 묶지 않는다. 90도 옆 칸은 돌고 나서 두 칸 간다.
+                # 2026-10-31 실기: 정확히 90도 옆인 (9,2)->(8,2)->(7,2)가 각도 오차 1도로 끊겼다.
+                or abs(heading_error_to(obs, cell_center_m(middle))) > 3 * math.pi / 4):
             return 1
         # 2026-10-31 팀 규칙: 앞 두 칸이 다 뚫려 있고 두 번째 칸 점수(목표 거리 + 방문 x 10)가
         # 첫 번째 칸보다 작으면 두 칸을 쭉 가고, 크거나 같으면 한 칸씩 가서 확인한다.
