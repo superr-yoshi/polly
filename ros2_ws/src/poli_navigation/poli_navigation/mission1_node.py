@@ -18,6 +18,7 @@ from poli_navigation.mission2_node import (
     yaw_from_quaternion,
 )
 from poli_navigation.scan_to_grid import (
+    corner_offset,
     odom_to_arena,
     START_POSE,
     wall_offset,
@@ -205,6 +206,13 @@ class Mission1Node(Node):
         """
         dyaw = wall_yaw_offset(scan, pose)
         dx, dy = wall_offset(scan, (pose[0], pose[1], pose[2] + dyaw))
+        # 앞뒤 벽이 없는 축(직진 통로)은 옆 상자 모서리로 고친다 (서지 않고 여러 칸 직진할 때)
+        corner_x, corner_y = corner_offset(scan, (pose[0] + dx, pose[1] + dy, pose[2] + dyaw))
+        source = '벽'
+        if dx == 0.0 and corner_x is not None:
+            dx, source = corner_x, '벽+모서리'
+        if dy == 0.0 and corner_y is not None:
+            dy, source = corner_y, '벽+모서리'
         if dx == 0.0 and dy == 0.0 and dyaw == 0.0:
             return
         # 경기장 좌표 보정량 -> odom 좌표 (odom_to_arena의 반대 회전)
@@ -214,7 +222,7 @@ class Mission1Node(Node):
         self.fused[2] += dyaw
         self.pose = odom_to_arena(*self.fused)
         self.get_logger().info(
-            f'벽 보정: dx={dx:+.3f} m, dy={dy:+.3f} m, dyaw={math.degrees(dyaw):+.1f}도')
+            f'{source} 보정: dx={dx:+.3f} m, dy={dy:+.3f} m, dyaw={math.degrees(dyaw):+.1f}도')
 
     def make_observation(self, now, scan):
         x, y, yaw = self.pose

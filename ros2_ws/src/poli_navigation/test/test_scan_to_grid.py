@@ -14,6 +14,7 @@ from poli_navigation.grid_map import (
 )
 from poli_navigation.scan_to_grid import (
     ARENA_SIZE_M,
+    corner_offset,
     neighbor_states,
     odom_to_arena,
     point_to_cell,
@@ -318,3 +319,25 @@ def test_neighbor_states_measured_from_cell_center_when_off_center():
     assert states.get((7, 3)) == BLOCKED
     assert states.get((9, 3)) == FREE
     assert neighbor_states(scan, pose).get((9, 3)) is None  # 로봇 기준이면 판단 못 함
+
+
+def test_corner_offset_finds_along_error_in_corridor():
+    """앞뒤 벽 없는 통로에서 실제로 6 cm 더 갔으면, 옆 열린 칸 입구 모서리로 +6 cm 보정."""
+    true_grid = GridMap()
+    for cell in ((8, 2), (8, 4)):
+        true_grid.mark_blocked(cell)
+    x, y = cell_center_m((9, 3))
+    scan = simulate_scan(true_grid, (x, y + 0.06, math.pi / 2))
+    corner_x, corner_y = corner_offset(scan, (x, y, math.pi / 2))
+    assert abs(corner_y - 0.06) < 0.015
+    # (8,4) 상자 아래면이 x = 가운데 -0.2에서 끝나는 모서리로 x도 잰다 (실제 오차 0)
+    assert abs(corner_x) < 0.015
+
+
+def test_corner_offset_none_along_continuous_walls():
+    true_grid = GridMap()
+    for cell in ((8, 2), (8, 3), (8, 4)):
+        true_grid.mark_blocked(cell)
+    x, y = cell_center_m((9, 3))
+    scan = simulate_scan(true_grid, (x, y, math.pi / 2))
+    assert corner_offset(scan, (x, y, math.pi / 2))[1] is None

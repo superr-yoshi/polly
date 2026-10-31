@@ -71,6 +71,13 @@ YAW_FIT_OUTLIER_M = 0.02     # 첫 직선에서 이보다 먼 점(모서리·다
 YAW_AGREE_RAD = math.radians(2.0)
 YAW_FIX_GAIN = 0.5
 MAX_YAW_FIX_RAD = math.radians(3.0)  # 한 번에 고치는 최대 각도. TODO_MEASURE
+# 옆 상자 모서리로 진행축 위치를 바로잡는다 (2026-10-31: 서지 않고 두세 칸 직진하면 앞뒤 벽이 없어
+# 엔코더 거리 오차가 쌓여 덜 간 곳에서 돌다 벽에 박음). 상자 모서리는 칸 경계 = 칸 가운데 ±0.2 m.
+CORNER_PLANE_TOL_M = 0.04   # 옆면(가운데 선에서 0.2 m) 위 점으로 보는 범위
+CORNER_GAP_M = 0.10         # 옆면 점 사이가 이만큼 비면 열린 칸 (상자 사이 이음매는 무시)
+CORNER_SEARCH_M = 0.10      # 모서리가 기대 위치(±0.2 m)에서 이 안에 있어야 쓴다
+CORNER_RANGE_M = 0.45       # 진행축 방향 이 범위 안의 옆면 점만 본다
+CORNER_MIN_POINTS = 5
 # 차체 바로 앞 장애물 감시 (대상에 다가갈 때. 2026-10-31: 대각선 접근 중 옆 장애물에 박음).
 # 치수는 바퀴 축(base_link) 기준, 2026-10-30 사용자 실측 (집게 포함 길이 33 cm, 축은 뒤에서 16 cm).
 # 큐브(5 cm)는 LiDAR 높이보다 낮아 여기에 걸리지 않는다.
@@ -403,6 +410,59 @@ def wall_yaw_offset(scan, robot_pose):
         return 0.0
     mean = sum(angle * n for angle, n in estimates) / sum(n for _, n in estimates)
     return max(-MAX_YAW_FIX_RAD, min(MAX_YAW_FIX_RAD, YAW_FIX_GAIN * mean))
+
+
+def corner_offset(scan, robot_pose):
+    """
+    옆면 상자 모서리(칸 가운데 ±0.2 m)로 위치 오차를 잰다.
+
+    x를 고칠 때는 y = 가운데 ±0.2 m 옆면 위 점들의 x 위치에서, 끊긴 곳(열린 칸 입구)과
+    끝을 모서리로 본다. 반환: 경기장 좌표 보정량 (dx, dy), 모서리가 없는 축은 None.
+    """
+    robot_x, robot_y, robot_yaw = robot_pose
+    cell = point_to_cell(robot_x, robot_y)
+    if cell is None:
+        return None, None
+    center = cell_center_m(cell)
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    points = []
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance):
+            continue
+        if not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        points.append((laser_x + distance * math.cos(angle), laser_y + distance * math.sin(angle)))
+    half = CELL_SIZE_M / 2
+    result = []
+    for axis in (0, 1):
+        other = 1 - axis
+        deltas = []
+        for side in (1.0, -1.0):
+            plane = center[other] + side * half
+            alongs = sorted(
+                p[axis] - center[axis] for p in points
+                if abs(p[other] - plane) <= CORNER_PLANE_TOL_M
+                and abs(p[axis] - center[axis]) <= CORNER_RANGE_M)
+            if len(alongs) < CORNER_MIN_POINTS:
+                continue
+            edges = [alongs[0], alongs[-1]]
+            for before, after in zip(alongs, alongs[1:]):
+                if after - before >= CORNER_GAP_M:
+                    edges += [before, after]
+            for edge in edges:
+                for expected in (-half, half):
+                    if abs(edge - expected) <= CORNER_SEARCH_M:
+                        deltas.append(expected - edge)
+        if not deltas:
+            result.append(None)
+            continue
+        deltas.sort()
+        result.append(max(-MAX_POSE_FIX_M, min(MAX_POSE_FIX_M, deltas[len(deltas) // 2])))
+    return result[0], result[1]
 
 
 def obstacle_ahead(scan, robot_pose):
