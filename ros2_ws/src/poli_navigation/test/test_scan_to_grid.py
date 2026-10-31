@@ -305,3 +305,16 @@ def test_wall_yaw_offset_is_zero_when_heading_is_right_or_no_wall():
     # 가운데 칸, 주변이 모두 비어 있으면 가까운 벽이 없다.
     center = (*cell_center_m((5, 5)), math.pi / 2)
     assert wall_yaw_offset(simulate_scan(GridMap(), center), center) == 0.0
+
+
+def test_neighbor_states_measured_from_cell_center_when_off_center():
+    """가운데 8 cm 앞(동쪽)에서 서쪽을 보고 찍어도, 뒤(동쪽) 칸은 외벽까지 0.6 m라 빈칸."""
+    true_grid = GridMap()
+    true_grid.mark_blocked((7, 3))
+    center = cell_center_m((8, 3))
+    pose = (center[0] + 0.08, center[1], math.pi)
+    scan = simulate_scan(true_grid, pose)
+    states = neighbor_states(scan, pose, center)
+    assert states.get((7, 3)) == BLOCKED
+    assert states.get((9, 3)) == FREE
+    assert neighbor_states(scan, pose).get((9, 3)) is None  # 로봇 기준이면 판단 못 함

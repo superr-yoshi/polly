@@ -363,10 +363,18 @@ class Mission1Logic:
             return Command()
         return self._plan(obs)
 
-    def _map_scan(self, scan, pose):
-        update_grid_from_scan(self.grid, scan, pose)
+    def _map_scan(self, scan, pose, center=None):
+        """
+        스캔을 지도에 반영한다.
+
+        center(달리면서 찍은 스캔의 칸 가운데)가 있으면 상하좌우 이웃 칸만 그 가운데 기준으로
+        판단한다. 광선 전체를 밀어 넣는 갱신은 서서 찍은 스캔에서만 한다 (2026-10-31: 가운데
+        몇 cm 앞에서 찍은 스캔으로 하니 통로 칸이 막힘으로 찍혀 STUCK·왕복).
+        """
+        if center is None:
+            update_grid_from_scan(self.grid, scan, pose)
         # 상하좌우 이웃 칸은 방향별 ±15도 레이저 판단으로 덮어쓴다 (사선 오차에 강함).
-        for cell, state in neighbor_states(scan, pose).items():
+        for cell, state in neighbor_states(scan, pose, center).items():
             if not self.grid.in_bounds(cell):
                 continue
             if state == BLOCKED:
@@ -403,7 +411,7 @@ class Mission1Logic:
     def _rolling_decision(self, obs):
         """달리는 중에 다음 칸을 정한다. 직진이면 목표를 바꿔 계속 가고 True."""
         x, y, yaw = self.scan_pose(obs)
-        self._map_scan(obs.scan, (x, y, yaw))
+        self._map_scan(obs.scan, (x, y, yaw), center=self.target)
         if self._target_approach(obs, at=self.target, commit=False):
             # 가운데에서 대상에 축 방향으로 다가갈 수 있다 -> 서서 SCAN에서 다시 확인
             self._decided_for = self.target

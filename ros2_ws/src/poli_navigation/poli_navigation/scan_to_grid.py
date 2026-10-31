@@ -240,14 +240,18 @@ def _trace_scan(scan, robot_pose):
     return blocked_cells, free_cells, see_through_counts
 
 
-def neighbor_states(scan, robot_pose):
+def neighbor_states(scan, robot_pose, center=None):
     """
     칸 가운데에서 상하좌우 이웃 칸을 각 방향 ±15도 레이저로만 판단한다.
 
+    center: 거리 기준점(칸 가운데). 없으면 로봇 위치. 달리면서 가운데 몇 cm 앞에서 찍은
+    스캔도 칸 가운데 기준으로 재야 0.40/0.55 m 기준이 맞는다 (2026-10-31: 로봇 기준이라
+    가운데 8 cm 앞에서는 0.6 m 너머 외벽이 0.52 m로 보여 판단이 어긋났다).
     반환: {이웃 격자: BLOCKED 또는 FREE}. 판단이 애매한 방향은 넣지 않는다.
     """
     robot_x, robot_y, robot_yaw = robot_pose
-    cell = point_to_cell(robot_x, robot_y)
+    origin_x, origin_y = (robot_x, robot_y) if center is None else center
+    cell = point_to_cell(origin_x, origin_y)
     if cell is None:
         return {}
     cos_r = math.cos(robot_yaw)
@@ -268,9 +272,10 @@ def neighbor_states(scan, robot_pose):
                 continue
             hit_x = laser_x + distance * math.cos(angle)
             hit_y = laser_y + distance * math.sin(angle)
-            along = (hit_x - robot_x) * math.cos(phi) + (hit_y - robot_y) * math.sin(phi)
-            if along < CONE_SKIP_M:
+            # 로봇 자기 부품은 로봇 기준으로 거르고, 이웃 칸 판단은 기준점(칸 가운데)에서 잰다.
+            if (hit_x - robot_x) * math.cos(phi) + (hit_y - robot_y) * math.sin(phi) < CONE_SKIP_M:
                 continue
+            along = (hit_x - origin_x) * math.cos(phi) + (hit_y - origin_y) * math.sin(phi)
             if along < CONE_BLOCK_M:
                 near += 1
             elif along >= CONE_FREE_M:
