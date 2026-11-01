@@ -208,6 +208,9 @@ NO_PROGRESS_S = 40.0
 # 지나온 칸 어디에도 안 가 본 빈 이웃이 없으면(지도상 닫힌 영역) 40초를 기다리지 않고 바로 지운다.
 # 2026-11-01 연습장 실기 4번: 출발 영역이 지도상 닫혀 (7,6)~(9,7)을 1~2분 왕복. 이 간격보다 자주는 안 한다.
 FORGET_MIN_INTERVAL_S = 10.0
+# 지우고 다시 봐도 똑같이 닫혀 있으면 간격을 두 배씩 (20, 40, 60 s). 대회 경기장은 길이 있어야 하므로
+# 진짜로 닫힌 것은 연습장뿐이다 (2026-11-01 20:53: 닫힌 연습장 영역을 10초마다 다시 돌며 후진 반복)
+FORGET_MAX_INTERVAL_S = 60.0
 AREA_GROW_RATIO = 1.05
 
 # 2026-11-01 실기 영상 대책 (요청서: 좁은 통로 왕복, 큐브 없이 RETURN).
@@ -428,6 +431,8 @@ class Mission1Logic:
         self._seen_frames = 0
         self._start_checked = False
         self._forgot_at = -math.inf
+        self._forget_interval = FORGET_MIN_INTERVAL_S
+        self._last_forgot_blocked = None
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -561,7 +566,7 @@ class Mission1Logic:
         """
         if self.phase != EXPLORE or self.cube is not None or self.state not in (SCAN, TURN, DRIVE):
             return None
-        if obs.now - self._forgot_at < FORGET_MIN_INTERVAL_S:
+        if obs.now - self._forgot_at < self._forget_interval:
             return None
         if obs.now - self._new_cell_at > NO_PROGRESS_S:
             why = f'새 칸 없이 {NO_PROGRESS_S:.0f}s'
@@ -569,6 +574,11 @@ class Mission1Logic:
             why = '지도상 갈 곳 없음 (닫힌 영역)'
         else:
             return None
+        # 지운 뒤 다시 본 지도가 지난번과 같으면(진짜 닫힌 영역) 간격을 두 배로 (최대 FORGET_MAX_INTERVAL_S)
+        blocked = frozenset(c for c, v in self.grid.cells.items() if v == BLOCKED)
+        if blocked == self._last_forgot_blocked:
+            self._forget_interval = min(2.0 * self._forget_interval, FORGET_MAX_INTERVAL_S)
+        self._last_forgot_blocked = blocked
         self._forget_blocked(obs, why)
         self._change_state(SCAN, obs, why)
         return Command()
@@ -644,9 +654,24 @@ class Mission1Logic:
         return math.hypot(self.target[0] - x, self.target[1] - y) <= ROLL_WINDOW_M
 
     def _rolling_decision(self, obs):
-        """달리는 중에 다음 칸을 정한다. 직진이면 목표를 바꿔 계속 가고 True."""
+        """
+        달리는 중에 다음 칸을 정한다. 직진이면 목표를 바꿔 계속 가고 True.
+
+        달리며 찍은 스캔은 위치·방향이 조금만 틀어져도 옆 칸 상자 모서리가 옆 칸으로 들어와 막힘으로 보인다
+        (2026-11-01 20:53 실기: (9,2)에서 막다른 길로 보고 후진, 0.5 s 뒤 서서 보니 4칸이 뚫려 있었다).
+        그래서 옆 칸 막힘은 남기지 않고, 직진이 아니면 판단을 버리고 가운데에 서서 다시 스캔한다.
+        """
         x, y, yaw = self.scan_pose(obs)
+        before = dict(self.grid.cells)
         self._map_scan(obs.scan, (x, y, yaw), center=self.target)
+        # 앞 칸(진행 방향)은 위치가 앞뒤로 밀려도 판정이 안정적이라 막힘을 남기고, 옆 칸 막힘만 버린다
+        # (앞 벽까지 버리면 앞 벽 감시가 멈춘 뒤 다시 직진 계획을 세워 맴돈다)
+        here = point_to_cell(*self.target)
+        front = (here[0] + round(math.cos(self._drive_heading)),
+                 here[1] + round(math.sin(self._drive_heading)))
+        for cell, value in self.grid.cells.items():
+            if value == BLOCKED and before[cell] != BLOCKED and cell != front:
+                self.grid.cells[cell] = before[cell]
         if self._target_approach(obs, at=self.target, commit=False):
             # 가운데에서 대상에 축 방향으로 다가갈 수 있다 -> 서서 SCAN에서 다시 확인
             self._decided_for = self.target
@@ -672,8 +697,11 @@ class Mission1Logic:
             return True
         (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
          self.state, self.state_started_at, self.stop_reason) = saved
+        self._backtrack = None
+        # 직진이 아니다 (꺾기·후진·막다른 길) -> 가운데에 서서 스캔한 뒤 정한다 (어차피 서야 한다)
         self._decided_for = self.target
-        self.event = '주행 중 판단: 가운데에 서서 회전 (판단 대기 없음)'
+        self._scan_at_arrival = True
+        self.event = '주행 중 판단: 직진 아님 -> 가운데에 서서 스캔'
         return False
 
     def _plan(self, obs):
