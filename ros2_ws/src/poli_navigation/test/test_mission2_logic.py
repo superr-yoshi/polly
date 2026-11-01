@@ -613,12 +613,13 @@ def _close_approach_logic():
 
 
 def test_close_off_center_cube_turns_to_center_before_going_straight():
-    """가까이서 큐브가 화면 가운데가 아니면(x_offset -0.43) 곧게 가지 않고 서서 카메라 방향으로 돈다."""
+    """가까이서 큐브가 화면 가운데가 아니면(x_offset -0.43) 곧게 가지 않고 가면서 카메라 방향으로 돈다."""
     logic = _close_approach_logic()
     command = logic._approach(Observation(x=2.06, y=2.02, yaw=math.radians(154), now=0.1,
                                           detected=True, x_offset=-0.43, area=13500.0))
     assert logic.state == APPROACH
-    assert command.linear == 0.0 and command.angular > 0.0   # 큐브가 왼쪽 -> 왼쪽으로
+    # 서지 않고(주춤하지 않고) 가면서 왼쪽으로 맞춘다 (큐브를 조금 밀어도 된다, 2026-11-01 팀)
+    assert command.linear > 0.0 and command.angular > 0.0
     # 가운데로 들어오면 곧게
     command = logic._approach(Observation(x=2.06, y=2.02, yaw=math.radians(160), now=0.2,
                                           detected=True, x_offset=-0.05, area=14000.0))
@@ -642,3 +643,42 @@ def test_red_object_outside_arena_is_not_used_as_cube():
     x, y, yaw = START_POSE
     logic.step(Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, x_offset=0.81, area=430.0))
     assert logic.target is None
+
+
+# ---------------------------------------------------------------
+# 2026-11-01 팀: 큐브를 조금 밀어도 되니 주춤하지 말고 적외선으로 확실하게 잡기
+# ---------------------------------------------------------------
+
+def test_push_closes_when_tof_sees_cube_inside_gripper():
+    """적외선이 있으면 카메라 면적으로 닫지 않고 밀며 들어가다가 큐브가 집게 안(5 cm)에 보이면 닫는다."""
+    logic = _close_approach_logic()
+    obs = Observation(x=2.0, y=2.05, yaw=math.radians(156), now=0.1, detected=True,
+                      x_offset=-0.4, area=36000.0, gripper_range=0.12)
+    command = logic._approach(obs)
+    assert logic.state == PUSH            # 비켜 있어도 적외선이 있으니 밀며 들어간다
+    assert command.gripper is None and command.linear > 0.0
+    command = logic._push(Observation(x=2.0, y=2.08, yaw=math.radians(156), now=0.2,
+                                      gripper_range=0.08))
+    assert logic.state == PUSH and command.gripper is None
+    command = logic._push(Observation(x=2.0, y=2.10, yaw=math.radians(156), now=0.3,
+                                      gripper_range=0.045))
+    assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
+
+
+def test_push_backs_off_without_closing_when_cube_never_enters():
+    """15 cm를 밀어도 적외선에 안 잡히면(옆으로 비켜 감) 닫지 않고 집게를 연 채 물러난다 (헛 집게질 없음)."""
+    logic = _close_approach_logic()
+    logic._approach(Observation(x=2.0, y=2.0, yaw=math.radians(90), now=0.1, detected=True,
+                                x_offset=0.0, area=36000.0, gripper_range=math.inf))
+    assert logic.state == PUSH
+    command = logic._push(Observation(x=2.0, y=2.16, yaw=math.radians(90), now=0.5,
+                                      gripper_range=math.inf))
+    assert command.gripper == GRIPPER_OPEN
+    assert logic.state != GRASP
+
+
+def test_tof_inside_during_approach_closes_right_away():
+    """카메라에서 사라졌어도 적외선이 집게 안 큐브를 보면 바로 닫는다."""
+    logic = _close_approach_logic()
+    command = logic._approach(Observation(x=2.0, y=2.05, yaw=0.0, now=0.1, gripper_range=0.03))
+    assert logic.state == GRASP and command.gripper == GRIPPER_GRAB

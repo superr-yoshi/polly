@@ -131,9 +131,9 @@ APPROACH_DECEL = DRIVE_DECEL
 # 이만큼 가까우면(카메라 약 25 cm) 더 틀지 않고 곧게 들어간다 (조금 비켜 잡아도 됨, 2026-11-01).
 # 가까울수록 위치 추정의 작은 오차에도 방향이 크게 바뀌어 막판에 꺾였다 (시뮬레이션).
 APPROACH_STRAIGHT_AREA = 10000.0
-# 곧게 들어가기·잡기 전에 큐브가 화면 가운데(x_offset) 이 안이어야 한다. 밖이면 서서(비킨 만큼 느리게)
-# 카메라 방향으로 돌아 맞춘다. 2026-11-01 실기 19:30: 면적 13500, x_offset -0.43(약 14도)에서 곧게 고정해
-# 큐브 옆을 집었다 (ToF가 못 잡음 -> 후진 -> 다시 찾다 놓침). TODO_MEASURE: 집게 폭에 맞춰 조정
+# 곧게 들어가기 전에 큐브가 화면 가운데(x_offset) 이 안이어야 한다. 밖이면 가면서 카메라 방향으로 맞춘다.
+# 2026-11-01 실기 19:30: 면적 13500, x_offset -0.43(약 14도)에서 곧게 고정해 큐브 옆을 집었다.
+# 적외선이 없을 때는 APPROACH_GRAB_MAX_OFFSET 밖이면 잡기를 시작하지 않는다. TODO_MEASURE: 집게 폭에 맞춰
 APPROACH_STRAIGHT_MAX_OFFSET = 0.15
 APPROACH_GRAB_MAX_OFFSET = 0.3
 APPROACH_CENTER_GAIN = 2.0   # rad/s 당 카메라 방향 오차(rad)
@@ -148,6 +148,14 @@ GRAB_PUSH_M = 0.04
 GRAB_CLOSE_LEAD_M = GRAB_PUSH_M
 GRAB_PUSH_SPEED = APPROACH_SLOW_SPEED
 GRAB_PUSH_TIMEOUT_S = 1.0
+# 2026-11-01 팀 요청: "큐브를 조금 밀어도 되니 주춤하지 말고 확실하게 잡기".
+# 집게 안 적외선(VL53L0X, /range/gripper)이 살아 있으면 카메라 면적으로 닫지 않고, 밀며 들어가다가
+# 큐브가 이 거리 안에 보이는 순간 닫는다. 실측: 잡은 큐브 28 mm, 빈 집게 닫힘 108 mm.
+# TODO_MEASURE: 열린 집게 안으로 큐브가 충분히 들어온 거리
+GRAB_TOF_M = 0.05
+# 적외선 방식으로 밀며 들어가는 최대 거리. 이만큼 밀어도 집게 안에 안 들어오면(옆으로 비켜 감)
+# 닫지 않고 물러나 다시 찾는다 (헛 집게질 대신, BACKOFF)
+GRAB_TOF_PUSH_MAX_M = 0.15
 APPROACH_STALL_M = 0.06
 AREA_GROW_RATIO = 1.05
 
@@ -258,6 +266,8 @@ class Observation:
     opponent: Optional[tuple] = None
     # 찾은 상대 로봇 전부 (가까운 순). 비어 있으면 opponent만 쓴다.
     opponents: tuple = ()
+    # 집게 안 적외선 거리 (m, 범위 밖이면 inf). 센서가 없거나 끊기면 None (예전 카메라 면적 방식)
+    gripper_range: Optional[float] = None
 
 
 @dataclass
@@ -350,6 +360,8 @@ class Mission2Logic:
         self._area_best_at = None
         self._push_start = None
         self._grab_sent_at = None
+        # 이번 밀기를 적외선으로 판단하는지 (밀기 시작할 때 센서가 살아 있었는지)
+        self._push_tof = False
         self._gripper_reached_at = None
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -635,13 +647,13 @@ class Mission2Logic:
         return Command(angular=self._turn_speed(error))
 
     def _approach(self, obs):
+        if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+            # 적외선이 큐브를 이미 집게 안에서 본다 (카메라 아래로 사라졌어도) -> 바로 닫는다
+            return self._start_push(obs)
         if self._target_lost(obs) or self.target is None:
             if self._area_best >= APPROACH_SLOW_AREA:
                 # 바로 앞까지 왔다가 카메라 아래로 사라졌다 = 집게 앞에 있다. 밀며 잡는다.
-                self._push_start = (obs.x, obs.y)
-                self._grab_sent_at = None
-                self._change_state(PUSH, obs)
-                return self._push(obs)
+                return self._start_push(obs)
             self._change_state(SEARCH, obs)
             return Command()
 
@@ -659,11 +671,9 @@ class Mission2Logic:
                          and self._camera_distance(obs) <= area_to_distance(GRAB_AREA))
         off_center = obs.detected and abs(obs.x_offset) > APPROACH_GRAB_MAX_OFFSET
         grab = close_by_pose or (obs.detected and (obs.area >= GRAB_AREA or stalled))
-        if grab and not off_center:
-            self._push_start = (obs.x, obs.y)
-            self._grab_sent_at = None
-            self._change_state(PUSH, obs)
-            return self._push(obs)
+        # 적외선이 있으면 비켜 있어도 밀며 들어간다 (집게 안에 들어와야만 닫으므로 헛 집게질이 없다)
+        if grab and (not off_center or self._tof_ok(obs)):
+            return self._start_push(obs)
 
         # 잠깐 놓쳤을 때나 가까우면 천천히
         speed = APPROACH_SLOW_SPEED
@@ -679,18 +689,47 @@ class Mission2Logic:
             obs, self.target, speed, APPROACH_HEADING_GAIN, APPROACH_MAX_ANGULAR)
         if self._area_best >= APPROACH_STRAIGHT_AREA:
             if obs.detected and abs(obs.x_offset) > APPROACH_STRAIGHT_MAX_OFFSET:
-                # 가운데가 아니다 -> 카메라 방향으로 돌며 비킨 만큼 느리게 (2배 넘게 비키면 제자리)
-                bearing = -obs.x_offset * CAMERA_HALF_FOV_RAD
-                scale = max(0.0, 2.0 - abs(obs.x_offset) / APPROACH_STRAIGHT_MAX_OFFSET)
-                angular = clamp(APPROACH_CENTER_GAIN * bearing, APPROACH_MAX_ANGULAR)
-                command = Command(linear=speed * min(1.0, scale), angular=angular)
+                # 가운데가 아니다 -> 서지 않고 가면서 카메라 방향으로 맞춘다 (큐브를 조금 밀어도 된다.
+                # 2026-11-01: 서서 맞추니 큐브 앞에서 주춤했다)
+                command = Command(linear=speed, angular=self._center_turn(obs))
             else:
                 command = Command(linear=speed)
         return command
 
+    def _tof_ok(self, obs):
+        return obs.gripper_range is not None
+
+    def _center_turn(self, obs):
+        """카메라에 보이는 큐브를 화면 가운데로 가져오는 회전 (안 보이면 0)."""
+        if not obs.detected:
+            return 0.0
+        bearing = -obs.x_offset * CAMERA_HALF_FOV_RAD
+        return clamp(APPROACH_CENTER_GAIN * bearing, APPROACH_MAX_ANGULAR)
+
+    def _start_push(self, obs):
+        self._push_start = (obs.x, obs.y)
+        self._grab_sent_at = None
+        self._push_tof = self._tof_ok(obs)
+        self._change_state(PUSH, obs)
+        return self._push(obs)
+
     def _push(self, obs):
-        """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가며 끝 GRAB_CLOSE_LEAD_M에서 닫는다."""
+        """
+        큐브를 밀며 집게 안으로 넣고 닫는다.
+
+        적외선이 있으면: 큐브가 GRAB_TOF_M 안에 보이는 순간 닫고, GRAB_TOF_PUSH_MAX_M을 밀어도 안 들어오면
+        닫지 않고 물러난다. 없으면: GRAB_PUSH_M만큼 곧게 더 들어가며 끝 GRAB_CLOSE_LEAD_M에서 닫는다.
+        """
         pushed = math.hypot(obs.x - self._push_start[0], obs.y - self._push_start[1])
+        if self._push_tof:
+            if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+                self._change_state(GRASP, obs)
+                self._grab_sent_at = obs.now
+                return Command(gripper=GRIPPER_GRAB)
+            pushed_too_long = obs.now - self.state_started_at > GRAB_PUSH_TIMEOUT_S
+            if pushed >= GRAB_TOF_PUSH_MAX_M or pushed_too_long:
+                return self._start_backoff(obs)
+            return Command(linear=GRAB_PUSH_SPEED, angular=self._center_turn(obs))
         if pushed >= GRAB_PUSH_M or obs.now - self.state_started_at > GRAB_PUSH_TIMEOUT_S:
             closing = self._grab_sent_at is not None
             self._change_state(GRASP, obs)

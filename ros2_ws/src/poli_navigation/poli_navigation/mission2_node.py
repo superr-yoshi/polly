@@ -17,7 +17,7 @@ from poli_navigation.wall_localizer import WallCorrection
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
-from sensor_msgs.msg import Imu, LaserScan
+from sensor_msgs.msg import Imu, LaserScan, Range
 from std_msgs.msg import Bool, String
 
 
@@ -99,6 +99,9 @@ class Mission2Node(Node):
         self.opponent_received_at = None
         self.holding = None
         self.holding_received_at = None
+        # 집게 안 적외선 거리 (tof_node /range/gripper, m, 범위 밖 inf)
+        self.gripper_range = None
+        self.gripper_range_received_at = None
         self.gripper_state = None
         self.vision = None
         self.vision_received_at = None
@@ -116,6 +119,7 @@ class Mission2Node(Node):
         # TODO: 실제 로봇에서는 /odometry/filtered (엔코더 + IMU) 사용 검토
         self.create_subscription(Odometry, '/odom_raw', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.create_subscription(Range, '/range/gripper', self.gripper_range_callback, 10)
         self.create_subscription(Imu, '/imu/data', self.imu_callback, 50)
         self.create_subscription(
             Bool, '/gripper/holding', self.holding_callback, 10
@@ -190,6 +194,10 @@ class Mission2Node(Node):
         if took > CALLBACK_WARN_S:
             self.get_logger().warn(f'{name} 콜백 {took:.2f} s')
 
+    def gripper_range_callback(self, msg):
+        self.gripper_range = msg.range
+        self.gripper_range_received_at = self.now_seconds()
+
     def holding_callback(self, msg):
         self.holding = msg.data
         self.holding_received_at = self.now_seconds()
@@ -250,6 +258,8 @@ class Mission2Node(Node):
             holding=(self.holding if self.holding_received_at is not None
                      and now - self.holding_received_at <= HOLDING_TIMEOUT else None),
             gripper_state=self.gripper_state,
+            gripper_range=(self.gripper_range if self.gripper_range_received_at is not None
+                           and now - self.gripper_range_received_at <= HOLDING_TIMEOUT else None),
         )
         if (self.opponent_received_at is not None
                 and now - self.opponent_received_at <= OPPONENT_TIMEOUT):
@@ -288,12 +298,16 @@ class Mission2Node(Node):
             target = self.logic.target
             cam_d = '-' if target is None else f'{self.logic._camera_distance(observation):.2f}'
             opp_text = ' '.join(f'({o[0]:.2f},{o[1]:.2f})' for o in observation.opponents) or '-'
+            tof = observation.gripper_range
+            tof_text = '-' if tof is None else (
+                'inf' if math.isinf(tof) else f'{tof * 1000:.0f}mm')
             self.get_logger().info(
                 f'Motion: {self.logic.state} pos=({x:.2f},{y:.2f}) yaw={math.degrees(yaw):.0f} '
                 f'cmd=({command.linear:.2f},{command.angular:+.2f}) '
                 f'odom_w={self.angular_speed:+.2f} '
                 f'cam={observation.detected:d} off={observation.x_offset:+.2f} '
-                f'area={observation.area:.0f} cube_d={cam_d} opp={opp_text}')
+                f'area={observation.area:.0f} cube_d={cam_d} opp={opp_text} '
+                f'tof={tof_text}')
 
     def send_gripper(self, command):
         self.gripper_command = command
