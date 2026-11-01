@@ -20,6 +20,7 @@ ROS2와 무관한 순수 Python 모듈이다.
   출발"한 것으로 계산한다. (grid_map.py, scan_to_grid.py와 같다)
 """
 
+from collections import deque
 from dataclasses import dataclass
 import math
 from typing import Optional
@@ -31,6 +32,7 @@ from poli_navigation.grid_map import (
     CENTER,
     GridMap,
     MISSION1_START,
+    UNKNOWN,
 )
 from poli_navigation.mission1_maze import Mission1Maze
 from poli_navigation.mission2_logic import (
@@ -70,7 +72,8 @@ SCAN_SETTLE_S = 0.05
 # 주행 중 다음 칸이 막혀 보이는 스캔이 이만큼 연속이어야 멈춘다.
 # 출발 순간 차체가 숙여져 LiDAR가 바닥·장애물 윗변을 앞칸 장애물로 보는 것을 거른다 (2026-10-31 실기)
 DRIVE_BLOCK_SCANS = 3
-# 주행 중 안전 확인 켜기/끄기. 2026-10-31 실기 시험을 위해 끔 (팀 요청). 대회 전 다시 검토 (TODO)
+# 주행 중 지도(격자) 방식 안전 확인 켜기/끄기. 2026-10-31 실기에서 엉뚱하게 서서 끔.
+# 2026-11-01부터는 진행선 앞만 보는 앞 벽 감시(_wall_before_target)를 모든 전진에 쓴다 (GUARD_REPEAT_MAX)
 DRIVE_BLOCK_CHECK = False
 # 탐색 중 카메라에 대상이 이 크기 이상으로 보이면 (5,5) 옆이 아니어도 잡으러 간다 (2026-10-31 팀 결정).
 # 너무 작으면(멀면) 경기장 밖 빨간 물체일 수 있어 무시한다. 50 cm에서 약 9000 (TODO_MEASURE)
@@ -188,6 +191,14 @@ CHAIN_CHECK_CONE_RAD = math.radians(8.0)
 # 통로 옆 상자 면(±0.2 m, 좁은 통로·로봇이 비켜 있으면 더 안쪽)은 빠진다 (2026-10-31 실기: 옆면으로 멈춤)
 CHAIN_GUARD_HALF_WIDTH_M = 0.10
 CHAIN_GUARD_RANGE_M = 0.6
+# 2026-11-01: 위 앞 벽 감시를 한 칸 전진에도 쓴다 (꺼 둔 DRIVE_BLOCK_CHECK 대신, 상대 로봇이 앞 칸에 들어옴).
+# 서서 본 스캔에는 빈칸인데 감시만 계속 멈추면(같은 목표 칸 연속 이 횟수) 그 목표에서는 감시를 끈다
+# (같은 계획·정지 무한 반복 방지). TODO_MEASURE: 실기에서 한 칸 주행이 엉뚱하게 서는지 확인
+GUARD_REPEAT_MAX = 3
+# 탐색 중 새 칸을 이 시간 동안 못 밟으면 막힘 표시를 모두 지우고 서서 다시 본다.
+# 잘못 찍힌 막힘(LiDAR 오인식)에 갇혀 같은 칸을 오가는 것을 푼다 (2026-10-31 실기: (9,3)<->(9,5) 왕복).
+# 진짜 벽은 다음 스캔에서 다시 막힘이 된다. 실기 전체 임무 약 37초 기준. TODO_MEASURE
+NO_PROGRESS_S = 40.0
 AREA_GROW_RATIO = 1.05
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
@@ -307,9 +318,18 @@ class Mission1Logic:
         self._scan_at_arrival = False
         # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
         self._chained = False
-        # 두 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
+        # 여러 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
         self._no_chain_from = set()
         self._drive_origin_cell = None
+        # 한 칸 주행 앞 벽 감시: 연속으로 멈춘 목표 칸과 횟수, 감시를 끈 목표 칸
+        self._guard_stop_cell = None
+        self._guard_stops = 0
+        self._guard_off_cell = None
+        # 막다른 길에서 되돌아 나오는 경로 (지나온 칸, 끝 = 안 가 본 이웃이 있는 칸). 없으면 None
+        self._backtrack = None
+        # 임무 시작 시각(첫 step), 마지막으로 처음 가 본 칸에 들어간 시각
+        self.started_at = None
+        self._new_cell_at = None
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -338,7 +358,12 @@ class Mission1Logic:
         self._gripper_reached_at = None
 
     def step(self, obs):
+        known = len(self.maze.state.visits)
         self.maze.observe(point_to_cell(obs.x, obs.y), obs.yaw)
+        if self.started_at is None:
+            self.started_at = self._new_cell_at = obs.now
+        if len(self.maze.state.visits) > known:
+            self._new_cell_at = obs.now
         if self.state_started_at is None:
             self.state_started_at = obs.now
         self._remember_cube(obs)
@@ -411,11 +436,31 @@ class Mission1Logic:
         if obs.scan is None:
             return Command()
 
+        if self.phase == EXPLORE and obs.now - self._new_cell_at > NO_PROGRESS_S:
+            self._forget_blocked(obs)
         self._map_scan(obs.scan, (obs.x, obs.y, obs.yaw))
         if self._target_approach(obs):
             self._change_state(ALIGN, obs)
             return Command()
         return self._plan(obs)
+
+    def _forget_blocked(self, obs):
+        """새 칸 없이 NO_PROGRESS_S가 지나면 막힘 표시와 포기한 칸들을 지우고 처음처럼 다시 본다."""
+        for cell, value in self.grid.cells.items():
+            if value == BLOCKED:
+                self.grid.cells[cell] = UNKNOWN
+        self._no_chain_from.clear()
+        self._approach_blocked.clear()
+        self._searched_goals.clear()
+        self._guard_off_cell = None
+        self._backtrack = None
+        self._new_cell_at = obs.now
+        self._note(f'{obs.now - self.started_at:.0f}s: 새 칸 없이 {NO_PROGRESS_S:.0f}s '
+                   '-> 막힘 표시를 지우고 다시 탐색')
+
+    def _note(self, message):
+        """노드 로그 한 줄에 덧붙인다 (같은 step의 앞 내용을 지우지 않게)."""
+        self.event = message if self.event is None else f'{self.event}; {message}'
 
     def _map_scan(self, scan, pose, center=None):
         """
@@ -519,11 +564,14 @@ class Mission1Logic:
             return self._arrived_at_goal(obs)
 
         path = None
+        self._backtrack = None
         if cube_goals:
             # 기억한 큐브의 옆 칸까지 지도(모르는 칸은 지나갈 수 있다고 봄)로 최단 경로
             paths = [self.grid.find_path(current, goal) for goal in cube_goals]
             paths = [p for p in paths if p is not None]
             path = min(paths, key=len)[:2] if paths else None
+        if path is None and self.phase == EXPLORE:
+            path = self._backtrack = self._backtrack_path(current)
         if path is None and self.phase == EXPLORE:
             next_cell = self.maze.next_cell(self.grid)
             path = [current, next_cell] if next_cell is not None else None
@@ -573,15 +621,18 @@ class Mission1Logic:
         """
         path[1]부터 서지 않고 곧게 갈 수 있는 마지막 칸의 번호.
 
-        복귀: 지나온 칸이라 지도가 있으므로 같은 방향이 이어지는 데까지 (출발 격자 앞에서 멈춤).
-        탐색: 그다음 칸도 빈칸이고 점수가 더 작으면(목표 쪽) 한 칸 더.
+        복귀·막다른 길 되돌아가기: 지나온 칸이라 지도가 있으므로 같은 방향이 이어지는 데까지
+        (복귀는 출발 격자 앞에서 멈춤).
+        탐색: 그다음 칸들도 막힘이 아니고 점수가 계속 작아지면(목표 쪽) 이어서 (중앙 옆 칸에서 끝).
         서서 찍은 스캔으로 만든 지도만 쓴다 (주행 중 스캔은 위치가 늦어 쓰지 않음).
         """
         self._chained = False
         step_dir = (path[1][0] - path[0][0], path[1][1] - path[0][1])
-        if self.phase == RETURN:
+        if self.phase == RETURN or self._backtrack is not None:
             end = 1
-            while (end + 1 < len(path) and path[end + 1] != MISSION1_START
+            # 복귀는 출발 격자 앞에서 멈춘다 (마지막 칸은 큐브를 넣는 전진, _plan의 delivering)
+            while (end + 1 < len(path)
+                   and (path[end + 1] != MISSION1_START or self._backtrack is not None)
                    and (path[end + 1][0] - path[end][0],
                         path[end + 1][1] - path[end][1]) == step_dir):
                 end += 1
@@ -613,9 +664,71 @@ class Mission1Logic:
         if self.maze.state.score(after) >= self.maze.state.score(middle):
             return 1
         path.append(after)
-        self.event = f'두 칸 한 번에: {path[0]} -> {after}'
+        # 2026-11-01: 세 칸 이상도 같은 규칙(막힘 아님 + 점수가 계속 작아짐)이면 쭉 간다.
+        # 먼 칸은 서서 본 스캔으로 확인할 수 없어(약 0.55 m 너머는 레이저가 상자 위로 넘어감)
+        # 주행 중 앞 벽 감시(_wall_before_target)에 맡긴다. 중앙 옆 칸에 닿으면 서서 큐브를 본다.
+        while not self._next_to_center(path[-1]):
+            nxt = (path[-1][0] + step_dir[0], path[-1][1] + step_dir[1])
+            if (not self.grid.in_bounds(nxt) or self.grid.get(nxt) == BLOCKED
+                    or self.maze.state.score(nxt) >= self.maze.state.score(path[-1])):
+                break
+            path.append(nxt)
+        self._note(f'{len(path) - 1}칸 한 번에: {path[0]} -> {path[-1]}')
         self._chained = True
-        return 2
+        return len(path) - 1
+
+    @staticmethod
+    def _next_to_center(cell):
+        return abs(cell[0] - CENTER[0]) + abs(cell[1] - CENTER[1]) == 1
+
+    def _new_neighbors(self, cell):
+        """안 가 본, 막히지 않은 이웃 칸 (모르는 칸 포함)."""
+        visits = self.maze.state.visits
+        candidates = ((cell[0] + 1, cell[1]), (cell[0] - 1, cell[1]),
+                      (cell[0], cell[1] + 1), (cell[0], cell[1] - 1))
+        return [n for n in candidates
+                if self.grid.in_bounds(n) and n not in visits and self.grid.get(n) != BLOCKED]
+
+    def _backtrack_path(self, current):
+        """
+        막다른 길(안 가 본 이웃이 없음)에서 안 가 본 이웃이 있는 가장 가까운 지나온 칸까지의 경로.
+
+        지나온 칸은 지도가 있어 다시 볼 것이 없으므로 복귀처럼 칸마다 서지 않고 한 번에 간다
+        (2026-11-01: 예전에는 maze 방문 점수로 한 칸씩 서서 스캔하며 나왔다).
+        거리가 같으면 새 이웃이 목표에 가까운 칸. 안 가 본 이웃이 있거나 갈 곳이 없으면 None (maze가 고른다).
+        """
+        if self._new_neighbors(current):
+            return None
+        visits = self.maze.state.visits
+        came_from = {current: None}
+        depth = {current: 0}
+        queue = deque([current])
+        best, best_key = None, None
+        while queue:
+            cell = queue.popleft()
+            if best_key is not None and depth[cell] > best_key[0]:
+                break
+            new = self._new_neighbors(cell)
+            if new:
+                key = (depth[cell], min(self.maze.state.base_value(n) for n in new))
+                if best_key is None or key < best_key:
+                    best, best_key = cell, key
+                continue
+            # 지나온 칸은 지도에 막힘으로 바뀌어 있어도 지나갈 수 있다고 본다 (_shortest_path와 같음)
+            for n in ((cell[0] + 1, cell[1]), (cell[0] - 1, cell[1]),
+                      (cell[0], cell[1] + 1), (cell[0], cell[1] - 1)):
+                if n in visits and n not in came_from:
+                    came_from[n] = cell
+                    depth[n] = depth[cell] + 1
+                    queue.append(n)
+        if best is None:
+            return None
+        path = [best]
+        while came_from[path[-1]] is not None:
+            path.append(came_from[path[-1]])
+        path.reverse()
+        self._note(f'막다른 길 -> 서지 않고 되돌아감: {path[0]} -> {path[-1]}')
+        return path
 
     def _shortest_path(self, current, goals):
         return_grid = GridMap(use_point_symmetry=False)
@@ -752,12 +865,29 @@ class Mission1Logic:
 
     def _drive(self, obs):
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
-        if self._chained and obs.scan is not None and self._wall_before_target(obs):
-            # 두 칸 한 번에 가는데 두 번째 칸이 막혀 있었다 -> 멈추고 첫 칸 가운데에서 다시 판단.
-            # 출발 칸에서는 다시 묶지 않는다 (2026-10-31 실기: 같은 두 칸 계획·정지를 0.3초마다 반복).
+        target_cell = point_to_cell(*self.target)
+        if (not self.reverse and obs.scan is not None and self._drive_heading is not None
+                and target_cell != self._guard_off_cell and self._wall_before_target(obs)):
+            if self._chained:
+                # 여러 칸 한 번에 가는데 앞 칸이 막혀 있었다 -> 멈추고 칸 가운데에서 다시 판단.
+                # 출발 칸에서는 다시 묶지 않는다 (2026-10-31 실기: 같은 계획·정지를 0.3초마다 반복).
+                self._no_chain_from.add(point_to_cell(*self._drive_origin_cell))
+                self.event = '여러 칸 주행 중 앞에 벽 -> 멈추고 다시 판단'
+            else:
+                # 한 칸 주행인데 목표 칸에 무언가 있다 (상대 로봇 등). 서서 본 스캔이 빈칸이라고 하는데
+                # 같은 목표에서 GUARD_REPEAT_MAX번 연속 멈추면 감시를 잘못 본 것으로 보고 그 목표는 감시 끔.
+                same = self._guard_stop_cell == target_cell
+                self._guard_stops = self._guard_stops + 1 if same else 1
+                self._guard_stop_cell = target_cell
+                if self._guard_stops >= GUARD_REPEAT_MAX:
+                    self._guard_off_cell = target_cell
+                    self.event = f'{target_cell} 앞 벽 감시가 {self._guard_stops}번 연속 -> 이 칸은 감시 끔'
+                # 상대 로봇이 지나가는 중일 수 있어 STUCK_RETRY_S 기다렸다가 다시 본다.
+                self.stop_reason = f'주행 중 앞 칸 {target_cell}에 장애물 ({self._guard_stops}번째)'
+                self._chained = False
+                self._change_state(STUCK, obs)
+                return Command()
             self._chained = False
-            self._no_chain_from.add(point_to_cell(*self._drive_origin_cell))
-            self.event = '두 칸 주행 중 앞에 벽 -> 멈추고 다시 판단'
             self._change_state(SCAN, obs)
             return Command()
         # 진행 중 다음 칸에 장애물이 나타나면 멈춘 뒤 다시 계획한다.
@@ -810,6 +940,10 @@ class Mission1Logic:
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
         if distance < ARRIVE_TOLERANCE_M or passed or endpoint_reached:
+            self._guard_stop_cell = None
+            self._guard_stops = 0
+            if target_cell == self._guard_off_cell:
+                self._guard_off_cell = None
             if self.delivering:
                 return self._deliver(obs)
             if self._decided_for == self.target and not self._scan_at_arrival:
@@ -819,6 +953,9 @@ class Mission1Logic:
             if self.phase == RETURN:
                 # 복귀는 지나온 칸으로만 가므로 새로 볼 것이 없다 -> 꺾는 칸에서도 서서 스캔하지 않고
                 # 바로 다음 구간으로 (2026-10-31 팀 요청: 왔던 길은 계산 없이 빠르게).
+                return self._plan(obs)
+            if self._backtrack is not None and target_cell != self._backtrack[-1]:
+                # 막다른 길에서 되돌아가는 중 꺾는 칸: 지나온 칸이라 복귀처럼 서지 않는다.
                 return self._plan(obs)
 
             self._change_state(SCAN, obs)

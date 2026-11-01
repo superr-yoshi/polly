@@ -354,8 +354,9 @@ class Mission1Node(Node):
                 self.get_logger().info(
                     f'판단 시간 {now - self.scan_entered_at:.2f}s '
                     f'(정지 확인까지 {self.scan_stop_started_at - self.scan_entered_at:.2f}s)')
+            elapsed = now - self.logic.started_at if self.logic.started_at is not None else 0.0
             self.get_logger().info(
-                f'State: {self.logic.state}; pose=({x:.3f}, {y:.3f}, '
+                f'State: {self.logic.state}; t={elapsed:.1f}s; pose=({x:.3f}, {y:.3f}, '
                 f'{math.degrees(yaw):.1f}deg); target={self.logic.target}; '
                 f'reverse={self.logic.reverse}')
             self.last_state = self.logic.state

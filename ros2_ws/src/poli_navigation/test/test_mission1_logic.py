@@ -724,7 +724,9 @@ def test_explore_chains_two_cells_when_second_cell_scores_lower():
     logic.grid.mark_free((9, 2))
     logic.grid.mark_free((9, 3))
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
-    assert logic.target == cell_center_m((9, 3))
+    # 세 칸 이상도 점수가 계속 작아지면 쭉 간다: (9,5)까지 (그다음 (9,6)은 목표에서 멀어짐)
+    assert logic.target == cell_center_m((9, 5))
+    assert logic.path == [(9, 1), (9, 2), (9, 3), (9, 4), (9, 5)]
     # 두 번째 칸을 이미 지나갔으면(방문 +10) 점수가 커서 한 칸만
     logic = Mission1Logic()
     logic.grid.mark_free((9, 2))
@@ -735,6 +737,7 @@ def test_explore_chains_two_cells_when_second_cell_scores_lower():
     # 두 번째 칸이 미관측이어도 두 칸 (LiDAR가 거기까지 잘 못 본다), 막힘이면 한 칸만
     logic = Mission1Logic()
     logic.grid.mark_free((9, 2))
+    logic.grid.mark_blocked((9, 4))
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
     assert logic.target == cell_center_m((9, 3))
     logic = Mission1Logic()
@@ -817,6 +820,7 @@ def test_two_cell_drive_does_not_stop_for_wall_beyond_target():
     """막다른 칸(목표 칸 너머가 벽)은 다 와서 너머 벽을 보고 서지 않는다 (2026-10-31 실기)."""
     logic = Mission1Logic()
     logic.grid.mark_free((9, 2))
+    logic.grid.mark_blocked((9, 4))
     x, y, yaw = START_POSE
     logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
     assert logic._chained and logic.target == cell_center_m((9, 3))
@@ -893,6 +897,7 @@ def test_chain_after_90_degree_turn_even_with_small_heading_error():
     """90도 옆 칸으로 두 칸 갈 때 로봇 방향이 1도 틀어져 있어도 묶는다 (2026-10-31 실기)."""
     logic = Mission1Logic()
     logic.grid.mark_blocked((9, 3))
+    logic.grid.mark_blocked((6, 2))
     logic.maze.observe((9, 2), math.pi / 2)
     x, y = cell_center_m((9, 2))
     logic._plan(Observation(x=x, y=y, yaw=math.radians(89.0), now=0.0))
@@ -909,6 +914,7 @@ def test_chain_not_blocked_by_side_box_corners_in_corridor():
     for dx, dy, dyaw in itertools.product((-0.03, 0.0, 0.03), (-0.03, 0.0, 0.03), (-3, 0, 3)):
         logic = Mission1Logic(point_symmetry=False)
         logic.grid.mark_blocked((9, 3))
+        logic.grid.mark_blocked((6, 2))
         logic.maze.observe((9, 2), math.pi / 2)
         scan = simulate_scan(true_grid, (x + dx, y + dy, math.pi / 2 + math.radians(dyaw)))
         logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0, scan=scan))
@@ -1057,6 +1063,7 @@ def test_new_obstacle_in_target_cell_stops_drive(monkeypatch):
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
     logic.step(obs)
     logic._plan(obs)
+    logic._guard_off_cell = (9, 2)  # 앞 벽 감시(아래 시험들)와 섞이지 않게 지도 확인만 본다
     true_grid = GridMap()
     true_grid.mark_blocked((9, 2))
     # 출발 순간 흔들림으로 한두 번 막혀 보이는 것은 무시하고, 연속으로 막혀 보이면 멈춘다.
@@ -1125,3 +1132,132 @@ def test_small_far_target_is_ignored_while_exploring():
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, area=SEE_TARGET_MIN_AREA - 1.0)
     logic.step(obs)
     assert logic.state != ALIGN
+
+
+# ---------------------------------------------------------------
+# 2026-11-01: 한 칸 앞 벽 감시, 막다른 길 되돌아가기, 진척 감시
+# ---------------------------------------------------------------
+
+def test_single_cell_drive_waits_when_something_appears_in_target_cell():
+    """한 칸 전진 중 목표 칸에 상대 로봇 등이 나타나면 멈추고 STUCK에서 기다렸다 다시 본다."""
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 3))  # 한 칸만 가게
+    x, y, yaw = START_POSE
+    obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic.step(obs)
+    logic._plan(obs)
+    assert not logic._chained and logic.target == cell_center_m((9, 2))
+    logic.state = DRIVE
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    obs.scan = simulate_scan(true_grid, (x, y, yaw))
+    assert logic._drive(obs) == Command()
+    assert logic.state == STUCK
+    assert '(9, 2)' in logic.stop_reason
+
+
+def test_single_cell_guard_turns_off_after_repeated_stops_for_same_cell():
+    """서서 본 지도는 빈칸인데 감시만 같은 칸에서 3번 연속 멈추면 그 칸은 감시를 끈다 (무한 반복 방지)."""
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 3))
+    x, y, yaw = START_POSE
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 2))
+    scan = simulate_scan(true_grid, (x, y, yaw))
+    for _ in range(mission1_logic.GUARD_REPEAT_MAX):
+        obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+        logic._plan(obs)
+        logic.state = DRIVE
+        obs.scan = scan
+        logic._drive(obs)
+        assert logic.state == STUCK
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    logic.state = DRIVE
+    logic._drive(Observation(x=x, y=y, yaw=yaw, now=0.0, scan=scan))
+    assert logic.state == DRIVE
+
+
+def test_explore_chain_goes_past_two_cells_and_stops_next_to_center():
+    """세 칸 이상도 쭉 가되 중앙 옆 칸에 닿으면 끝낸다 (서서 큐브를 본다)."""
+    logic = Mission1Logic()
+    logic.maze.observe((9, 5), math.pi)
+    x, y = cell_center_m((9, 5))
+    logic._plan(Observation(x=x, y=y, yaw=math.pi, now=0.0))
+    assert logic.path == [(9, 5), (8, 5), (7, 5), (6, 5)]
+    assert logic._chained
+
+
+def test_dead_end_backtracks_without_scanning_until_cell_with_new_neighbor():
+    """
+    막다른 길 끝에서는 안 가 본 이웃이 있는 지나온 칸까지 서지 않고 되돌아간다.
+
+    9열 (9,1)~(9,4)를 지나왔고 (9,5)·(8,4)가 막힌 막다른 칸 (9,4). (8,2)~(8,3)은 막힘,
+    (8,1)은 안 가 본 빈칸이라 (9,1)까지 후진으로 한 번에 간다.
+    """
+    logic = Mission1Logic(point_symmetry=False)
+    for cell in ((9, 5), (8, 4), (8, 3), (8, 2)):
+        logic.grid.mark_blocked(cell)
+    for y in range(1, 5):
+        logic.maze.observe((9, y), math.pi / 2)
+    x, y = cell_center_m((9, 4))
+    logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0))
+    assert logic._backtrack == [(9, 4), (9, 3), (9, 2), (9, 1)]
+    assert logic.target == cell_center_m((9, 1))
+    assert logic.reverse
+    # 끝 칸 (9,1)에 도착하면 처음 보는 이웃이 있으니 서서 스캔한다
+    logic.state = DRIVE
+    x, y = cell_center_m((9, 1))
+    logic._drive(Observation(x=x, y=y, yaw=math.pi / 2, now=1.0))
+    assert logic.state == SCAN
+
+
+def test_backtrack_does_not_stop_at_corner_cells():
+    """되돌아가는 길이 꺾이면 꺾는 칸에서 서서 스캔하지 않고 바로 다음 구간으로 간다."""
+    logic = Mission1Logic(point_symmetry=False)
+    # (7,1)->(8,1)->(9,1)->(9,2)->(9,3) 순서로 지나와 (9,3)이 막다른 칸. (7,1) 위 (7,2)가 새 칸
+    for cell in ((9, 4), (8, 3), (8, 2), (6, 1)):
+        logic.grid.mark_blocked(cell)
+    for cell in ((7, 1), (8, 1), (9, 1), (9, 2), (9, 3)):
+        logic.maze.observe(cell, math.pi / 2)
+    x, y = cell_center_m((9, 3))
+    logic._plan(Observation(x=x, y=y, yaw=math.pi / 2, now=0.0))
+    assert logic._backtrack[-1] == (7, 1)
+    assert logic.target == cell_center_m((9, 1))
+    logic.state = DRIVE
+    x, y = cell_center_m((9, 1))
+    logic._drive(Observation(x=x, y=y, yaw=math.pi / 2, now=1.0))
+    assert logic.state == TURN
+    assert logic.target == cell_center_m((7, 1))
+
+
+def test_no_progress_clears_false_blocked_cells():
+    """새 칸 없이 NO_PROGRESS_S가 지나면 잘못 찍힌 막힘을 지우고 다시 본다 (진짜 벽은 다시 막힘)."""
+    logic = Mission1Logic(point_symmetry=False)
+    x, y, yaw = START_POSE
+    logic.step(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    logic.grid.mark_blocked((5, 5))  # 잘못 찍힌 먼 칸
+    logic.state = SCAN
+    logic.state_started_at = 0.0
+    scan = simulate_scan(GridMap(use_point_symmetry=False), (x, y, yaw))
+    logic._scan(Observation(x=x, y=y, yaw=yaw, now=1.0, scan=scan))
+    assert logic.grid.get((5, 5)) == BLOCKED
+    logic.state = SCAN
+    logic.state_started_at = 0.0
+    now = mission1_logic.NO_PROGRESS_S + 1.0
+    logic._scan(Observation(x=x, y=y, yaw=yaw, now=now, scan=scan))
+    assert logic.grid.get((5, 5)) != BLOCKED
+    assert '막힘 표시를 지우고' in logic.event
+
+
+def test_deep_dead_end_run_finishes_faster_than_cell_by_cell():
+    """9열 6칸 막다른 길 배치에서 끝까지 임무를 마친다 (되돌아올 때 서지 않음)."""
+    true_grid = GridMap()
+    for cell in [(8, y) for y in range(2, 8)] + [(9, 8)]:
+        true_grid.mark_blocked(cell)
+    logic = Mission1Logic()
+    robot = SimRobot(true_grid)
+    run(logic, robot, until=DONE)
+    assert logic.state == DONE
+    assert distance_to_start(robot.cube) < 0.1
+    blocked = [cell for cell in robot.visited if not true_grid.is_passable(cell)]
+    assert blocked == []
