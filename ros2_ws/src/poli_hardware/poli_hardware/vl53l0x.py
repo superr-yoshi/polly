@@ -29,6 +29,8 @@ FINAL_RANGE_CONFIG_TIMEOUT_MACROP_HI = 0x71
 GPIO_HV_MUX_ACTIVE_HIGH = 0x84
 VHV_CONFIG_PAD_SCL_SDA__EXTSUP_HV = 0x89
 IDENTIFICATION_MODEL_ID = 0xC0
+IDENTIFICATION_REVISION_ID = 0xC2
+SOFT_RESET_GO2_SOFT_RESET_N = 0xBF
 GLOBAL_CONFIG_SPAD_ENABLES_REF_0 = 0xB0
 GLOBAL_CONFIG_REF_EN_START_SELECT = 0xB6
 DYNAMIC_SPAD_NUM_REQUESTED_REF_SPAD = 0x4E
@@ -143,8 +145,27 @@ class VL53L0X:
             time.sleep(0.001)
 
     # ---- 초기화 ----
+    def _soft_reset(self):
+        """
+        센서를 처음 켠 상태로 되돌린다 (ST API VL53L0X_ResetDevice).
+
+        2026-11-01 실기: 초기화가 도중에 끊긴 센서는 기준 보정 상태(SYSRANGE_START 0x40)에 걸려 다음 초기화가
+        전원을 끄기 전까지 계속 시간 초과였다. 리셋 중에는 I2C가 응답하지 않을 수 있어 그 실패는 무시한다.
+        """
+        def revision(expect_zero):
+            try:
+                return (self._r(IDENTIFICATION_REVISION_ID) == 0) == expect_zero
+            except OSError:
+                return False
+        self._w(SOFT_RESET_GO2_SOFT_RESET_N, 0x00)
+        self._wait(lambda: revision(True), '리셋 들어감')
+        self._w(SOFT_RESET_GO2_SOFT_RESET_N, 0x01)
+        self._wait(lambda: revision(False), '리셋 끝남')
+        time.sleep(0.002)
+
     def init(self):
-        """센서를 설정하고 연속 측정을 시작한다. 실패하면 OSError."""
+        """센서를 리셋·설정하고 연속 측정을 시작한다. 실패하면 OSError."""
+        self._soft_reset()
         model = self._r(IDENTIFICATION_MODEL_ID)
         if model != MODEL_ID:
             raise OSError(f'VL53L0X가 아님 (모델 ID 0x{model:02x}, 기대 0xee)')

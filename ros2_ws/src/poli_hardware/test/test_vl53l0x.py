@@ -15,6 +15,9 @@ class FakeBus:
     def write_byte_data(self, addr, reg, value):
         self.writes.append((reg, value))
         self.regs[reg] = value
+        if reg == vl53l0x.SOFT_RESET_GO2_SOFT_RESET_N:
+            # 리셋 중에는 리비전 ID가 0, 끝나면 다시 값이 보인다 (실제 칩은 0x10)
+            self.regs[vl53l0x.IDENTIFICATION_REVISION_ID] = 0x10 if value else 0x00
 
     def read_i2c_block_data(self, addr, reg, n):
         return self.regs[reg:reg + n]
@@ -87,3 +90,15 @@ def test_hold_detector_debounces_both_ways():
     for _ in range(5):
         det.add(None)
     assert det.holding is False
+
+
+def test_init_soft_resets_first():
+    """초기화가 도중에 끊겨 보정 상태에 걸린 센서도 다시 쓰도록 init은 먼저 소프트 리셋한다 (2026-11-01 실기)."""
+    bus = FakeBus()
+    bus.regs[vl53l0x.IDENTIFICATION_MODEL_ID] = 0x00   # 모델 확인에서 멈추게
+    try:
+        vl53l0x.VL53L0X(bus).init()
+    except OSError:
+        pass
+    reset = vl53l0x.SOFT_RESET_GO2_SOFT_RESET_N
+    assert bus.writes[:2] == [(reset, 0x00), (reset, 0x01)]
