@@ -1597,3 +1597,15 @@ def test_pushing_cube_with_constant_area_is_not_false_positive():
     assert logic.state == PUSH
     command = logic._push(Observation(x=x + 0.03, y=1.0, yaw=0.0, now=2.0, gripper_range=0.04))
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
+
+
+def test_wall_guard_rests_right_after_arc_turn():
+    """곡선 꺾기 직후에도 회전 직후처럼 잠깐 앞 벽 감시를 쉰다 (21:30 실기: 곡선 직후 1초 STUCK)."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.phase = RETURN
+    logic.grid.mark_free((8, 4))
+    logic._arc = logic._arc_plan([(8, 2), (8, 3), (7, 3), (6, 3)], 1)
+    bx, by = cell_center_m((8, 3))
+    logic._arc_step(Observation(x=bx - 0.2, y=by, yaw=math.pi - 0.05, now=2.0))
+    assert logic.state == DRIVE
+    assert logic._turn_ended_at == 2.0

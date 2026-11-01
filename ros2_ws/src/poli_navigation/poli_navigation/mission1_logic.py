@@ -884,6 +884,10 @@ class Mission1Logic:
         self._drive_origin_cell = cell_center_m(arc['corner'])
         self._drive_heading = heading
         self._arc = self._arc_plan(path, end)
+        # 곡선 직후에도 차체가 아직 돌고 있어 GUARD_AFTER_TURN_S 동안 앞 벽 감시를 쉰다
+        # (21:30 실기: 곡선 직후 '앞 칸 (9,2)에 장애물'로 1초 STUCK)
+        self._turn_heading = heading
+        self._turn_ended_at = obs.now
         self._change_state(DRIVE, obs)
         return self._drive(obs)
 
