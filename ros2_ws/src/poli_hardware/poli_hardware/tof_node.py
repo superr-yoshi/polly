@@ -38,7 +38,7 @@ class TofNode(Node):
         p('i2c_address', vl53l0x.ADDRESS)
         p('rate', 30.0)                 # Hz. 센서 연속 측정 약 33 ms
         p('frame', 'gripper_tof_link')
-        p('hold_max_mm', 60)            # TODO_MEASURE: 집게 안 큐브까지 거리 + 여유
+        p('hold_max_mm', 70)            # 2026-11-01 실측: 큐브 28 mm, 빈 집게 닫힘 108 mm
         p('on_samples', 3)
         p('off_samples', 5)
         p('min_range_m', 0.03)

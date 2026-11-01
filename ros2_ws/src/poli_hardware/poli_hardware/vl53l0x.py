@@ -325,6 +325,8 @@ class HoldDetector:
 
     가까움(<= hold_max_mm)이 on_samples번 이어지면 True, 멂이 off_samples번 이어지면 False.
     처음에는 None (모름).
+    범위 밖(None)은 직전 측정값이 가까웠으면 '너무 가까움'(센서 최소 약 30 mm 아래)으로 보고 가까움으로 센다.
+    큐브가 빠지면 닫힌 집게 날(2026-11-01 실측 108 mm)이나 멀어지는 값이 먼저 보이기 때문이다.
     """
 
     def __init__(self, hold_max_mm, on_samples, off_samples):
@@ -334,9 +336,14 @@ class HoldDetector:
         self.holding = None
         self._run = 0
         self._run_value = None
+        self._last_mm = None
 
     def add(self, mm):
-        near = mm is not None and mm <= self.hold_max_mm
+        if mm is None:
+            near = self._last_mm is not None and self._last_mm <= self.hold_max_mm
+        else:
+            near = mm <= self.hold_max_mm
+            self._last_mm = mm
         if near == self._run_value:
             self._run += 1
         else:

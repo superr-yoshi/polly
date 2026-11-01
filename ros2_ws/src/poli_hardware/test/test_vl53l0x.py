@@ -87,6 +87,15 @@ def test_hold_detector_debounces_both_ways():
     det.add(None)                         # 범위 밖이 잠깐 튀어도
     det.add(45)
     assert det.holding is True
+    # 가까이 있다가 범위 밖 = 너무 가까움 (센서 최소 약 30 mm 아래) -> 계속 잡음
+    for _ in range(10):
+        det.add(None)
+    assert det.holding is True
+    # 큐브가 빠지면 닫힌 집게 날(108 mm)이 보인다 -> 안 잡음
+    for _ in range(5):
+        det.add(108)
+    assert det.holding is False
+    # 그 뒤 집게를 열어 범위 밖이 되어도 안 잡음 그대로
     for _ in range(5):
         det.add(None)
     assert det.holding is False

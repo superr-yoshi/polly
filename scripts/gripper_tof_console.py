@@ -53,7 +53,8 @@ def main():
             else:
                 dist = f'{r * 1000:4.0f} mm'
             holding = {None: '판단 전', True: '잡음', False: '안 잡음'}[state['holding']]
-            print(f'\r집게 {state["grip"] or "?":7s} | 거리 {dist:14s} | holding {holding:6s}',
+            # \033[K: 줄 끝까지 지운다 (한글 폭 때문에 지난 글자가 남던 것)
+            print(f'\r집게 {state["grip"] or "?":7s} | 거리 {dist:14s} | holding {holding}\033[K',
                   end='', flush=True)
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old)
