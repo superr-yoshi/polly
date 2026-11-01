@@ -7,6 +7,8 @@ from poli_navigation import mission2_logic
 from poli_navigation.mission2_logic import (
     ALIGN,
     APPROACH,
+    BACKOFF,
+    BACKOFF_M,
     CAMERA_AHEAD_M,
     CENTER_M,
     Command,
@@ -25,6 +27,7 @@ from poli_navigation.mission2_logic import (
     GUARD_RADIUS_M,
     GUARD_SPEED,
     heading_error_to,
+    HOLDING_CONFIRM_S,
     Mission2Logic,
     Observation,
     PUSH,
@@ -247,21 +250,60 @@ def test_search_when_target_not_visible_after_drive():
     assert logic.state == GUARD
 
 
-def test_grasp_failed_goes_back_to_search():
+def test_grasp_failed_backs_off_then_searches():
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GRASP)
 
     robot.holding = False
-    for _ in range(int(GRASP_WAIT_S / DT) + 2):
-        command = logic.step(robot.observe())
-        robot.apply(command)
-        if logic.state != GRASP:
-            break
+    states = run(logic, robot, max_seconds=robot.now + GRASP_WAIT_S + 3.0, until=SEARCH)
 
-    # 집게를 다시 열고 탐색부터 다시 시작한다. (이후 재시도)
-    assert logic.state == SEARCH
+    # 집게를 다시 열고, 큐브가 카메라에 보이게 물러난 뒤 탐색부터 다시 시작한다.
+    assert states[:3] == [GRASP, BACKOFF, SEARCH]
     assert robot.gripper_log[-1] == GRIPPER_OPEN
+
+
+def test_grasp_failure_backs_off_far_enough_to_see_cube():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    grasp_pose = (robot.x, robot.y)
+
+    robot.holding = False
+    run(logic, robot, max_seconds=robot.now + GRASP_WAIT_S + 3.0, until=SEARCH)
+    assert math.dist((robot.x, robot.y), grasp_pose) >= BACKOFF_M - 0.02
+    assert robot.observe().detected
+
+
+def test_grasp_waits_for_holding_sensor_before_failing():
+    # 집게가 닫힌 직후 ToF가 아직 false여도 HOLDING_CONFIRM_S 안에 true가 되면 잡은 것이다.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    robot.holding = False
+    robot.gripper_state = GRIPPER_CLOSED
+    closed = None
+    while robot.now < 10.0 and logic.state == GRASP:
+        robot.apply(logic.step(robot.observe()))
+        if closed is None and logic._grasp_closed_at is not None:
+            closed = robot.now
+        if closed is not None and robot.now - closed >= HOLDING_CONFIRM_S - 2 * DT:
+            robot.holding = True
+    assert logic.state == GUARD
+
+
+def test_retries_after_failed_grab_and_holds():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+
+    # 첫 시도는 빠졌다. 물러나 다시 찾아 잡으면 지킨다.
+    robot.holding = False
+    run(logic, robot, max_seconds=robot.now + 5.0, until=BACKOFF)
+    robot.holding = None
+    states = run(logic, robot, max_seconds=robot.now + 20.0, until=GUARD)
+    assert logic.state == GUARD
+    assert GRASP in states
 
 
 def test_grasp_ends_as_soon_as_gripper_reports_closed():
@@ -278,15 +320,16 @@ def test_grasp_ends_as_soon_as_gripper_reports_closed():
     assert robot.now - started < 0.5
 
 
-def test_lost_target_during_guard_goes_back_to_search():
+def test_lost_target_during_guard_backs_off():
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
 
     robot.holding = False
-    logic.step(robot.observe())
+    command = logic.step(robot.observe())
 
-    assert logic.state == SEARCH
+    assert logic.state == BACKOFF
+    assert command.gripper == GRIPPER_OPEN
 
 
 def test_retreat_when_pushed_near_elimination_zone():

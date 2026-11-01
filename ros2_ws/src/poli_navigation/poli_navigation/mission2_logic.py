@@ -8,6 +8,7 @@ ROS2와 무관한 순수 Python 모듈이다.
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
   -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(중앙에서 떨어진 원 위로 빠져서 지키기)
+  못 잡았거나 놓치면(/gripper/holding false) BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
   + 언제나 탈락선 감시 (RETREAT)
 
@@ -137,6 +138,16 @@ AREA_GROW_RATIO = 1.05
 GRASP_WAIT_S = 1.5
 GRIPPER_MIN_WAIT_S = 0.15  # 2026-11-01 0.25 -> 0.15 (집게 닫힘 0.36 -> 0.18 s)
 GRIPPER_SETTLE_S = 0.1
+# 집게가 닫힌 뒤 /gripper/holding(ToF)이 false여도 이만큼은 더 기다린다.
+# tof_node는 가까운 값이 3번(약 30 Hz, 0.1 s) 이어져야 true라서 바로 보면 잡았는데도 실패로 볼 수 있다.
+HOLDING_CONFIRM_S = 0.3
+
+# 못 잡았거나 놓쳤으면 집게를 열고 이만큼 곧게 후진한 뒤 다시 찾는다 (2026-11-01).
+# 큐브가 집게 바로 앞(카메라 아래)에 있으면 화면에 안 보여 SEARCH가 한 바퀴를 다 돈다.
+# 물러나면 화면에 들어와 바로 다시 접근한다. TODO_MEASURE: 카메라에 다시 보이는 거리
+BACKOFF_M = 0.18
+BACKOFF_SPEED = 0.3
+BACKOFF_TIMEOUT_S = 1.5
 
 # 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False로 했다가 True로 되돌림:
 # 임무를 켜면 Mega가 리셋돼 서보 힘이 빠지고 집게가 조금 닫힌다. 열기를 안 보내면 덜 열린 채로
@@ -204,6 +215,7 @@ GRASP = 'GRASP'
 HOLD = 'HOLD'
 GUARD = 'GUARD'
 RETREAT = 'RETREAT'
+BACKOFF = 'BACKOFF'
 # 큐브를 잡고 있는 상태
 HOLDING_STATES = (HOLD, GUARD)
 
@@ -326,6 +338,9 @@ class Mission2Logic:
         self._dodge_direction = 1.0
         self._guard_reverse = False
         self._escaping = False
+        # 집게가 닫혔다고 본 시각 (GRASP), 후진 시작 위치 (BACKOFF)
+        self._grasp_closed_at = None
+        self._backoff_start = None
 
     def _change_state(self, new_state, obs):
         if new_state == SEARCH and new_state != self.state:
@@ -340,6 +355,7 @@ class Mission2Logic:
         self.state = new_state
         self.state_started_at = obs.now
         self._gripper_reached_at = None
+        self._grasp_closed_at = None
 
     def step(self, obs):
         if self.state_started_at is None:
@@ -424,6 +440,7 @@ class Mission2Logic:
             GRASP: self._grasp,
             HOLD: self._hold,
             GUARD: self._guard,
+            BACKOFF: self._backoff,
         }
         return handlers[self.state](obs)
 
@@ -631,14 +648,16 @@ class Mission2Logic:
         return obs.now - self._gripper_reached_at >= GRIPPER_SETTLE_S
 
     def _grasp(self, obs):
-        if not self._gripper_closed(obs):
-            return Command()
-        self._grab_sent_at = None
+        if self._grasp_closed_at is None:
+            if not self._gripper_closed(obs):
+                return Command()
+            self._grasp_closed_at = obs.now
+            self._grab_sent_at = None
 
         if obs.holding is False:
-            self._target_seen_at = obs.now
-            self._change_state(SEARCH, obs)
-            return Command(gripper=GRIPPER_OPEN)
+            if obs.now - self._grasp_closed_at < HOLDING_CONFIRM_S:
+                return Command()
+            return self._start_backoff(obs)
 
         # TODO: 집게 상태를 알 수 없으면(None) 잡았다고 가정한다.
         if GUARD_ENABLED:
@@ -651,12 +670,25 @@ class Mission2Logic:
         return Command()
 
     def _lost_cube(self, obs):
-        """큐브를 놓쳤으면 집게를 열고 다시 찾는다. 놓치지 않았으면 None."""
+        """큐브를 놓쳤으면 집게를 열고 물러나 다시 찾는다. 놓치지 않았으면 None."""
         if obs.holding is not False:
             return None
+        return self._start_backoff(obs)
+
+    def _start_backoff(self, obs):
         self._target_seen_at = obs.now
-        self._change_state(SEARCH, obs)
+        self._backoff_start = (obs.x, obs.y)
+        self._change_state(BACKOFF, obs)
         return Command(gripper=GRIPPER_OPEN)
+
+    def _backoff(self, obs):
+        """집게를 열고 BACKOFF_M 곧게 후진한 뒤 SEARCH (탈락선은 RETREAT가 먼저 본다)."""
+        moved = math.dist((obs.x, obs.y), self._backoff_start)
+        if moved >= BACKOFF_M or obs.now - self.state_started_at > BACKOFF_TIMEOUT_S:
+            self._target_seen_at = obs.now
+            self._change_state(SEARCH, obs)
+            return Command()
+        return Command(linear=-BACKOFF_SPEED)
 
     def _hold(self, obs):
         # 규정 3.4.7.3: 끝날 때까지 연속으로 오래 확보한 팀이 유리하다.
