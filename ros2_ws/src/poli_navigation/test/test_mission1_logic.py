@@ -663,7 +663,10 @@ def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center(monke
     logic, obs = _rolling_logic(GridMap(), 0.06)
     logic._speed_changed_at = 0.95
     assert not logic.rolling_scan_ok(obs)
+    # 창(ROLL_WINDOW_M 0.18) 안이면 쓰고, 칸 밖(가운데 0.2 m 넘게 앞)이면 안 쓴다
     logic, obs = _rolling_logic(GridMap(), 0.15)
+    assert logic.rolling_scan_ok(obs)
+    logic, obs = _rolling_logic(GridMap(), 0.25)
     assert not logic.rolling_scan_ok(obs)
     logic, obs = _rolling_logic(GridMap(), 0.06)
     logic._last_linear = 0.45
@@ -1524,3 +1527,67 @@ def test_visited_cell_is_never_marked_blocked():
     x, y = cell_center_m((9, 2))
     logic._map_scan(simulate_scan(true_grid, (x, y, math.pi / 2)), (x, y, math.pi / 2))
     assert logic.grid.get((9, 1)) != BLOCKED
+
+
+# ---------------------------------------------------------------
+# 2026-11-01 21:30 실기: 큐브가 바로 앞이면 인식 못 하고 끌고 감
+# ---------------------------------------------------------------
+
+def _driving_west_logic():
+    """(6,5)에서 서쪽 (5,5)로 달리는 중 (큐브 칸으로 들어가려는 상황)."""
+    logic = Mission1Logic(point_symmetry=False)
+    x, y = cell_center_m((6, 5))
+    logic.step(Observation(x=x, y=y, yaw=math.pi, now=0.0))
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = cell_center_m((5, 5))
+    logic._drive_heading = math.pi
+    logic._drive_origin_cell = (x, y)
+    return logic, x, y
+
+
+def test_big_cube_ahead_while_driving_switches_to_approach():
+    """주행 중 카메라에 큐브가 크게 보이면 그 칸으로 밀고 들어가지 않고 진행선으로 바로 접근한다."""
+    logic, x, y = _driving_west_logic()
+    logic._drive(Observation(x=x - 0.05, y=y, yaw=math.pi, now=0.5, detected=True,
+                             x_offset=0.1, area=20000.0))
+    assert logic.state == APPROACH
+    assert logic._approach_axis == math.pi
+
+
+def test_tof_cube_in_gripper_while_driving_grabs():
+    """카메라에 안 보여도 적외선이 집게 안(5 cm) 큐브를 보고 LiDAR에 벽이 없으면 바로 닫는다."""
+    logic, x, y = _driving_west_logic()
+    scan = simulate_scan(GridMap(use_point_symmetry=False), (x - 0.05, y, math.pi))
+    command = logic._drive(Observation(x=x - 0.05, y=y, yaw=math.pi, now=0.5, scan=scan,
+                                       gripper_range=0.03))
+    assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
+
+
+def test_tof_near_wall_is_not_a_cube():
+    """적외선에 가까이 보여도 LiDAR가 집게 앞에 벽을 보면 큐브가 아니다 (칸 가운데에서 벽을 보고 섬)."""
+    logic, x, y = _driving_west_logic()
+    true_grid = GridMap(use_point_symmetry=False)
+    true_grid.mark_blocked((5, 5))
+    pose = (x - 0.02, y, math.pi)
+    scan = simulate_scan(true_grid, pose)
+    assert not logic._tof_cube(Observation(x=pose[0], y=pose[1], yaw=math.pi, now=0.5,
+                                           scan=scan, gripper_range=0.03))
+
+
+def test_pushing_cube_with_constant_area_is_not_false_positive():
+    """큐브를 밀고 가며 면적이 그대로여도 적외선에 가까이 보이면 '오탐'으로 그만두지 않고 잡는다."""
+    logic = _approaching_logic()
+    logic._approach_start = (1.0, 1.0)
+    logic._area_first = None
+    logic._area_best = 0.0
+    x = 1.0
+    for i in range(10):
+        x += 0.05
+        logic._approach(Observation(x=x, y=1.0, yaw=0.0, now=0.1 * i, detected=True,
+                                    area=32000.0, gripper_range=0.10))
+        if logic.state != APPROACH:
+            break
+    assert logic.state == PUSH
+    command = logic._push(Observation(x=x + 0.03, y=1.0, yaw=0.0, now=2.0, gripper_range=0.04))
+    assert logic.state == GRASP and command.gripper == GRIPPER_GRAB

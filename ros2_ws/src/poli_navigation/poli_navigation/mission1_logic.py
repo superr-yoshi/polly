@@ -168,8 +168,10 @@ ROLLING_DECISION = False
 # (팀). 벽 판단 기준을 콘 광선 50%로 올려(scan_to_grid) 조금 흐린 스캔으로도 판단이 안정적이다.
 # 0.35 m/s면 스캔 한 바퀴(0.1 s) 동안 3.5 cm. TODO_MEASURE: 지도가 다시 어긋나면 낮춘다
 ROLL_SPEED = 0.35
-ROLL_ZONE_M = 0.20     # 칸 가운데 이 거리 앞부터 ROLL_SPEED로 달린다
-ROLL_WINDOW_M = 0.10   # 스캔을 찍은 위치가 칸 가운데에서 이 안이어야 판단에 쓴다
+# 2026-11-01 0.20 -> 0.28, 0.10 -> 0.18: 0.35 m/s에서는 창이 좁아 스캔이 도착할 때 이미 가운데라 칸마다 서서
+# 스캔했다 (21:30 실기, 칸마다 0.4 s 주춤). 창은 칸 안(가운데 0.2 m 앞까지), 일정 속도는 그보다 먼저 시작한다
+ROLL_ZONE_M = 0.28     # 칸 가운데 이 거리 앞부터 ROLL_SPEED로 달린다
+ROLL_WINDOW_M = 0.18   # 스캔을 찍은 위치가 칸 가운데에서 이 안이어야 판단에 쓴다
 # 속도를 바꾼(가감속) 뒤 차체 숙여짐이 가라앉을 때까지. 이 시간 뒤 시작한 스캔만 쓴다. TODO_MEASURE
 ROLL_SETTLE_S = 0.15
 ROLL_STRAIGHT_RAD = math.radians(10.0)  # 다음 칸 방향이 이 안이면 직진으로 보고 멈추지 않는다
@@ -202,6 +204,8 @@ CHAIN_GUARD_RANGE_M = 0.6
 # 비틀려 옆 상자 모서리가 진행선 위로 온다 (2026-11-01 20:25 실기: (9,2)에서 157도로 아직 돌며 '앞에 벽' 급정지)
 GUARD_MAX_TURN_RATE = 0.8                 # rad/s
 GUARD_MAX_HEADING_RAD = math.radians(20.0)  # 진행 방향과 로봇 방향 차이
+# 회전을 끝내고 이 시간 동안도 하지 않는다: 명령은 줄었어도 차체는 아직 돈다 (21:30 실기: (7,2)에서 회전 직후 오판)
+GUARD_AFTER_TURN_S = 0.3
 # 2026-11-01: 위 앞 벽 감시를 한 칸 전진에도 쓴다 (꺼 둔 DRIVE_BLOCK_CHECK 대신, 상대 로봇이 앞 칸에 들어옴).
 # 서서 본 스캔에는 빈칸인데 감시만 계속 멈추면(같은 목표 칸 연속 이 횟수) 그 목표에서는 감시를 끈다
 # (같은 계획·정지 무한 반복 방지). TODO_MEASURE: 실기에서 한 칸 주행이 엉뚱하게 서는지 확인
@@ -268,6 +272,19 @@ ARC_MAX_LATERAL_M = 0.04
 GRAB_AREA = 35000.0
 # TODO_MEASURE: 큐브가 집게 안쪽 끝에 닿는 거리. 아직 얕으면 늘리고, 큐브를 앞으로 밀어내면 줄인다
 GRAB_PUSH_M = 0.04
+# 집게 안 적외선(VL53L0X, /range/gripper)이 있으면 큐브가 이 거리 안에 보이는 순간 닫는다 (임무 2와 같음).
+# 실측: 잡은 큐브 28 mm, 빈 집게 닫힘 108 mm. TODO_MEASURE: 열린 집게 안으로 충분히 들어온 거리
+GRAB_TOF_M = 0.05
+# 적외선에 이 거리 안으로 무언가 보이고 LiDAR(17 cm 높이)는 앞에 벽을 못 보면 낮은 큐브가 집게 앞에 있는 것.
+# 2026-11-01 21:30 실기: 회전 직후 큐브가 바로 앞이라 카메라 면적이 그대로인 채 끌고 가다
+# '면적이 안 커짐(오탐)'으로 접근을 두 번 그만두며 1.2 m 밀었다
+TOF_NEAR_M = 0.15
+# 적외선 방식으로 밀며 들어가는 최대 거리 (이만큼 밀어도 안 들어오면 닫지 않고 다시 판단)
+GRAB_TOF_PUSH_MAX_M = 0.15
+# 주행 중 카메라에 큐브가 이만큼 크게(약 45 cm 안) 보이면 그 칸으로 밀고 들어가지 않고 진행선으로 바로 접근한다.
+# 21:30 실기: 멀리서 작게 본 큐브 거리를 멀게 계산해 큐브 칸으로 들어가며 밀었다. TODO_MEASURE
+DRIVE_CUBE_AREA = 11000.0
+DRIVE_CUBE_MAX_OFFSET = 0.5
 GRAB_PUSH_SPEED = APPROACH_SLOW_SPEED
 # 바퀴가 미끄러져 엔코더 거리가 안 늘어도 이 시간 뒤에는 닫는다 (보통 약 0.35초)
 GRAB_PUSH_TIMEOUT_S = 1.0
@@ -360,6 +377,8 @@ class Observation:
     gripper_state: Optional[str] = None
     # scan의 첫 광선 촬영 시각 (LaserScan header.stamp). 모르면 None (주행 중 판단 안 함)
     scan_time: Optional[float] = None
+    # 집게 안 적외선 거리 (m, 범위 밖 inf). 센서가 없거나 끊기면 None
+    gripper_range: Optional[float] = None
 
 
 class Mission1Logic:
@@ -435,6 +454,8 @@ class Mission1Logic:
         self._area_first = None
         self._seen_frames = 0
         self._start_checked = False
+        # 이번 밀기를 적외선으로 판단하는지 (밀기 시작할 때 센서가 살아 있었는지)
+        self._push_tof = False
         self._forgot_at = -math.inf
         self._forget_interval = FORGET_MIN_INTERVAL_S
         self._last_forgot_blocked = None
@@ -1122,6 +1143,16 @@ class Mission1Logic:
 
     def _drive(self, obs):
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
+        # 단 큐브가 바로 앞이면(적외선, 또는 카메라에 크게) 그 칸으로 밀고 들어가지 않고 진행선으로 바로 잡는다.
+        if self.phase == EXPLORE and not self.reverse and not self.delivering:
+            if self._tof_cube(obs):
+                self._begin_approach(obs, self._drive_heading, self._drive_origin_cell)
+                return self._start_push(obs)
+            if (obs.detected and obs.area >= DRIVE_CUBE_AREA
+                    and abs(obs.x_offset) <= DRIVE_CUBE_MAX_OFFSET):
+                self._begin_approach(obs, self._drive_heading, self._drive_origin_cell)
+                self._change_state(APPROACH, obs, f'주행 중 큐브가 바로 앞 (면적 {obs.area:.0f})')
+                return self._approach(obs)
         target_cell = point_to_cell(*self.target)
         if (not self.reverse and obs.scan is not None and self._drive_heading is not None
                 and target_cell != self._guard_off_cell and self._wall_before_target(obs)):
@@ -1287,6 +1318,8 @@ class Mission1Logic:
         목표 칸 너머 벽(막다른 칸)은 목표 가운데에서 0.2 m 뒤라 멈추지 않는다.
         2026-10-31 실기: 집게 앞 20 cm만 보고 멈추니 막다른 칸 (7,2)에 다 와서 너머 벽에 섰다.
         """
+        if self._turn_ended_at is not None and obs.now - self._turn_ended_at < GUARD_AFTER_TURN_S:
+            return False
         heading_error = math.atan2(math.sin(self._drive_heading - obs.yaw),
                                    math.cos(self._drive_heading - obs.yaw))
         if (abs(self._last_angular) > GUARD_MAX_TURN_RATE
@@ -1365,15 +1398,39 @@ class Mission1Logic:
         predicted = error - self._last_angular * TURN_LEAD_S
         flipped = self._turn_flipped(predicted)
         if abs(predicted) < TURN_TOLERANCE_RAD or flipped:
-            self._target_seen_at = obs.now
-            self._area_best = 0.0
-            self._area_best_at = (obs.x, obs.y)
-            self._approach_start = (obs.x, obs.y)
-            self._area_first = None
-            self._seen_frames = 0
+            self._begin_approach(obs, self._approach_axis, self._approach_origin)
             self._change_state(APPROACH, obs, self._flip_reason(error) if flipped else None)
             return self._approach(obs)
         return Command(angular=self._turn_toward(predicted, obs))
+
+    def _begin_approach(self, obs, axis, origin):
+        """접근 축·출발점과 면적 기록을 새로 시작한다."""
+        self._approach_axis = axis
+        self._approach_origin = origin
+        self._target_seen_at = obs.now
+        self._area_best = 0.0
+        self._area_best_at = (obs.x, obs.y)
+        self._approach_start = (obs.x, obs.y)
+        self._area_first = None
+        self._seen_frames = 0
+
+    def _tof_cube(self, obs, within=GRAB_TOF_M):
+        """
+        적외선에 within 안으로 무언가 보이는데 LiDAR(17 cm 높이)는 집게 앞에 벽을 못 보면 낮은 큐브다.
+
+        칸 가운데에서 막힌 칸을 보고 서면 적외선에 벽(약 3~5 cm)이 보이므로 LiDAR로 벽을 걸러낸다.
+        """
+        if obs.gripper_range is None or obs.gripper_range > within:
+            return False
+        wall = obs.scan is not None and obstacle_ahead(
+            obs.scan, (obs.x, obs.y, obs.yaw), ahead=within + 0.05)
+        return not wall
+
+    def _start_push(self, obs):
+        self._push_start = (obs.x, obs.y)
+        self._push_tof = obs.gripper_range is not None
+        self._change_state(PUSH, obs)
+        return self._push(obs)
 
     def _abort_approach(self, obs, reason):
         """접근을 그만두고 칸 가운데로 돌아가 다시 판단한다."""
@@ -1382,6 +1439,8 @@ class Mission1Logic:
         return Command()
 
     def _approach(self, obs):
+        if self._tof_cube(obs):
+            return self._start_push(obs)
         if obs.detected:
             self._target_seen_at = obs.now
         elif obs.now - self._target_seen_at > APPROACH_LOST_S:
@@ -1398,7 +1457,8 @@ class Mission1Logic:
         traveled = math.dist((obs.x, obs.y), self._approach_start)
         grown = (self._area_first is not None
                  and self._area_best >= self._area_first * GRAB_MIN_GROWTH)
-        if not grown and traveled >= APPROACH_FALSE_TRAVEL_M:
+        pushing_cube = self._tof_cube(obs, TOF_NEAR_M)
+        if not grown and traveled >= APPROACH_FALSE_TRAVEL_M and not pushing_cube:
             return self._abort_approach(
                 obs, f'{traveled:.2f} m 다가가도 면적이 {self._area_first:.0f} -> '
                      f'{self._area_best:.0f} (오탐?)')
@@ -1406,12 +1466,13 @@ class Mission1Logic:
                    and math.dist((obs.x, obs.y), self._area_best_at) >= APPROACH_STALL_M)
         # 연속으로 보이고, 실제로 다가갔고, 면적이 커졌을 때만 잡는다 (붙박인 빨간 물체 오탐 방지)
         trusted = (self._seen_frames >= GRAB_MIN_FRAMES and traveled >= GRAB_MIN_TRAVEL_M
-                   and grown)
+                   and grown) or pushing_cube
         if obs.detected and trusted and (obs.area >= GRAB_AREA or stalled):
             reason = (f'면적 {obs.area:.0f} >= {GRAB_AREA:.0f}' if obs.area >= GRAB_AREA
                       else f'면적이 {obs.area:.0f}에서 안 커짐 (큐브가 닿음)')
-            reason += f', 처음 {self._area_first:.0f}, {traveled:.2f} m 다가감'
+            reason += f', 처음 {self._area_first or 0:.0f}, {traveled:.2f} m 다가감'
             self._push_start = (obs.x, obs.y)
+            self._push_tof = obs.gripper_range is not None
             self._change_state(PUSH, obs, reason)
             return self._push(obs)
         if obs.scan is not None and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw)):
@@ -1438,6 +1499,16 @@ class Mission1Logic:
         """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가 큐브를 집게 안쪽까지 넣고 닫는다."""
         # 큐브가 너무 가까워 카메라 값(잘림·놓침)은 믿지 않고 엔코더 거리만 본다.
         pushed = math.hypot(obs.x - self._push_start[0], obs.y - self._push_start[1])
+        if self._push_tof and self._grab_sent_at is None:
+            # 적외선: 큐브가 집게 안(GRAB_TOF_M)에 보이는 순간 닫는다. 안 들어오면 닫지 않고 다시 판단
+            if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+                self._change_state(GRASP, obs, f'적외선 {obs.gripper_range * 1000:.0f} mm')
+                self._grab_sent_at = obs.now
+                return Command(gripper=GRIPPER_GRAB)
+            too_long = obs.now - self.state_started_at > GRAB_PUSH_TIMEOUT_S
+            if pushed >= GRAB_TOF_PUSH_MAX_M or too_long:
+                return self._abort_approach(obs, f'{pushed:.2f} m 밀어도 적외선에 안 들어옴')
+            return Command(linear=GRAB_PUSH_SPEED)
         if pushed >= GRAB_PUSH_M or obs.now - self.state_started_at > GRAB_PUSH_TIMEOUT_S:
             closing = self._grab_sent_at is not None
             self._change_state(GRASP, obs)

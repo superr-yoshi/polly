@@ -31,7 +31,7 @@ from poli_navigation.scan_to_grid import (
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
-from sensor_msgs.msg import Imu, LaserScan
+from sensor_msgs.msg import Imu, LaserScan, Range
 from std_msgs.msg import Bool, String
 
 
@@ -106,6 +106,9 @@ class Mission1Node(Node):
         self.wall_fixed_for = None
         self.holding = None
         self.holding_received_at = None
+        # 집게 안 적외선 거리 (tof_node /range/gripper, m, 범위 밖 inf)
+        self.gripper_range = None
+        self.gripper_range_received_at = None
         self.gripper_state = None
         self.vision = None
         self.vision_received_at = None
@@ -134,6 +137,7 @@ class Mission1Node(Node):
         self.create_subscription(
             Bool, '/gripper/holding', self.holding_callback, 10
         )
+        self.create_subscription(Range, '/range/gripper', self.gripper_range_callback, 10)
         self.create_subscription(
             String, '/gripper/state', self.gripper_state_callback, 10
         )
@@ -190,6 +194,10 @@ class Mission1Node(Node):
     def scan_callback(self, msg):
         self.scan = msg
         self.scan_received_at = self.now_seconds()
+
+    def gripper_range_callback(self, msg):
+        self.gripper_range = msg.range
+        self.gripper_range_received_at = self.now_seconds()
 
     def holding_callback(self, msg):
         self.holding = msg.data
@@ -261,6 +269,8 @@ class Mission1Node(Node):
             # 집게 센서(tof_node)가 조용하면 모름(None) -> mission1_logic HOLDING_UNKNOWN 방식으로 판단
             holding=(self.holding if self.holding_received_at is not None
                      and now - self.holding_received_at <= HOLDING_TIMEOUT else None),
+            gripper_range=(self.gripper_range if self.gripper_range_received_at is not None
+                           and now - self.gripper_range_received_at <= HOLDING_TIMEOUT else None),
             gripper_state=self.gripper_state,
         )
         if scan is not None:
@@ -364,6 +374,9 @@ class Mission1Node(Node):
                     f'(정지 확인까지 {self.scan_stop_started_at - self.scan_entered_at:.2f}s)')
             elapsed = now - self.logic.started_at if self.logic.started_at is not None else 0.0
             reason = f' ({self.logic.state_reason})' if self.logic.state_reason else ''
+            tof = observation.gripper_range
+            tof_text = '-' if tof is None else (
+                'inf' if math.isinf(tof) else f'{tof * 1000:.0f}mm')
             line = (
                 f'State: {self.logic.state}; '
                 f'{self.logic.prev_state} -> {self.logic.state}{reason}; '
@@ -371,7 +384,7 @@ class Mission1Node(Node):
                 f'pose=({x:.3f}, {y:.3f}, {math.degrees(yaw):.1f}deg); '
                 f'target={self.logic.target}; reverse={self.logic.reverse}; '
                 f'vision=(detected={observation.detected}, x_offset={observation.x_offset:+.2f}, '
-                f'area={observation.area:.0f})')
+                f'area={observation.area:.0f}); tof={tof_text}')
             self.get_logger().info(line)
             self.state_publisher.publish(String(data=line))
             self.last_state = self.logic.state
