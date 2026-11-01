@@ -41,9 +41,14 @@ SAFE_ZONE_MIN_M = CELL_SIZE_M
 SAFE_ZONE_MAX_M = ARENA_SIZE_M - CELL_SIZE_M
 
 # TODO_MEASURE: 로봇 중심이 노란 선에서 이 거리 안으로 들어오면 중앙 쪽으로 복귀
-# (로봇 반지름 정도. 출발 위치(선에서 0.2m)보다는 작아야 한다.)
-DANGER_MARGIN_M = 0.15
-RETREAT_EXIT_MARGIN_M = 0.3
+# 2026-11-01 0.15 -> 0.3: 0.15면 차체 옆·앞 끝(중심에서 약 0.15~0.22 m)이 이미 선에 닿는다.
+# 우리 로봇은 미는 힘이 약해 크게 밀릴 수 있어 일찍 돌아온다.
+DANGER_MARGIN_M = 0.3
+# 출발 중(TURN, DRIVE)에만: 출발 위치가 선에서 0.2 m라 0.3이면 출발하자마자 RETREAT가 된다.
+# 출발하면 바로 중앙 쪽으로 가므로 선에서 멀어진다.
+START_DANGER_MARGIN_M = 0.15
+# 복귀 시작 거리보다 이만큼 더 들어오면 원래 하던 동작으로
+RETREAT_EXIT_EXTRA_M = 0.15
 
 # 이 거리(중앙까지)에 오면 카메라로 넘긴다 (그 전에라도 보이면 바로 넘긴다).
 VISION_HANDOFF_M = 0.6
@@ -315,6 +320,7 @@ class Mission2Logic:
         self.state_started_at = None
         self.gripper_opened = False
         self._state_before_retreat = DRIVE
+        self._retreat_exit_margin = DANGER_MARGIN_M + RETREAT_EXIT_EXTRA_M
         self._target_seen_at = None
         # 카메라로 계산한 큐브 위치 (경기장 좌표). 카메라 지연 때문에 화면 값으로 바로 돌지 않고
         # 이 점을 향해 엔코더·IMU 위치로 돈다 (위치는 지연이 작다).
@@ -396,15 +402,17 @@ class Mission2Logic:
 
     def _safety_check(self, obs):
         margin = distance_to_danger_line(obs)
+        danger = START_DANGER_MARGIN_M if self.state in (TURN, DRIVE) else DANGER_MARGIN_M
 
-        if self.state != RETREAT and margin < DANGER_MARGIN_M:
+        if self.state != RETREAT and margin < danger:
             self._state_before_retreat = self.state
+            self._retreat_exit_margin = danger + RETREAT_EXIT_EXTRA_M
             self._change_state(RETREAT, obs)
 
         if self.state != RETREAT:
             return None
 
-        if margin >= RETREAT_EXIT_MARGIN_M:
+        if margin >= self._retreat_exit_margin:
             resume = self._resume_state_after_retreat()
             if resume == GUARD:
                 # 밀려난 자리에서 가까운 원 위 점으로 돌아간다 (처음 빠진 점까지 가로지르지 않는다)

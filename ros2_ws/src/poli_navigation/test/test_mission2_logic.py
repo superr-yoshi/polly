@@ -548,3 +548,17 @@ def test_guard_dodges_toward_open_side_with_two_opponents():
     turned = angle_from_center(robot.x, robot.y) - start_angle
     assert turned > 0.05
     assert math.dist((robot.x, robot.y), far) > 0.5
+
+
+def test_retreat_starts_30cm_from_line_after_start():
+    logic, robot = guarding_robot()
+    # 밀려서 노란 선(x = 3.2)에서 0.25 m: 예전(0.15)은 그대로 있었다.
+    robot.x, robot.y = 2.95, 1.8
+    logic.step(robot.observe())
+    assert logic.state == RETREAT
+
+    # 출발 위치는 선에서 0.2 m지만 출발 중에는 RETREAT하지 않는다.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    logic.step(robot.observe())
+    assert logic.state == DRIVE
