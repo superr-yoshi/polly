@@ -113,6 +113,12 @@ CELL_CENTER_TOLERANCE_M = 0.15
 # 2026-11-01 0.8 -> 0.6: 여러 칸 직진에서 속도가 붙으면 거리·방향 오차가 커져 옆을 박거나 빗나감 (팀).
 # 10-31 전체 임무 36.6 s 기록도 0.6이었다.
 DRIVE_SPEED = 0.6
+# 복귀(큐브를 끌고 감)는 빠를 필요 없이 적당히 (2026-11-01 팀). 출발을 부드럽게 해 큐브가 빠지지 않게
+# (임무 2 GUARD도 큐브를 끌 때 가속 0.6). 감속은 큐브를 닫힌 집게 쪽으로 미니 그대로 (도착 후 바로 섬).
+# TODO_MEASURE: 큐브가 흔들리면 더 낮춘다
+RETURN_DRIVE_SPEED = 0.45
+RETURN_LINEAR_ACCEL = 0.6
+RETURN_LINEAR_DECEL = 2.0  # LINEAR_DECEL과 같게
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 # 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
 # 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
@@ -258,6 +264,7 @@ START_WALL_MIN_M = 0.12
 ARC_TURNS = True
 ARC_RADIUS_M = CELL_SIZE_M / 2.0
 ARC_SPEED = 0.4           # m/s -> 회전 2 rad/s. TODO_MEASURE: 바퀴 미끄러짐·큐브 빠짐이 보이면 낮춘다
+RETURN_ARC_SPEED = 0.3    # 복귀 중(큐브를 끌 때) 곡선 속도
 ARC_RADIAL_GAIN = 3.0     # rad/m, 원에서 벗어난 거리만큼 안·밖으로 튼다 (최대 ARC_MAX_CORRECTION_RAD)
 ARC_MAX_CORRECTION_RAD = math.radians(30.0)
 ARC_EXIT_RAD = math.radians(10.0)   # 나갈 방향과 이만큼 안이면 원호를 끝내고 직진
@@ -528,7 +535,9 @@ class Mission1Logic:
             # 처음이거나 판단이 끊긴 동안 노드가 정지 명령을 보냈다 -> 정지 상태에서 시작
             self._last_linear = self._last_angular = 0.0
             dt = ACCEL_RESET_S / 2.0
-        command.linear = ramp(command.linear, self._last_linear, LINEAR_ACCEL, LINEAR_DECEL, dt)
+        accel, decel = ((RETURN_LINEAR_ACCEL, RETURN_LINEAR_DECEL) if self.phase == RETURN
+                        else (LINEAR_ACCEL, LINEAR_DECEL))
+        command.linear = ramp(command.linear, self._last_linear, accel, decel, dt)
         if abs(command.linear - self._last_linear) > 0.005:
             self._speed_changed_at = now
         command.angular = ramp(
@@ -863,8 +872,15 @@ class Mission1Logic:
                            ARC_MAX_CORRECTION_RAD)
         desired = tangent + turn * correction
         error = math.atan2(math.sin(desired - obs.yaw), math.cos(desired - obs.yaw))
-        angular = turn * ARC_SPEED / radius + HEADING_GAIN * error
-        return Command(linear=ARC_SPEED, angular=clamp(angular, TURN_SPEED))
+        arc_speed = self._arc_speed()
+        angular = turn * arc_speed / radius + HEADING_GAIN * error
+        return Command(linear=arc_speed, angular=clamp(angular, TURN_SPEED))
+
+    def _arc_speed(self):
+        return RETURN_ARC_SPEED if self.phase == RETURN else ARC_SPEED
+
+    def _max_speed(self):
+        return RETURN_DRIVE_SPEED if self.phase == RETURN else DRIVE_SPEED
 
     @staticmethod
     def _arc_center(arc):
@@ -1303,11 +1319,13 @@ class Mission1Logic:
 
         # 목표에 가까워지면 일정한 감속으로 줄여 최저 속도로 도착한다. (출발 가속은 _limit_accel)
         remaining = max(0.0, remaining - ARRIVE_TOLERANCE_M)
-        speed = min(DRIVE_SPEED, math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
+        speed = min(self._max_speed(),
+                    math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
         if arc:
             # 원호 시작점(꺾는 칸 가운데 R 앞)에서 ARC_SPEED가 되게 줄인다 (멈추지 않음)
             to_arc = max(0.0, remaining - ARC_RADIUS_M)
-            speed = min(DRIVE_SPEED, math.sqrt(ARC_SPEED ** 2 + 2.0 * DRIVE_DECEL * to_arc))
+            speed = min(self._max_speed(),
+                        math.sqrt(self._arc_speed() ** 2 + 2.0 * DRIVE_DECEL * to_arc))
         if obs.scan_time is not None:
             self._has_scan_time = True
         if (self.rolling and self._has_scan_time and not self.delivering
