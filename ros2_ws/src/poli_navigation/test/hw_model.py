@@ -3,7 +3,8 @@
 
 poli_hardware diff_drive.twist_to_wheels의 최소 바퀴 속도 보정을 흉내 낸다:
 빠른 쪽 바퀴가 HW_MIN_WHEEL_SPEED보다 느리면 두 바퀴를 같은 비율로 키운다.
-그래서 제자리 회전은 명령과 상관없이 2 * 0.25 / 0.18 = 약 2.8 rad/s가 된다.
+최저 속도가 0.25 m/s였을 때는 제자리 회전이 명령과 상관없이 약 2.8 rad/s였다.
+2026-10-31부터 HW_MIN_WHEEL_SPEED = 0.08이라 아주 느린 명령(회전 약 0.9 rad/s 아래)에만 걸린다.
 """
 
 from poli_navigation.turn_pulse import HW_MIN_WHEEL_SPEED

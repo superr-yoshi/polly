@@ -56,12 +56,13 @@ BLUR_SIZE = 5
 MORPH_KERNEL_SIZE = 5
 
 
-def find_red_target(frame_bgr):
+def find_red_target(frame_bgr, ignore_rect=None):
     """BGR 이미지에서 가장 큰 빨간 덩어리를 찾는다.
 
     반환값: (detected, x_offset, area, contour, mask)
     x_offset 은 화면 가운데 0, 왼쪽 끝 -1.0, 오른쪽 끝 +1.0.
     못 찾으면 detected=False, x_offset=0.0, area=0.0.
+    ignore_rect: 탐지에서 뺄 영역 (x0, y0, x1, y1), 화면 비율 0~1 (예: 집게가 보이는 곳).
     """
     height, width = frame_bgr.shape[:2]
     center_x = width / 2.0
@@ -81,6 +82,9 @@ def find_red_target(frame_bgr):
     kernel = np.ones((MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    if ignore_rect is not None:
+        x0, y0, x1, y1 = ignore_rect
+        mask[int(y0 * height):int(y1 * height), int(x0 * width):int(x1 * width)] = 0
 
     contours, _ = cv2.findContours(
         mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -123,6 +127,14 @@ class RedTargetDetector(Node):
             self.debug_publisher = self.create_publisher(
                 CompressedImage, '/vision/debug_image/compressed', 1)
         self.last_debug_image = 0.0
+        # 탐지에서 뺄 화면 영역 [x0, y0, x1, y1] (비율 0~1). 넓이가 0이면 끔 (기본).
+        # 2026-11-01: 집게의 빨간 부품 오탐 대책. 단 잡는 순간 큐브도 화면 아래 가운데에 보이므로
+        # 그 자리를 빼면 잡기(GRAB_AREA)가 안 된다 -> 빨간 부품은 가리는 것이 먼저다 (규정 Q6).
+        self.declare_parameter('ignore_rect', [0.0, 0.0, 0.0, 0.0])
+        rect = [float(v) for v in self.get_parameter('ignore_rect').value]
+        self.ignore_rect = tuple(rect) if rect[2] > rect[0] and rect[3] > rect[1] else None
+        if self.ignore_rect is not None:
+            self.get_logger().info(f'탐지 제외 영역 (비율): {self.ignore_rect}')
 
         self.publisher = self.create_publisher(
             TargetDetection, '/vision/target', 10)
@@ -165,7 +177,7 @@ class RedTargetDetector(Node):
             self.publish(False, 0.0, 0.0)
             return
 
-        detected, x_offset, area, contour, mask = find_red_target(frame)
+        detected, x_offset, area, contour, mask = find_red_target(frame, self.ignore_rect)
         self.publish(detected, x_offset, area)
 
         # 매 프레임 찍으면 터미널이 넘치므로 1초에 한 번만.

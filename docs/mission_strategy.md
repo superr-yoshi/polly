@@ -92,6 +92,25 @@
 - 갇힘: 탐색 중 새 칸을 40초 못 밟으면 막힘 표시를 모두 지우고 다시 본다 (잘못 찍힌 벽, 2026-11-01).
   로그 `State:` 줄에 시작 후 경과 시간 `t=`가 찍힌다
 
+### 2026-11-01 연습장 실기 분석과 대책
+- 로그(Pi `~/poli_logs/mission1_20261101_*.log`) 결과: 위치 추정은 칸 가운데 ±2 cm로 맞았고 RETURN으로 넘어간 적 없음.
+  좌우 흔들림·후진은 지도상 **닫힌 출발 영역**((7,6)~(9,7))에서 방문 점수로 한 칸씩 오간 것 (1~2분).
+  실행마다 (7,6)·(7,8)의 막힘이 달라 막힘 오인식도 의심. 회전 펄스·odom 오류·잘못 잡기 추정은 코드와 맞지 않았다.
+- 대책 (mission1_logic.py):
+  - 지도상 갈 곳이 없으면 바로(10초에 한 번) 막힘 표시를 지우고 다시 확인 (`FORGET_MIN_INTERVAL_S`)
+  - 회전이 목표를 3번 넘나들면 끝냄 (`TURN_FLIP_MAX`), 같은 칸 가운데 복귀 3번째부터 건너뜀 (`RECENTER_MAX`)
+  - 잡기 조건: 연속 5프레임 + 3 cm 이상 다가감 + 면적 1.15배 이상 커짐. 0.3 m 가도 안 커지면 오탐으로 보고 그만둠
+  - `/gripper/holding`이 없으면(지금 실물) 닫은 뒤 카메라 면적 15000 이상일 때만 잡은 것 (`HOLDING_UNKNOWN`)
+  - 출발 때 오른쪽·뒤 외벽이 약 0.2 m인지 로그로 확인 (`출발 자세 확인`)
+  - 상태 로그: `State: 새상태; 이전 -> 새상태 (이유); phase; t; cell; pose; vision` + 토픽 `/mission1/state`
+- 카메라: `red_object_detector`의 `ignore_rect` 파라미터 (화면 비율로 탐지 제외 영역, 기본 끔).
+  잡는 순간 큐브도 화면 아래 가운데라 그 자리를 빼면 잡기가 안 된다. **집게의 빨간 부품은 가린다 (규정 Q6)**
+- rosbag: `BAG=1 bash scripts/laptop/go.sh 1` (Pi `~/poli_bags/`, `scripts/record_bag.sh`). 커밋하지 않는다
+- odom 보정: Pi에서 `python3 ~/polly/scripts/odom_calibrate.py line 1.0` / `spin 1`, 실제 값을 넣으면
+  `wheel_radius`·`wheel_separation` 보정값 계산. 계산만: `odom_calibrate.py calc --line ODOM REAL --spin ODOM REAL`
+- ⚠️ Pi의 install은 복사본이다 (symlink 아님). `git pull` 뒤 Pi에서 `colcon build`를 해야 실행에 반영된다
+  (2026-11-01: 0068ff4를 pull만 하고 빌드하지 않아 15:24 실행이 옛 코드로 돎)
+
 ## 3. 임무 2: 배틀럼블 (3.4)
 
 ### 규칙 요약

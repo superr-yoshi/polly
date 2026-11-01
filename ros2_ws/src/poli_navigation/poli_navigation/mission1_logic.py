@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import math
 from typing import Optional
 
+from poli_navigation import scan_to_grid
 from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
@@ -199,7 +200,36 @@ GUARD_REPEAT_MAX = 3
 # 잘못 찍힌 막힘(LiDAR 오인식)에 갇혀 같은 칸을 오가는 것을 푼다 (2026-10-31 실기: (9,3)<->(9,5) 왕복).
 # 진짜 벽은 다음 스캔에서 다시 막힘이 된다. 실기 전체 임무 약 37초 기준. TODO_MEASURE
 NO_PROGRESS_S = 40.0
+# 지나온 칸 어디에도 안 가 본 빈 이웃이 없으면(지도상 닫힌 영역) 40초를 기다리지 않고 바로 지운다.
+# 2026-11-01 연습장 실기 4번: 출발 영역이 지도상 닫혀 (7,6)~(9,7)을 1~2분 왕복. 이 간격보다 자주는 안 한다.
+FORGET_MIN_INTERVAL_S = 10.0
 AREA_GROW_RATIO = 1.05
+
+# 2026-11-01 실기 영상 대책 (요청서: 좁은 통로 왕복, 큐브 없이 RETURN).
+# TURN·ALIGN 중 남은 각도의 부호가 이만큼 바뀌면(목표를 넘었다 돌아오기 반복) 그 자리에서 끝낸다.
+TURN_FLIP_MAX = 3
+# 같은 칸에서 '칸 가운데로 복귀'가 이 횟수를 넘게 이어지면 복귀를 건너뛰고 바로 다음 칸으로 간다.
+RECENTER_MAX = 2
+# 잡기(PUSH) 조건: 대상이 연속 GRAB_MIN_FRAMES번(20 Hz) 보이고, 접근 시작 뒤 GRAB_MIN_TRAVEL_M 이상
+# 다가갔고, 가장 큰 면적이 처음 면적의 GRAB_MIN_GROWTH배 이상일 때만. 화면에 붙박인 빨간 물체(집게 부품 등)는
+# 다가가도 커지지 않는다. 옆 칸 가운데(약 0.3 m)에서 잡는 위치까지 면적은 약 1.3배 이상 커진다. TODO_MEASURE
+GRAB_MIN_FRAMES = 5
+GRAB_MIN_TRAVEL_M = 0.03
+GRAB_MIN_GROWTH = 1.15
+# 접근으로 이만큼 갔는데도 면적이 GRAB_MIN_GROWTH배 안 되면 오탐으로 보고 접근을 그만둔다.
+APPROACH_FALSE_TRAVEL_M = 0.30
+# /gripper/holding이 없을 때(None, 지금 실물은 보내는 노드가 없음) 잡았는지 판단하는 방법:
+# 'camera' = 집게를 닫은 뒤 큐브가 화면에 HELD_MIN_AREA 이상으로 보이면 잡은 것 (2026-11-01 기본)
+# 'assume' = 예전처럼 잡았다고 가정. 나중에 VL53L0X 등 센서를 달면 /gripper/holding을 보내면 된다.
+HOLDING_UNKNOWN = 'camera'
+# TODO_MEASURE: 집게가 큐브를 잡은 채 카메라 면적 (잡는 위치 약 33000, 집게 날에 가려지면 작아짐)
+HELD_MIN_AREA = 15000.0
+# 출발 확인: (9,1) 가운데에 바퀴 축을 두고 위(+y)를 보면 오른쪽(+x)·뒤(-y) 외벽이 축에서 약 0.2 m.
+START_WALL_M = CELL_SIZE_M / 2.0
+START_WALL_TOL_M = 0.07
+# 이 폭(축선 ±) 안의 점만 그 방향 벽으로 본다. 로봇 몸체 점을 빼려고 축에서 이보다 가까운 점은 버린다.
+START_WALL_BAND_M = 0.08
+START_WALL_MIN_M = 0.12
 
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
@@ -252,6 +282,35 @@ GRASP = 'GRASP'
 RELEASE = 'RELEASE'
 DONE = 'DONE'
 STUCK = 'STUCK'
+
+
+def start_wall_check(scan):
+    """
+    출발 자세 확인: 오른쪽·뒤 외벽이 축에서 약 START_WALL_M에 있는지 (로그용 한 줄).
+
+    로봇은 (9,1) 가운데에 바퀴 축을 두고 위(+y)를 본다고 가정한다 (scan_to_grid.START_POSE).
+    그러면 오른쪽(+x)과 뒤(-y)가 경기장 외벽이다. 다르면 놓은 방향·위치가 틀렸을 수 있다.
+    """
+    right, rear = [], []
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance) or not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = scan_to_grid.LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        # 로봇 기준 점 (앞 = +x, 왼쪽 = +y)
+        px = scan_to_grid.LASER_OFFSET_X_M + distance * math.cos(angle)
+        py = scan_to_grid.LASER_OFFSET_Y_M + distance * math.sin(angle)
+        if math.hypot(px, py) < START_WALL_MIN_M:
+            continue
+        if py < 0.0 and abs(px) <= START_WALL_BAND_M:
+            right.append(-py)
+        if px < 0.0 and abs(py) <= START_WALL_BAND_M:
+            rear.append(-px)
+    found = {'오른쪽': min(right, default=None), '뒤': min(rear, default=None)}
+    text = ', '.join(f'{name} {"없음" if d is None else f"{d:.2f} m"}' for name, d in found.items())
+    if all(d is not None and abs(d - START_WALL_M) <= START_WALL_TOL_M for d in found.values()):
+        return f'출발 자세 확인 OK: 외벽 {text} (예상 {START_WALL_M:.2f} m)'
+    return (f'⚠️ 출발 자세 확인: 외벽 {text} (예상 {START_WALL_M:.2f} m). '
+            '(9,1) 칸 가운데에 바퀴 축, 위(+y)를 보게 놓았는지 확인')
 
 
 @dataclass
@@ -330,6 +389,21 @@ class Mission1Logic:
         # 임무 시작 시각(첫 step), 마지막으로 처음 가 본 칸에 들어간 시각
         self.started_at = None
         self._new_cell_at = None
+        # 직전 상태와 바뀐 이유 (노드가 상태 로그에 쓴다). 이유가 없으면 None
+        self.prev_state = None
+        self.state_reason = None
+        # TURN·ALIGN 중 남은 각도의 부호와 바뀐 횟수
+        self._turn_sign = 0
+        self._turn_flips = 0
+        # 연속으로 '칸 가운데 복귀'를 한 칸과 횟수
+        self._recenter_cell = None
+        self._recenters = 0
+        # 접근: 시작 위치, 처음 본 면적, 연속으로 보인 횟수
+        self._approach_start = None
+        self._area_first = None
+        self._seen_frames = 0
+        self._start_checked = False
+        self._forgot_at = -math.inf
         # 직전에 내보낸 (linear, angular)와 시각. 가감속 제한에 쓴다.
         self._last_linear = 0.0
         self._last_angular = 0.0
@@ -345,10 +419,14 @@ class Mission1Logic:
         self.event = None
         self.stop_reason = None
 
-    def _change_state(self, new_state, obs):
+    def _change_state(self, new_state, obs, reason=None):
+        self.prev_state = self.state
+        self.state_reason = reason
         self.state = new_state
         self.state_started_at = obs.now
         self.turn_pulse.reset()
+        self._turn_sign = 0
+        self._turn_flips = 0
         if new_state not in (TURN, DRIVE):
             self._chained = False
         if new_state != DRIVE:
@@ -436,16 +514,27 @@ class Mission1Logic:
         if obs.scan is None:
             return Command()
 
-        if self.phase == EXPLORE and obs.now - self._new_cell_at > NO_PROGRESS_S:
-            self._forget_blocked(obs)
+        if not self._start_checked:
+            self._start_checked = True
+            self._note(start_wall_check(obs.scan))
+        if self.phase == EXPLORE and self.cube is None:
+            if obs.now - self._new_cell_at > NO_PROGRESS_S:
+                self._forget_blocked(obs, f'새 칸 없이 {NO_PROGRESS_S:.0f}s')
+            elif (not self._has_frontier()
+                  and obs.now - self._forgot_at >= FORGET_MIN_INTERVAL_S):
+                self._forget_blocked(obs, '지도상 갈 곳 없음 (닫힌 영역)')
         self._map_scan(obs.scan, (obs.x, obs.y, obs.yaw))
         if self._target_approach(obs):
             self._change_state(ALIGN, obs)
             return Command()
         return self._plan(obs)
 
-    def _forget_blocked(self, obs):
-        """새 칸 없이 NO_PROGRESS_S가 지나면 막힘 표시와 포기한 칸들을 지우고 처음처럼 다시 본다."""
+    def _has_frontier(self):
+        """지나온 칸 중 안 가 본, 막히지 않은 이웃이 있는 칸이 있는지."""
+        return any(self._new_neighbors(cell) for cell in self.maze.state.visits)
+
+    def _forget_blocked(self, obs, why):
+        """갇힌 것 같으면 막힘 표시와 포기한 칸들을 지우고 처음처럼 다시 본다 (진짜 벽은 다시 막힘)."""
         for cell, value in self.grid.cells.items():
             if value == BLOCKED:
                 self.grid.cells[cell] = UNKNOWN
@@ -455,8 +544,8 @@ class Mission1Logic:
         self._guard_off_cell = None
         self._backtrack = None
         self._new_cell_at = obs.now
-        self._note(f'{obs.now - self.started_at:.0f}s: 새 칸 없이 {NO_PROGRESS_S:.0f}s '
-                   '-> 막힘 표시를 지우고 다시 탐색')
+        self._forgot_at = obs.now
+        self._note(f'{obs.now - self.started_at:.0f}s: {why} -> 막힘 표시를 지우고 다시 탐색')
 
     def _note(self, message):
         """노드 로그 한 줄에 덧붙인다 (같은 step의 앞 내용을 지우지 않게)."""
@@ -590,7 +679,19 @@ class Mission1Logic:
         drive_origin = center
         self._drive_origin_cell = center
 
-        if distance_to(obs, center) > CELL_CENTER_TOLERANCE_M:
+        recenter = distance_to(obs, center) > CELL_CENTER_TOLERANCE_M
+        if recenter:
+            # 같은 칸에서 가운데 복귀가 이어지면(지나침·왕복) RECENTER_MAX번 뒤에는 건너뛴다.
+            same = self._recenter_cell == current
+            self._recenters = self._recenters + 1 if same else 1
+            self._recenter_cell = current
+            if self._recenters > RECENTER_MAX:
+                recenter = False
+                self._note(f'{current} 가운데 복귀가 {self._recenters}번째 -> 건너뛰고 바로 {path[1]}로')
+        else:
+            self._recenter_cell = None
+            self._recenters = 0
+        if recenter:
             # 격자 가운데에서 벗어나 있으면 먼저 가운데로 돌아간다.
             # (옆 격자로 비스듬히 가다가 장애물 모서리에 걸리지 않게)
             self.target = center
@@ -855,13 +956,26 @@ class Mission1Logic:
         # 지금 돌고 있는 속도로 더 돌 각도를 빼고 판단한다 (빠를수록 일찍 감속·정지).
         predicted = error - self._last_angular * TURN_LEAD_S
 
-        if abs(predicted) < TURN_EXIT_RAD:
+        flipped = self._turn_flipped(predicted)
+        if abs(predicted) < TURN_EXIT_RAD or flipped:
             self._turn_heading = obs.yaw + error
             self._turn_ended_at = obs.now
-            self._change_state(DRIVE, obs)
+            self._change_state(DRIVE, obs, self._flip_reason(error) if flipped else None)
             return self._drive(obs)
 
         return Command(angular=self._turn_toward(predicted, obs))
+
+    def _turn_flipped(self, predicted):
+        """남은 각도의 부호가 TURN_FLIP_MAX번 바뀌었는지 (목표를 넘었다 돌아오기 반복)."""
+        sign = 1 if predicted > 0.0 else -1
+        if self._turn_sign and sign != self._turn_sign:
+            self._turn_flips += 1
+        self._turn_sign = sign
+        return self._turn_flips >= TURN_FLIP_MAX
+
+    def _flip_reason(self, error):
+        self._note(f'회전이 목표를 {self._turn_flips}번 넘나듦 -> 남은 {math.degrees(error):+.1f}도에서 끝냄')
+        return '회전 왕복 제한'
 
     def _drive(self, obs):
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
@@ -1054,19 +1168,22 @@ class Mission1Logic:
         error = math.atan2(math.sin(self._approach_axis - obs.yaw),
                            math.cos(self._approach_axis - obs.yaw))
         predicted = error - self._last_angular * TURN_LEAD_S
-        if abs(predicted) < TURN_TOLERANCE_RAD:
+        flipped = self._turn_flipped(predicted)
+        if abs(predicted) < TURN_TOLERANCE_RAD or flipped:
             self._target_seen_at = obs.now
             self._area_best = 0.0
             self._area_best_at = (obs.x, obs.y)
-            self._change_state(APPROACH, obs)
+            self._approach_start = (obs.x, obs.y)
+            self._area_first = None
+            self._seen_frames = 0
+            self._change_state(APPROACH, obs, self._flip_reason(error) if flipped else None)
             return self._approach(obs)
         return Command(angular=self._turn_toward(predicted, obs))
 
     def _abort_approach(self, obs, reason):
         """접근을 그만두고 칸 가운데로 돌아가 다시 판단한다."""
         self._approach_blocked.add(point_to_cell(*self._approach_origin))
-        self.event = f'접근 중단: {reason}'
-        self._change_state(SCAN, obs)
+        self._change_state(SCAN, obs, f'접근 중단: {reason}')
         return Command()
 
     def _approach(self, obs):
@@ -1075,16 +1192,32 @@ class Mission1Logic:
         elif obs.now - self._target_seen_at > APPROACH_LOST_S:
             return self._abort_approach(obs, '대상을 놓침')
 
+        if self._approach_start is None:
+            self._approach_start = (obs.x, obs.y)
+        self._seen_frames = self._seen_frames + 1 if obs.detected else 0
+        if obs.detected and self._area_first is None:
+            self._area_first = obs.area
         if obs.detected and obs.area > self._area_best * AREA_GROW_RATIO:
             self._area_best = obs.area
             self._area_best_at = (obs.x, obs.y)
+        traveled = math.dist((obs.x, obs.y), self._approach_start)
+        grown = (self._area_first is not None
+                 and self._area_best >= self._area_first * GRAB_MIN_GROWTH)
+        if not grown and traveled >= APPROACH_FALSE_TRAVEL_M:
+            return self._abort_approach(
+                obs, f'{traveled:.2f} m 다가가도 면적이 {self._area_first:.0f} -> '
+                     f'{self._area_best:.0f} (오탐?)')
         stalled = (obs.detected and obs.area >= APPROACH_SLOW_AREA
                    and math.dist((obs.x, obs.y), self._area_best_at) >= APPROACH_STALL_M)
-        if obs.detected and (obs.area >= GRAB_AREA or stalled):
-            if stalled and obs.area < GRAB_AREA:
-                self.event = f'면적이 {obs.area:.0f}에서 안 커짐 -> 큐브가 닿은 것으로 보고 잡기'
+        # 연속으로 보이고, 실제로 다가갔고, 면적이 커졌을 때만 잡는다 (붙박인 빨간 물체 오탐 방지)
+        trusted = (self._seen_frames >= GRAB_MIN_FRAMES and traveled >= GRAB_MIN_TRAVEL_M
+                   and grown)
+        if obs.detected and trusted and (obs.area >= GRAB_AREA or stalled):
+            reason = (f'면적 {obs.area:.0f} >= {GRAB_AREA:.0f}' if obs.area >= GRAB_AREA
+                      else f'면적이 {obs.area:.0f}에서 안 커짐 (큐브가 닿음)')
+            reason += f', 처음 {self._area_first:.0f}, {traveled:.2f} m 다가감'
             self._push_start = (obs.x, obs.y)
-            self._change_state(PUSH, obs)
+            self._change_state(PUSH, obs, reason)
             return self._push(obs)
         if obs.scan is not None and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw)):
             return self._abort_approach(obs, '집게 앞에 장애물')
@@ -1141,13 +1274,20 @@ class Mission1Logic:
             return Command()
         self._grab_sent_at = None
 
-        if obs.holding is False:
-            self._change_state(SEARCH, obs)
+        if obs.holding is None and HOLDING_UNKNOWN == 'camera':
+            # 잡았는지 알려 주는 센서가 없다 -> 큐브가 집게 앞(화면)에 크게 보이는지로 판단한다.
+            held = obs.detected and obs.area >= HELD_MIN_AREA
+            how = f'카메라 확인 (detected={obs.detected}, area={obs.area:.0f}, 기준 {HELD_MIN_AREA:.0f})'
+        elif obs.holding is None:
+            held, how = True, '집게 센서 없음 -> 잡았다고 가정 (HOLDING_UNKNOWN=assume)'
+        else:
+            held, how = obs.holding, f'/gripper/holding={obs.holding}'
+        if not held:
+            self._change_state(SEARCH, obs, f'못 잡음: {how}')
             return Command(gripper=GRIPPER_OPEN)
 
-        # TODO: 집게 상태를 알 수 없으면(None) 잡았다고 가정한다.
         self.phase = RETURN
-        self._change_state(SCAN, obs)
+        self._change_state(SCAN, obs, f'잡음: {how}')
         return Command()
 
     # ------------------------------------------------------------

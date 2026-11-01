@@ -22,6 +22,7 @@ from poli_navigation.mission2_node import (
 from poli_navigation.scan_to_grid import (
     corner_offset,
     odom_to_arena,
+    point_to_cell,
     START_POSE,
     wall_offset,
     wall_yaw_offset,
@@ -116,6 +117,8 @@ class Mission1Node(Node):
         self.last_path = None
 
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        # 상태가 바뀔 때마다 한 줄 (rosbag 기록·분석용, docs/mission_strategy.md)
+        self.state_publisher = self.create_publisher(String, '/mission1/state', 10)
         self.gripper_publisher = self.create_publisher(
             String, '/gripper/command', 10
         )
@@ -355,10 +358,17 @@ class Mission1Node(Node):
                     f'판단 시간 {now - self.scan_entered_at:.2f}s '
                     f'(정지 확인까지 {self.scan_stop_started_at - self.scan_entered_at:.2f}s)')
             elapsed = now - self.logic.started_at if self.logic.started_at is not None else 0.0
-            self.get_logger().info(
-                f'State: {self.logic.state}; t={elapsed:.1f}s; pose=({x:.3f}, {y:.3f}, '
-                f'{math.degrees(yaw):.1f}deg); target={self.logic.target}; '
-                f'reverse={self.logic.reverse}')
+            reason = f' ({self.logic.state_reason})' if self.logic.state_reason else ''
+            line = (
+                f'State: {self.logic.state}; '
+                f'{self.logic.prev_state} -> {self.logic.state}{reason}; '
+                f'phase={self.logic.phase}; t={elapsed:.1f}s; cell={point_to_cell(x, y)}; '
+                f'pose=({x:.3f}, {y:.3f}, {math.degrees(yaw):.1f}deg); '
+                f'target={self.logic.target}; reverse={self.logic.reverse}; '
+                f'vision=(detected={observation.detected}, x_offset={observation.x_offset:+.2f}, '
+                f'area={observation.area:.0f})')
+            self.get_logger().info(line)
+            self.state_publisher.publish(String(data=line))
             self.last_state = self.logic.state
             if self.logic.state == STUCK and self.logic.stop_reason is not None:
                 self.get_logger().warn(

@@ -5,6 +5,7 @@
 #   bash scripts/laptop/go.sh 1          # 임무 1
 #   bash scripts/laptop/go.sh 2 --test   # Foxglove·카메라 영상까지 켬
 #   PI=10.175.8.69 bash scripts/laptop/go.sh   # Pi IP를 직접 줄 때
+#   BAG=1 bash scripts/laptop/go.sh 1    # rosbag도 기록 (Pi ~/poli_bags/, scripts/record_bag.sh)
 #
 # 1) 이전 임무를 끄고 모든 노드를 미리 켠다 (start_mission.sh prepare, 시작 신호 전에는 바퀴·집게 명령 없음)
 # 2) 'Ready'가 나오면 엔터를 기다린다. 엔터 -> 시작 신호(start_mission.sh go)까지 약 0.1 s
@@ -21,11 +22,16 @@ stop_now() {
   echo
   echo "정지 중..."
   pi '~/polly/scripts/stop_mission.sh | tail -1; pkill -f "^tail -n \\+1 -F /home/poli/poli_logs/"'
+  [ "${BAG:-0}" = 1 ] && pi '~/polly/scripts/record_bag.sh stop'
   exit 0
 }
 trap stop_now INT TERM
 
 pi '~/polly/scripts/stop_mission.sh > /dev/null 2>&1'
+# 따로 켜 둔 LiDAR·Foxglove(view_lidar.sh 등)가 있으면 임무 LiDAR가 장치를 못 잡는다 (2026-11-01: health 80008002)
+pi 'pkill -INT -f "^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 (launch sllidar|run foxglove_bridge)" && sleep 2
+    pgrep -x sllidar_node | xargs -r kill -9; pgrep -x foxglove_bridge | xargs -r kill -9; true'
+[ "${BAG:-0}" = 1 ] && pi '~/polly/scripts/record_bag.sh start'
 pi "~/polly/scripts/start_mission.sh $MISSION prepare $MODE" | grep -E "준비|오류|이미|rfkill" || stop_now
 echo "준비 중 (노드 켜는 중)..."
 if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
@@ -37,7 +43,7 @@ read -r -p "준비 완료. 엔터 = 시작 (Ctrl+C = 취소) "
 pi '~/polly/scripts/start_mission.sh go' | grep -v "^$"
 echo "진행 보기 (Ctrl+C = 정지)"
 pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1); tail -n +1 -F "$f"' \
-  | grep --line-buffered -E "Start signal|State:|Phase:|Gripper:|fault|ERROR|지연|timeout" \
+  | grep --line-buffered -E "Start signal|State:|Phase:|Gripper:|fault|ERROR|지연|timeout|출발 자세|막힘 표시|막다른|감시|칸 한 번에" \
   | sed -u -E 's/^\[[a-z_0-9-]+\] \[[A-Z]+\] \[[0-9.]+\] //'
 # Ctrl+C로 위 보기가 끝나면(또는 연결이 끊기면) 임무를 멈춘다
 stop_now

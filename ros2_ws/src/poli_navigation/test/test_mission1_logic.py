@@ -329,6 +329,11 @@ def _approaching_logic(origin=(1.0, 1.0), axis=0.0):
     logic._approach_origin = origin
     logic._target_seen_at = 0.0
     logic._area_best_at = origin
+    # 옆 칸 가운데에서 다가오며 대상을 계속 봤고 면적이 커져 온 상태 (잡기 조건 GRAB_MIN_*)
+    logic._approach_start = (origin[0] - 0.1 * math.cos(axis), origin[1] - 0.1 * math.sin(axis))
+    logic._area_first = 10000.0
+    logic._area_best = 20000.0
+    logic._seen_frames = mission1_logic.GRAB_MIN_FRAMES
     return logic
 
 
@@ -455,7 +460,8 @@ def test_grab_area_pushes_further_and_closes_near_end_of_push():
     assert logic.state == GRASP
     # 닫힘 대기는 grab을 보낸 시각(0.2)부터 센다.
     logic._grasp(Observation(x=1.04, y=1.0, yaw=0.0, now=0.5, gripper_state='closed'))
-    logic._grasp(Observation(x=1.04, y=1.0, yaw=0.0, now=0.65, gripper_state='closed'))
+    logic._grasp(Observation(x=1.04, y=1.0, yaw=0.0, now=0.65, gripper_state='closed',
+                             holding=True))
     assert logic.phase == RETURN
 
 
@@ -488,7 +494,8 @@ def test_grasp_ends_soon_after_gripper_reports_closed():
     logic = _grasping_logic()
     logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=0.7, gripper_state='closed'))
     assert logic.state == GRASP
-    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=0.8, gripper_state='closed'))
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=0.8, gripper_state='closed',
+                             holding=True))
     assert logic.state == SCAN and logic.phase == RETURN
 
 
@@ -503,7 +510,7 @@ def test_grasp_waits_full_time_without_gripper_state():
     logic = _grasping_logic()
     logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=1.0, gripper_state='moving'))
     assert logic.state == GRASP
-    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S))
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S, holding=True))
     assert logic.state == SCAN
 
 
@@ -1261,3 +1268,134 @@ def test_deep_dead_end_run_finishes_faster_than_cell_by_cell():
     assert distance_to_start(robot.cube) < 0.1
     blocked = [cell for cell in robot.visited if not true_grid.is_passable(cell)]
     assert blocked == []
+
+
+# ---------------------------------------------------------------
+# 2026-11-01 실기 영상 대책: 회전 왕복, 가운데 복귀 반복, 오탐 잡기, 잡음 확인, 출발 자세
+# ---------------------------------------------------------------
+
+def test_turn_ends_after_repeated_overshoot():
+    """회전이 목표를 넘었다 돌아오기를 TURN_FLIP_MAX번 하면 남은 각도와 상관없이 끝낸다."""
+    logic = Mission1Logic()
+    x, y = cell_center_m((9, 2))
+    logic.target = cell_center_m((9, 3))
+    logic._drive_heading = math.pi / 2
+    logic.state = TURN
+    logic.state_started_at = 0.0
+    for i in range(mission1_logic.TURN_FLIP_MAX):
+        # 목표(90도) 양쪽으로 20도씩 넘나든다 (TURN_EXIT_RAD 10도보다 큼)
+        yaw = math.radians(110.0 if i % 2 == 0 else 70.0)
+        logic._turn(Observation(x=x, y=y, yaw=yaw, now=0.1 * i))
+        assert logic.state == TURN
+    # 한 번 더 반대쪽으로 넘으면 부호가 TURN_FLIP_MAX번 바뀐 것
+    last = mission1_logic.TURN_FLIP_MAX - 1
+    yaw = math.radians(70.0 if last % 2 == 0 else 110.0)
+    logic._turn(Observation(x=x, y=y, yaw=yaw, now=1.0))
+    assert logic.state == DRIVE
+    assert logic.state_reason == '회전 왕복 제한'
+
+
+def test_recenter_is_skipped_after_repeating_in_same_cell():
+    """같은 칸에서 가운데 복귀가 RECENTER_MAX번 넘게 이어지면 건너뛰고 다음 칸으로 간다."""
+    logic = Mission1Logic()
+    logic.grid.mark_blocked((9, 3))
+    cx, cy = cell_center_m((9, 2))
+    obs = Observation(x=cx, y=cy + 0.17, yaw=math.pi / 2, now=0.0)  # 가운데에서 17 cm
+    logic.step(obs)
+    for _ in range(mission1_logic.RECENTER_MAX):
+        logic._plan(obs)
+        assert logic.target == (cx, cy)
+    logic._plan(obs)
+    assert logic.target != (cx, cy)
+    # 가운데에서 계획하면 다시 센다
+    logic._plan(Observation(x=cx, y=cy, yaw=math.pi / 2, now=1.0))
+    assert logic._recenters == 0
+
+
+def test_fixed_red_object_that_does_not_grow_is_not_grabbed():
+    """화면에 붙박인 빨간 물체(면적이 안 커짐)는 잡지 않고, 충분히 가도 그대로면 접근을 그만둔다."""
+    logic = _approaching_logic()
+    logic._approach_start = (1.0, 1.0)
+    logic._area_first = None
+    logic._area_best = 0.0
+    x = 1.0
+    for i in range(20):
+        x += 0.02
+        logic._approach(Observation(x=x, y=1.0, yaw=0.0, now=0.05 * i, detected=True,
+                                    area=GRAB_AREA + 1000.0))
+        if logic.state != APPROACH:
+            break
+    assert logic.state == SCAN
+    assert '오탐' in logic.state_reason
+    assert GRIPPER_GRAB not in [logic._grab_sent_at]
+
+
+def test_single_frame_detection_does_not_grab():
+    """대상이 잠깐(GRAB_MIN_FRAMES 미만) 보인 것으로는 잡지 않는다."""
+    logic = _approaching_logic()
+    logic._seen_frames = 0
+    logic._approach(Observation(x=1.0, y=1.0, yaw=0.0, now=0.0, detected=True, area=GRAB_AREA))
+    assert logic.state == APPROACH
+
+
+def test_grasp_without_holding_sensor_checks_camera():
+    """/gripper/holding이 없으면 닫은 뒤 큐브가 화면에 크게 보여야 잡은 것 (HOLDING_UNKNOWN='camera')."""
+    logic = _grasping_logic()
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S, detected=True,
+                             area=mission1_logic.HELD_MIN_AREA + 1.0))
+    assert logic.phase == RETURN and logic.state == SCAN
+    assert '카메라' in logic.state_reason
+
+    logic = _grasping_logic()
+    command = logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S))
+    assert logic.phase == EXPLORE and logic.state == SEARCH
+    assert command.gripper == GRIPPER_OPEN
+
+
+def test_grasp_assume_mode_keeps_old_behavior(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'HOLDING_UNKNOWN', 'assume')
+    logic = _grasping_logic()
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S))
+    assert logic.phase == RETURN
+
+
+def test_start_wall_check_ok_at_start_pose_and_warns_when_turned():
+    """(9,1)에서 위를 보면 오른쪽·뒤 외벽이 약 0.2 m. 반대로 놓으면 경고."""
+    x, y, yaw = START_POSE
+    scan = simulate_scan(GridMap(), (x, y, yaw))
+    assert mission1_logic.start_wall_check(scan).startswith('출발 자세 확인 OK')
+    scan = simulate_scan(GridMap(), (x, y, yaw + math.pi))
+    assert mission1_logic.start_wall_check(scan).startswith('⚠️')
+
+
+def test_state_change_records_previous_state_and_reason():
+    logic = _grasping_logic()
+    logic._grasp(Observation(x=1.0, y=1.0, yaw=0.0, now=GRASP_WAIT_S, holding=True))
+    assert logic.prev_state == GRASP
+    assert logic.state_reason.startswith('잡음')
+
+
+def test_closed_area_clears_blocked_cells_without_waiting():
+    """지나온 칸 어디에도 안 가 본 빈 이웃이 없으면(지도상 닫힘) 40초를 기다리지 않고 지운다 (10초에 한 번)."""
+    logic = Mission1Logic(point_symmetry=False)
+    x, y, yaw = START_POSE
+    logic.step(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    # (9,1)~(9,2)만 지나왔고 둘레가 다 막힘 (2026-11-01 연습장처럼 출발 영역이 닫힘)
+    logic.maze.observe((9, 2), yaw)
+    for cell in ((8, 1), (8, 2), (9, 3)):
+        logic.grid.mark_blocked(cell)
+    assert not logic._has_frontier()
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((8, 1), (8, 2), (9, 3)):
+        true_grid.mark_blocked(cell)
+    x2, y2 = cell_center_m((9, 2))
+    scan = simulate_scan(true_grid, (x2, y2, yaw))
+    logic.state, logic.state_started_at = SCAN, 0.0
+    logic._scan(Observation(x=x2, y=y2, yaw=yaw, now=1.0, scan=scan))
+    assert '닫힌 영역' in logic.event
+    assert logic._forgot_at == 1.0
+    # 진짜 벽이면 다시 막힘이 되고, 10초 안에는 또 지우지 않는다
+    logic.event = None
+    logic.state, logic.state_started_at = SCAN, 0.0
+    logic._scan(Observation(x=x2, y=y2, yaw=yaw, now=5.0, scan=scan))
+    assert logic._forgot_at == 1.0
