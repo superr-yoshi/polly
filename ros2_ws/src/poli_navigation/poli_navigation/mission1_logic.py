@@ -193,6 +193,10 @@ CHAIN_CHECK_CONE_RAD = math.radians(8.0)
 # 통로 옆 상자 면(±0.2 m, 좁은 통로·로봇이 비켜 있으면 더 안쪽)은 빠진다 (2026-10-31 실기: 옆면으로 멈춤)
 CHAIN_GUARD_HALF_WIDTH_M = 0.10
 CHAIN_GUARD_RANGE_M = 0.6
+# 회전이 덜 끝났을 때는 앞 벽 감시를 하지 않는다: 빨리 도는 동안 찍힌 스캔은 한 바퀴(0.1 s) 동안 20도 가까이
+# 비틀려 옆 상자 모서리가 진행선 위로 온다 (2026-11-01 20:25 실기: (9,2)에서 157도로 아직 돌며 '앞에 벽' 급정지)
+GUARD_MAX_TURN_RATE = 0.8                 # rad/s
+GUARD_MAX_HEADING_RAD = math.radians(20.0)  # 진행 방향과 로봇 방향 차이
 # 2026-11-01: 위 앞 벽 감시를 한 칸 전진에도 쓴다 (꺼 둔 DRIVE_BLOCK_CHECK 대신, 상대 로봇이 앞 칸에 들어옴).
 # 서서 본 스캔에는 빈칸인데 감시만 계속 멈추면(같은 목표 칸 연속 이 횟수) 그 목표에서는 감시를 끈다
 # (같은 계획·정지 무한 반복 방지). TODO_MEASURE: 실기에서 한 칸 주행이 엉뚱하게 서는지 확인
@@ -401,6 +405,7 @@ class Mission1Logic:
         self._guard_stop_cell = None
         self._guard_stops = 0
         self._guard_off_cell = None
+        self._guard_ahead = None
         # 막다른 길에서 되돌아 나오는 경로 (지나온 칸, 끝 = 안 가 본 이웃이 있는 칸). 없으면 None
         self._backtrack = None
         # 지금 직선 구간 끝에서 곡선으로 꺾을 계획 (_arc_plan). 없으면 None
@@ -468,6 +473,8 @@ class Mission1Logic:
         self._remember_cube(obs)
 
         command = self._check_dropped(obs)
+        if command is None:
+            command = self._check_trapped(obs)
         if command is None:
             command = self._run_state(obs)
 
@@ -539,17 +546,32 @@ class Mission1Logic:
         if not self._start_checked:
             self._start_checked = True
             self._note(start_wall_check(obs.scan))
-        if self.phase == EXPLORE and self.cube is None:
-            if obs.now - self._new_cell_at > NO_PROGRESS_S:
-                self._forget_blocked(obs, f'새 칸 없이 {NO_PROGRESS_S:.0f}s')
-            elif (not self._has_frontier()
-                  and obs.now - self._forgot_at >= FORGET_MIN_INTERVAL_S):
-                self._forget_blocked(obs, '지도상 갈 곳 없음 (닫힌 영역)')
         self._map_scan(obs.scan, (obs.x, obs.y, obs.yaw))
         if self._target_approach(obs):
             self._change_state(ALIGN, obs)
             return Command()
         return self._plan(obs)
+
+    def _check_trapped(self, obs):
+        """
+        갇힌 것 같으면 막힘 표시를 지우고 멈춰 서서 다시 본다 (탐색 중, 큐브 위치를 모를 때).
+
+        2026-11-01 20:25 실기: 주행 중 판단(연습 모드)은 서서 스캔(SCAN)하지 않아, SCAN에만 있던 이 검사가
+        한 번도 돌지 않고 닫힌 영역 안 두 칸을 30초 넘게 오갔다(방향 바꿀 때마다 급정지). 그래서 매 step 본다.
+        """
+        if self.phase != EXPLORE or self.cube is not None or self.state not in (SCAN, TURN, DRIVE):
+            return None
+        if obs.now - self._forgot_at < FORGET_MIN_INTERVAL_S:
+            return None
+        if obs.now - self._new_cell_at > NO_PROGRESS_S:
+            why = f'새 칸 없이 {NO_PROGRESS_S:.0f}s'
+        elif not self._has_frontier():
+            why = '지도상 갈 곳 없음 (닫힌 영역)'
+        else:
+            return None
+        self._forget_blocked(obs, why)
+        self._change_state(SCAN, obs, why)
+        return Command()
 
     def _has_frontier(self):
         """지나온 칸 중 안 가 본, 막히지 않은 이웃이 있는 칸이 있는지."""
@@ -582,10 +604,15 @@ class Mission1Logic:
         돌아감, 주행 중 스캔으로는 STUCK·왕복). 미로는 이웃 칸만 쓰고, 먼 칸은 '모름'으로 두었다가
         옆에 가서 직접 본다. 시뮬레이션 규정 예시 63.4 s -> 63.5 s로 시간 차이 없음.
         """
+        visits = self.maze.state.visits
         for cell, state in neighbor_states(scan, pose, center).items():
             if not self.grid.in_bounds(cell):
                 continue
             if state == BLOCKED:
+                # 로봇이 실제로 지나온 칸은 벽일 수 없다 (2026-11-01 실기: 출발 칸 (9,1)이 막힘으로 찍혀
+                # 닫힌 영역이 됨). 상대 로봇이 서 있는 경우는 주행 중 앞 벽 감시가 막는다.
+                if cell in visits:
+                    continue
                 self.grid.mark_blocked(cell)
             else:
                 self.grid.mark_free(cell)
@@ -1077,11 +1104,22 @@ class Mission1Logic:
         target_cell = point_to_cell(*self.target)
         if (not self.reverse and obs.scan is not None and self._drive_heading is not None
                 and target_cell != self._guard_off_cell and self._wall_before_target(obs)):
-            if self._chained:
-                # 여러 칸 한 번에 가는데 앞 칸이 막혀 있었다 -> 멈추고 칸 가운데에서 다시 판단.
+            stop_cell = self._cell_before_wall(obs) if self._chained else None
+            if stop_cell is not None:
+                # 여러 칸 가는 중 앞 칸이 막혀 있었다 -> 그 자리에 급정지하지 않고 벽 바로 앞 칸 가운데를
+                # 새 목표로 해 부드럽게 선다 (2026-11-01 20:25 실기: 0.8 m/s 급정지로 칸을 17 cm 지나쳐 후진)
+                self.target = cell_center_m(stop_cell)
+                target_cell = stop_cell
+                self._chained = False
+                self._note(f'여러 칸 주행 중 앞에 벽 -> {stop_cell} 가운데에서 선다')
+            elif self._chained:
+                # 벽 앞 칸까지 멈출 거리가 안 된다 -> 바로 멈추고 칸 가운데에서 다시 판단.
                 # 출발 칸에서는 다시 묶지 않는다 (2026-10-31 실기: 같은 계획·정지를 0.3초마다 반복).
                 self._no_chain_from.add(point_to_cell(*self._drive_origin_cell))
                 self.event = '여러 칸 주행 중 앞에 벽 -> 멈추고 다시 판단'
+                self._chained = False
+                self._change_state(SCAN, obs)
+                return Command()
             else:
                 # 한 칸 주행인데 목표 칸에 무언가 있다 (상대 로봇 등). 서서 본 스캔이 빈칸이라고 하는데
                 # 같은 목표에서 GUARD_REPEAT_MAX번 연속 멈추면 감시를 잘못 본 것으로 보고 그 목표는 감시 끔.
@@ -1096,9 +1134,6 @@ class Mission1Logic:
                 self._chained = False
                 self._change_state(STUCK, obs)
                 return Command()
-            self._chained = False
-            self._change_state(SCAN, obs)
-            return Command()
         # 진행 중 다음 칸에 장애물이 나타나면 멈춘 뒤 다시 계획한다.
         if (DRIVE_BLOCK_CHECK and obs.scan is not None
                 and obs.scan is not self._last_drive_scan):
@@ -1203,6 +1238,27 @@ class Mission1Logic:
         linear = speed if abs(error) < math.radians(45.0) else 0.0
         return Command(linear=-linear if self.reverse else linear, angular=angular)
 
+    def _cell_before_wall(self, obs):
+        """
+        여러 칸 주행 중 앞에 벽(self._guard_ahead, 축 기준 거리)이 보일 때 부드럽게 설 수 있는 칸.
+
+        진행선 위 칸 중 칸 가운데 + 반 칸(앞면)이 벽 앞(여유 5 cm)이고, 지금 속도로 DRIVE_DECEL 감속해
+        가운데에 설 수 있는 가장 먼 칸. 없으면 None (바로 멈춘다).
+        """
+        if self._guard_ahead is None or not self.path:
+            return None
+        cos_h, sin_h = math.cos(self._drive_heading), math.sin(self._drive_heading)
+        braking = self._last_linear ** 2 / (2.0 * DRIVE_DECEL)
+        best = None
+        for cell in self.path:
+            cx, cy = cell_center_m(cell)
+            along = (cx - obs.x) * cos_h + (cy - obs.y) * sin_h
+            if along < braking or along + CELL_SIZE_M / 2.0 > self._guard_ahead + 0.05:
+                continue
+            if best is None or along > best[0]:
+                best = (along, cell)
+        return None if best is None else best[1]
+
     def _wall_before_target(self, obs):
         """
         두 칸 주행 중 목표 칸 가운데보다 앞에 벽이 보이는지 (두 번째 칸이 막혀 있었다).
@@ -1210,8 +1266,14 @@ class Mission1Logic:
         목표 칸 너머 벽(막다른 칸)은 목표 가운데에서 0.2 m 뒤라 멈추지 않는다.
         2026-10-31 실기: 집게 앞 20 cm만 보고 멈추니 막다른 칸 (7,2)에 다 와서 너머 벽에 섰다.
         """
+        heading_error = math.atan2(math.sin(self._drive_heading - obs.yaw),
+                                   math.cos(self._drive_heading - obs.yaw))
+        if (abs(self._last_angular) > GUARD_MAX_TURN_RATE
+                or abs(heading_error) > GUARD_MAX_HEADING_RAD):
+            return False
         ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), self._drive_heading,
                               CHAIN_GUARD_HALF_WIDTH_M)
+        self._guard_ahead = ahead
         if ahead is None or ahead > CHAIN_GUARD_RANGE_M:
             return False
         dx, dy = self.target[0] - obs.x, self.target[1] - obs.y

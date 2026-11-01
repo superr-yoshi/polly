@@ -756,7 +756,11 @@ def test_explore_chains_two_cells_when_second_cell_scores_lower():
 
 
 def test_two_cell_drive_stops_when_wall_appears_ahead():
-    """두 칸 한 번에 가다가 두 번째 칸이 막혀 앞에 벽이 보이면 멈추고 다시 판단한다."""
+    """
+    여러 칸 가다가 앞 칸이 막혀 벽이 보이면 그 자리에 급정지하지 않고 벽 바로 앞 칸 가운데에서 선다.
+
+    (2026-11-01 20:25 실기: 0.8 m/s 급정지로 칸을 17 cm 지나쳐 후진했다)
+    """
     logic = Mission1Logic()
     logic.grid.mark_free((9, 2))
     x, y, yaw = START_POSE
@@ -767,6 +771,14 @@ def test_two_cell_drive_stops_when_wall_appears_ahead():
     true_grid.mark_blocked((9, 3))
     pose = (x, cell_center_m((9, 3))[1] - 0.2 - 0.17 - 0.10, yaw)  # 집게 끝이 벽 10 cm 앞
     obs = Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0, scan=simulate_scan(true_grid, pose))
+    logic._drive(obs)
+    assert logic.state == DRIVE
+    assert logic.target == cell_center_m((9, 2)) and not logic._chained
+    # 빨리 달리고 있어 그 칸까지 멈출 거리가 안 되면 바로 멈추고 다시 판단한다
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=2.0))
+    logic.state = DRIVE
+    logic._last_linear = 0.8
+    obs = Observation(x=pose[0], y=pose[1], yaw=yaw, now=3.0, scan=simulate_scan(true_grid, pose))
     assert logic._drive(obs) == Command()
     assert logic.state == SCAN
 
@@ -851,6 +863,7 @@ def test_no_repeated_chain_after_wall_stop():
     true_grid = GridMap()
     true_grid.mark_blocked((9, 3))
     pose = (x, cell_center_m((9, 3))[1] - 0.2 - 0.17 - 0.10, yaw)
+    logic._last_linear = 0.8   # 벽 앞 칸까지 멈출 거리가 안 됨 -> 바로 멈춤
     logic._drive(Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0,
                              scan=simulate_scan(true_grid, pose)))
     assert logic.state == SCAN
@@ -1034,6 +1047,7 @@ def test_maze_stops_when_all_neighbors_are_blocked():
     logic.grid.mark_blocked((8, 1))
     x, y, yaw = START_POSE
     obs = Observation(x=x, y=y, yaw=yaw, now=0.0)
+    logic._forgot_at = 0.0   # 닫힌 영역 재확인(10초에 한 번)과 섞이지 않게
     logic.step(obs)
     assert logic._plan(obs) == Command()
     assert logic.state == STUCK
@@ -1252,7 +1266,7 @@ def test_no_progress_clears_false_blocked_cells():
     logic.state = SCAN
     logic.state_started_at = 0.0
     now = mission1_logic.NO_PROGRESS_S + 1.0
-    logic._scan(Observation(x=x, y=y, yaw=yaw, now=now, scan=scan))
+    logic.step(Observation(x=x, y=y, yaw=yaw, now=now, scan=scan))
     assert logic.grid.get((5, 5)) != BLOCKED
     assert '막힘 표시를 지우고' in logic.event
 
@@ -1391,14 +1405,16 @@ def test_closed_area_clears_blocked_cells_without_waiting():
         true_grid.mark_blocked(cell)
     x2, y2 = cell_center_m((9, 2))
     scan = simulate_scan(true_grid, (x2, y2, yaw))
-    logic.state, logic.state_started_at = SCAN, 0.0
-    logic._scan(Observation(x=x2, y=y2, yaw=yaw, now=1.0, scan=scan))
+    # 주행 중 판단(연습 모드)이면 서서 스캔하지 않으므로 달리는 중(DRIVE)에도 검사한다 (2026-11-01 20:25 실기)
+    logic.state, logic.state_started_at = DRIVE, 0.0
+    logic.step(Observation(x=x2, y=y2, yaw=yaw, now=1.0, scan=scan))
     assert '닫힌 영역' in logic.event
     assert logic._forgot_at == 1.0
+    assert logic.state == SCAN   # 멈춰 서서 다시 본다
     # 진짜 벽이면 다시 막힘이 되고, 10초 안에는 또 지우지 않는다
+    logic._scan(Observation(x=x2, y=y2, yaw=yaw, now=1.2, scan=scan))
     logic.event = None
-    logic.state, logic.state_started_at = SCAN, 0.0
-    logic._scan(Observation(x=x2, y=y2, yaw=yaw, now=5.0, scan=scan))
+    logic.step(Observation(x=x2, y=y2, yaw=yaw, now=5.0, scan=scan))
     assert logic._forgot_at == 1.0
 
 
@@ -1481,3 +1497,30 @@ def test_full_run_with_arc_turns_stays_out_of_blocked_cells():
     assert logic.state == DONE
     assert ARC in states
     assert [c for c in robot.visited if not true_grid.is_passable(c)] == []
+
+
+def test_wall_guard_ignored_while_still_turning():
+    """회전이 덜 끝나 빨리 도는 중에는 비틀린 스캔으로 앞 벽을 판단하지 않는다 (2026-11-01 20:25 실기)."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.grid.mark_free((9, 2))
+    x, y, yaw = START_POSE
+    logic._plan(Observation(x=x, y=y, yaw=yaw, now=0.0))
+    logic.state = DRIVE
+    true_grid = GridMap(use_point_symmetry=False)
+    true_grid.mark_blocked((9, 3))
+    pose = (x, cell_center_m((9, 3))[1] - 0.2 - 0.17 - 0.10, yaw)
+    logic._last_angular = 2.5
+    logic._drive(Observation(x=pose[0], y=pose[1], yaw=yaw, now=1.0,
+                             scan=simulate_scan(true_grid, pose)))
+    assert logic._chained   # 감시하지 않았다 (목표 그대로)
+
+
+def test_visited_cell_is_never_marked_blocked():
+    """지나온 칸은 스캔이 막힘이라고 해도 막힘으로 찍지 않는다 (출발 칸이 막힘으로 찍혀 닫힌 영역이 됨)."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.maze.observe((9, 2), math.pi / 2)
+    true_grid = GridMap(use_point_symmetry=False)
+    true_grid.mark_blocked((9, 1))   # 스캔에는 막힘으로 보이는 경우
+    x, y = cell_center_m((9, 2))
+    logic._map_scan(simulate_scan(true_grid, (x, y, math.pi / 2)), (x, y, math.pi / 2))
+    assert logic.grid.get((9, 1)) != BLOCKED
