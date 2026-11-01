@@ -30,6 +30,8 @@ def main():
     start = time.monotonic()
     last_send = 0.0
     last_status = None
+    last_enc = None      # (millis, left, right)
+    last_print = 0.0
     buf = b''
     try:
         while time.monotonic() - start < seconds:
@@ -41,10 +43,20 @@ def main():
             while b'\n' in buf:
                 line, buf = buf.split(b'\n', 1)
                 pkt = parser.feed(line)
-                if isinstance(pkt, EncPacket) and pkt.status != last_status:
+                if not isinstance(pkt, EncPacket):
+                    continue
+                if pkt.status != last_status:
                     name = MOTOR_STATUS_NAMES.get(pkt.status, '?')
-                    print(f'{now - start:6.2f}s  status {pkt.status} {name}', flush=True)
+                    print(f'\n{now - start:6.2f}s  status {pkt.status} {name}', flush=True)
                     last_status = pkt.status
+                # 바퀴 속도 (tick/s): 막힘 기준은 100 tick/s 미만 (거의 완전히 멈춤)
+                if last_enc is not None and pkt.millis > last_enc[0] and now - last_print > 0.2:
+                    dt = (pkt.millis - last_enc[0]) / 1000.0
+                    left = (pkt.left - last_enc[1]) / dt
+                    right = (pkt.right - last_enc[2]) / dt
+                    print(f'\r  왼쪽 {left:6.0f}  오른쪽 {right:6.0f} tick/s   ', end='', flush=True)
+                    last_print = now
+                last_enc = (pkt.millis, pkt.left, pkt.right)
     except KeyboardInterrupt:
         print('중단', flush=True)
     finally:
