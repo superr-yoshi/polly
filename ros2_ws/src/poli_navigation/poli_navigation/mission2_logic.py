@@ -7,9 +7,15 @@ ROS2와 무관한 순수 Python 모듈이다.
 
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
-  -> PUSH(밀어 넣으며 닫기) -> GRASP -> HOLD
+  -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(중앙에서 떨어진 원 위로 빠져서 지키기)
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
   + 언제나 탈락선 감시 (RETREAT)
+
+GUARD (2026-11-01 팀 결정 "빠르게 잡고 도망"):
+  잡으면 중앙(상대가 모이는 곳)에서 GUARD_RADIUS_M 떨어진 원 위, 우리 출발 쪽으로 천천히 빠진다.
+  거기서 서 있다가 LiDAR에 상대가 가까워지면 원을 따라 상대 반대쪽으로 피한다.
+  차체가 약해 부딪히지 않는 것이 우선이고, 큐브가 빠지지 않게 느리게·부드럽게 움직인다.
+  원은 탈락선에서 충분히 떨어져 있고, 원을 따라 움직이므로 바깥(탈락선) 쪽으로 피하지 않는다.
 
 좌표:
 - 경기장 좌표(m), 왼쪽 아래 모서리가 (0, 0)
@@ -144,6 +150,40 @@ START_PIVOT = False
 PIVOT_DECEL = 10.0                   # rad/s^2, 목표각 앞에서 일정하게 감속 (임무 1 TURN_DECEL과 같음)
 PIVOT_DONE_RAD = math.radians(4.0)   # 남은 각도가 이 안이면 직진 시작 (나머지는 직진하며 맞춤)
 
+# 잡은 뒤 지키기 (GUARD). False면 예전처럼 잡은 자리에 서 있는다 (HOLD).
+GUARD_ENABLED = True
+# 지키는 원의 반지름 (중앙에서). 정면 방향이면 탈락선까지 0.6 m, 대각선이면 0.83 m 남는다.
+# TODO_MEASURE: 연습장에서 상대 로봇 접근을 보고 조정 (제출 전에 확정, 경기장 공개 후 수정 금지)
+GUARD_RADIUS_M = 0.8
+# 처음 빠지는 방향 (중앙 기준). 우리 출발 위치 쪽 대각선 = 상대가 출발하지 않는 쪽.
+GUARD_HOME_ANGLE = math.atan2(START_POSE[1] - CENTER_M[1], START_POSE[0] - CENTER_M[0])
+# 큐브를 잡고 움직일 때 속도·가감속·회전 (빠르거나 급하면 큐브가 빠진다). TODO_MEASURE
+GUARD_SPEED = 0.3
+# 잡자마자 원 위 처음 점까지 빠질 때만 (상대가 중앙에 오기 전에 벗어나기, 2026-11-01).
+# 정격 근처(0.8 m/s, hardware.yaml max_linear)는 큐브를 끌면 속도가 흔들리고, 가감속 0.6으로는
+# 0.8 m 안에서 0.69 m/s 넘게 내지도 못한다. 0.5면 0.3보다 약 0.8 s 빠르다.
+# TODO_MEASURE: 큐브를 잡고 0.5 m/s로 후진했다 서도 빠지지 않는지 확인
+GUARD_ESCAPE_SPEED = 0.5
+GUARD_ACCEL = 0.6
+GUARD_HEADING_GAIN = 2.0
+GUARD_MAX_ANGULAR = 1.0
+# 목표 점에서 이 안이면 선다
+GUARD_ARRIVE_M = 0.08
+# 앞·뒤 중 덜 도는 쪽으로 간다. 지금 방향을 바꾸려면 이만큼 더 틀어져야 한다 (앞뒤 왔다 갔다 방지).
+GUARD_REVERSE_HYSTERESIS_RAD = math.radians(20.0)
+# 상대가 이 거리 안으로 오면 피하기 시작하고, DODGE_CLEAR_M 밖으로 가면 그 자리에 선다.
+DODGE_START_M = 0.7
+DODGE_CLEAR_M = 0.9
+# 피할 때 원 위에서 한 번에 앞서 보는 각도 (원을 따라가도록 목표 점을 조금씩 옮긴다)
+DODGE_ARC_STEP_RAD = 0.5
+# 상대가 중앙에서 이보다 가까우면 원 위 방향을 알 수 없어 피하던 방향을 그대로 쓴다.
+DODGE_CENTER_M = 0.2
+# 가는 방향 ±GUARD_BLOCK_RAD 안, 이 거리 + 지금 속도로 서는 거리 안에 상대가 있으면
+# 전진·후진을 멈춘다 (들이받지 않기). 서 있으면 0.3 m, 0.3 m/s면 약 0.42 m, 0.5 m/s면 약 0.58 m.
+# (로봇 중심 ~ 상대 로봇 표면. 우리 차체 앞뒤 끝이 중심에서 약 0.15~0.22 m)
+GUARD_BLOCK_M = 0.3
+GUARD_BLOCK_RAD = math.radians(60.0)
+
 GRIPPER_OPEN = 'open'
 GRIPPER_GRAB = 'grab'
 GRIPPER_CLOSED = 'closed'
@@ -156,7 +196,10 @@ APPROACH = 'APPROACH'
 PUSH = 'PUSH'
 GRASP = 'GRASP'
 HOLD = 'HOLD'
+GUARD = 'GUARD'
 RETREAT = 'RETREAT'
+# 큐브를 잡고 있는 상태
+HOLDING_STATES = (HOLD, GUARD)
 
 
 @dataclass
@@ -175,6 +218,8 @@ class Observation:
     gripper_state: Optional[str] = None
     # 카메라 결과를 받은 시각. 같은 결과를 두 번 쓰지 않는다. None이면 매번 새 결과로 본다.
     vision_stamp: Optional[float] = None
+    # LiDAR로 찾은 가장 가까운 상대 로봇 (경기장 좌표). 없거나 모르면 None (opponent_detector.py)
+    opponent: Optional[tuple] = None
 
 
 @dataclass
@@ -206,6 +251,16 @@ def distance_to_danger_line(obs):
         obs.y - SAFE_ZONE_MIN_M,
         SAFE_ZONE_MAX_M - obs.y,
     )
+
+
+def guard_point(angle):
+    """중앙에서 GUARD_RADIUS_M 떨어진 원 위의 점."""
+    return (CENTER_M[0] + GUARD_RADIUS_M * math.cos(angle),
+            CENTER_M[1] + GUARD_RADIUS_M * math.sin(angle))
+
+
+def angle_around_center(point):
+    return math.atan2(point[1] - CENTER_M[1], point[0] - CENTER_M[0])
 
 
 def clamp(value, limit):
@@ -257,6 +312,12 @@ class Mission2Logic:
         self._last_linear = 0.0
         self._last_angular = 0.0
         self._last_command_at = None
+        # GUARD: 지금 가려는 원 위 각도(중앙 기준), 피하는 중인지, 피하는 방향, 후진으로 가는지
+        self._guard_angle = GUARD_HOME_ANGLE
+        self._dodging = False
+        self._dodge_direction = 1.0
+        self._guard_reverse = False
+        self._escaping = False
 
     def _change_state(self, new_state, obs):
         if new_state == SEARCH and new_state != self.state:
@@ -297,7 +358,11 @@ class Mission2Logic:
         if dt is None or dt < 0.0 or dt > ACCEL_RESET_S:
             self._last_linear = self._last_angular = 0.0
             dt = ACCEL_RESET_S / 2.0
-        command.linear = ramp(command.linear, self._last_linear, LINEAR_ACCEL, LINEAR_DECEL, dt)
+        accel, decel = LINEAR_ACCEL, LINEAR_DECEL
+        if self.holding_cube():
+            # 큐브를 잡고 있으면 급출발·급제동하지 않는다 (큐브가 빠진다)
+            accel = decel = GUARD_ACCEL
+        command.linear = ramp(command.linear, self._last_linear, accel, decel, dt)
         command.angular = ramp(
             command.angular, self._last_angular, ANGULAR_ACCEL, ANGULAR_ACCEL, dt)
         self._last_linear = command.linear
@@ -316,15 +381,29 @@ class Mission2Logic:
             return None
 
         if margin >= RETREAT_EXIT_MARGIN_M:
-            self._change_state(self._resume_state_after_retreat(), obs)
+            resume = self._resume_state_after_retreat()
+            if resume == GUARD:
+                # 밀려난 자리에서 가까운 원 위 점으로 돌아간다 (처음 빠진 점까지 가로지르지 않는다)
+                self._guard_angle = angle_around_center((obs.x, obs.y))
+                self._dodging = False
+                self._escaping = False
+            self._change_state(resume, obs)
             return None
 
+        if self.holding_cube():
+            # 큐브를 잡고 있으면 천천히, 앞뒤 중 덜 도는 쪽으로 (제자리에서 크게 돌면 큐브가 빠진다)
+            return self._guard_drive(obs, CENTER_M, GUARD_SPEED)
         return self._drive_toward(obs, CENTER_M, APPROACH_FAST_SPEED)
 
     def _resume_state_after_retreat(self):
-        if self._state_before_retreat == HOLD:
-            return HOLD
+        if self._state_before_retreat in HOLDING_STATES:
+            return self._state_before_retreat
         return SEARCH
+
+    def holding_cube(self):
+        if self.state == RETREAT:
+            return self._state_before_retreat in HOLDING_STATES
+        return self.state in HOLDING_STATES
 
     def _run_state(self, obs):
         handlers = {
@@ -336,6 +415,7 @@ class Mission2Logic:
             PUSH: self._push,
             GRASP: self._grasp,
             HOLD: self._hold,
+            GUARD: self._guard,
         }
         return handlers[self.state](obs)
 
@@ -553,15 +633,91 @@ class Mission2Logic:
             return Command(gripper=GRIPPER_OPEN)
 
         # TODO: 집게 상태를 알 수 없으면(None) 잡았다고 가정한다.
+        if GUARD_ENABLED:
+            self._guard_angle = GUARD_HOME_ANGLE
+            self._dodging = False
+            self._escaping = True
+            self._change_state(GUARD, obs)
+            return Command()
         self._change_state(HOLD, obs)
         return Command()
+
+    def _lost_cube(self, obs):
+        """큐브를 놓쳤으면 집게를 열고 다시 찾는다. 놓치지 않았으면 None."""
+        if obs.holding is not False:
+            return None
+        self._target_seen_at = obs.now
+        self._change_state(SEARCH, obs)
+        return Command(gripper=GRIPPER_OPEN)
 
     def _hold(self, obs):
         # 규정 3.4.7.3: 끝날 때까지 연속으로 오래 확보한 팀이 유리하다.
         # 잡은 뒤에는 움직이지 않고 계속 유지한다.
-        if obs.holding is False:
-            self._target_seen_at = obs.now
-            self._change_state(SEARCH, obs)
-            return Command(gripper=GRIPPER_OPEN)
-
+        lost = self._lost_cube(obs)
+        if lost is not None:
+            return lost
         return Command()
+
+    def _guard(self, obs):
+        """잡은 큐브를 지킨다: 원 위 점으로 가서 서 있고, 상대가 오면 원을 따라 반대쪽으로 피한다."""
+        lost = self._lost_cube(obs)
+        if lost is not None:
+            return lost
+
+        opponent_distance = (math.inf if obs.opponent is None
+                             else math.dist((obs.x, obs.y), obs.opponent))
+        if opponent_distance < DODGE_START_M:
+            self._dodging = True
+        elif opponent_distance > DODGE_CLEAR_M:
+            if self._dodging:
+                # 상대가 멀어졌다. 지금 자리에서 원 위에 선다.
+                self._guard_angle = angle_around_center((obs.x, obs.y))
+            self._dodging = False
+
+        if self._dodging:
+            self._escaping = False
+            own_angle = angle_around_center((obs.x, obs.y))
+            if math.dist(obs.opponent, CENTER_M) > DODGE_CENTER_M:
+                # 원 위에서 상대와 벌어지는 쪽으로 돈다
+                apart = normalize_angle(own_angle - angle_around_center(obs.opponent))
+                if apart != 0.0:
+                    self._dodge_direction = math.copysign(1.0, apart)
+            self._guard_angle = own_angle + self._dodge_direction * DODGE_ARC_STEP_RAD
+
+        goal = guard_point(self._guard_angle)
+        if not self._dodging and distance_to(obs, goal) < GUARD_ARRIVE_M:
+            self._escaping = False
+            return Command()
+        speed = GUARD_ESCAPE_SPEED if self._escaping else GUARD_SPEED
+        return self._guard_drive(obs, goal, speed, obs.opponent)
+
+    def _guard_drive(self, obs, goal, speed, opponent=None):
+        """
+        큐브를 잡은 채 goal로 천천히 간다. 앞·뒤 중 덜 도는 쪽으로 간다.
+
+        잡자마자는 중앙(큐브 쪽)을 보고 있으므로 돌지 않고 후진으로 빠진다.
+        가는 방향 바로 앞에 상대가 있으면 들이받지 않게 멈추고 방향만 맞춘다.
+        """
+        error = heading_error_to(obs, goal)
+        if self._guard_reverse:
+            self._guard_reverse = abs(error) > math.pi / 2 - GUARD_REVERSE_HYSTERESIS_RAD
+        else:
+            self._guard_reverse = abs(error) > math.pi / 2 + GUARD_REVERSE_HYSTERESIS_RAD
+        if self._guard_reverse:
+            error = normalize_angle(error + math.pi)
+
+        remaining = distance_to(obs, goal)
+        speed = min(speed, braking_speed(remaining, self._last_linear, 0.0, GUARD_ACCEL))
+        linear = speed * max(0.0, math.cos(error))
+        if self._guard_reverse:
+            linear = -linear
+        angular = clamp(GUARD_HEADING_GAIN * error, GUARD_MAX_ANGULAR)
+
+        current = abs(self._last_linear)
+        block = GUARD_BLOCK_M + current * MOTOR_LAG_S + current ** 2 / (2.0 * GUARD_ACCEL)
+        if opponent is not None and math.dist((obs.x, obs.y), opponent) < block:
+            heading = obs.yaw + (math.pi if self._guard_reverse else 0.0)
+            toward = math.atan2(opponent[1] - obs.y, opponent[0] - obs.x)
+            if abs(normalize_angle(toward - heading)) < GUARD_BLOCK_RAD:
+                linear = 0.0
+        return Command(linear=linear, angular=angular)

@@ -12,6 +12,7 @@ from poli_navigation.mission2_logic import (
     Observation,
     START_POSE,
 )
+from poli_navigation.opponent_detector import find_opponent
 from poli_navigation.wall_localizer import WallCorrection
 import rclpy
 from rclpy.node import Node
@@ -30,6 +31,9 @@ VISION_TIMEOUT = 0.5
 # s, /gripper/holding(tof_node 약 30 Hz)이 이만큼 끊기면 모름(None)으로 본다 (2026-11-01)
 HOLDING_TIMEOUT = 0.5
 
+# 상대 로봇 위치(LiDAR)가 이 시간(초) 넘게 갱신되지 않으면 모른다고 본다.
+OPPONENT_TIMEOUT = 0.5
+
 # 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
 # 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
 # Mega는 같은 명령을 다시 받아도 목표 각도만 다시 정하므로 안전하다.
@@ -46,7 +50,7 @@ CALLBACK_WARN_S = 0.05
 # /cmd_vel·/gripper/command를 하나도 내지 않는다 (규정 3.5.6, 2026-11-01 팀 결정:
 # 노드를 미리 켜 두고 시작 신호만 보내 엔터 -> 출발 지연을 약 4 s -> 0.1 s로).
 DEFAULT_START_FILE = '/tmp/poli_mission_start'
-MOTION_LOG_STATES = ('TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
+MOTION_LOG_STATES = ('TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT', 'GUARD')
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
@@ -88,6 +92,9 @@ class Mission2Node(Node):
         # 외벽까지 거리(LiDAR)로 odom 위치를 보정한다. (wall_localizer.py)
         self.wall_correction = WallCorrection()
         self.wall_corrected = False
+        # LiDAR로 찾은 가장 가까운 상대 로봇 (opponent_detector.py)
+        self.opponent = None
+        self.opponent_received_at = None
         self.holding = None
         self.holding_received_at = None
         self.gripper_state = None
@@ -170,6 +177,10 @@ class Mission2Node(Node):
         if corrected and not self.wall_corrected:
             self.get_logger().info('Wall correction active')
             self.wall_corrected = True
+        # 상대 위치는 큐브를 잡은 뒤(GUARD)에만 쓴다. 출발·접근 중에는 판단을 늦추지 않게 계산하지 않는다.
+        if self.logic.holding_cube():
+            self.opponent = find_opponent(msg, self.wall_correction.apply(self.odom_pose))
+            self.opponent_received_at = self.now_seconds()
         self.warn_if_slow('scan', started)
 
     def warn_if_slow(self, name, started):
@@ -238,6 +249,9 @@ class Mission2Node(Node):
                      and now - self.holding_received_at <= HOLDING_TIMEOUT else None),
             gripper_state=self.gripper_state,
         )
+        if (self.opponent_received_at is not None
+                and now - self.opponent_received_at <= OPPONENT_TIMEOUT):
+            observation.opponent = self.opponent
 
         vision = self.fresh_vision(now)
         if vision is not None:
@@ -262,17 +276,22 @@ class Mission2Node(Node):
             self.get_logger().info(f'State: {self.logic.state}')
             self.last_state = self.logic.state
 
+        # GUARD는 서 있는 동안 남기지 않는다 (5분 동안 로그가 너무 많아진다)
+        moving = command.linear != 0.0 or command.angular != 0.0
         if (self.logic.state in MOTION_LOG_STATES
+                and (moving or self.logic.state != 'GUARD')
                 and now - self.last_motion_log >= MOTION_LOG_PERIOD):
             self.last_motion_log = now
             target = self.logic.target
             cam_d = '-' if target is None else f'{self.logic._camera_distance(observation):.2f}'
+            opp = observation.opponent
+            opp_text = '-' if opp is None else f'({opp[0]:.2f},{opp[1]:.2f})'
             self.get_logger().info(
                 f'Motion: {self.logic.state} pos=({x:.2f},{y:.2f}) yaw={math.degrees(yaw):.0f} '
                 f'cmd=({command.linear:.2f},{command.angular:+.2f}) '
                 f'odom_w={self.angular_speed:+.2f} '
                 f'cam={observation.detected:d} off={observation.x_offset:+.2f} '
-                f'area={observation.area:.0f} cube_d={cam_d}')
+                f'area={observation.area:.0f} cube_d={cam_d} opp={opp_text}')
 
     def send_gripper(self, command):
         self.gripper_command = command

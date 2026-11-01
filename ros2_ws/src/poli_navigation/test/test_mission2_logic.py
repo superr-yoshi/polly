@@ -17,8 +17,14 @@ from poli_navigation.mission2_logic import (
     GRIPPER_CLOSED,
     GRIPPER_GRAB,
     GRIPPER_OPEN,
+    GUARD,
+    GUARD_ARRIVE_M,
+    GUARD_ESCAPE_SPEED,
+    GUARD_HOME_ANGLE,
+    guard_point,
+    GUARD_RADIUS_M,
+    GUARD_SPEED,
     heading_error_to,
-    HOLD,
     Mission2Logic,
     Observation,
     PUSH,
@@ -104,15 +110,15 @@ def run(logic, robot, max_seconds=60.0, until=None):
 # 전체 흐름
 # ---------------------------------------------------------------
 
-def test_full_run_reaches_hold_near_center():
+def test_full_run_grabs_near_center():
     logic = Mission2Logic()
     robot = SimRobot()
 
-    states = run(logic, robot, until=HOLD)
+    states = run(logic, robot, until=GUARD)
 
-    assert logic.state == HOLD
+    assert logic.state == GUARD
     # 출발 곡선 중에 대상이 보이면 서지 않고 바로 카메라 접근
-    assert states == [DRIVE, APPROACH, PUSH, GRASP, HOLD]
+    assert states == [DRIVE, APPROACH, PUSH, GRASP, GUARD]
 
     # 집는 순간 대상과 가까워야 한다.
     distance = math.hypot(CENTER_M[0] - robot.x, CENTER_M[1] - robot.y)
@@ -193,23 +199,37 @@ def test_never_enters_danger_zone_in_normal_run():
     logic = Mission2Logic()
     robot = SimRobot()
 
-    while robot.now < 60.0 and logic.state != HOLD:
+    while robot.now < 60.0 and logic.state != GUARD:
         robot.apply(logic.step(robot.observe()))
         assert distance_to_danger_line(robot.observe()) > 0.0
 
 
-def test_hold_does_not_move():
+def test_guard_backs_out_to_circle_and_stays():
     logic = Mission2Logic()
     robot = SimRobot()
-    run(logic, robot, until=HOLD)
+    run(logic, robot, until=GUARD)
+    grab_yaw = robot.yaw
 
-    for _ in range(100):
+    # 잡자마자 돌지 않고 후진으로 우리 출발 쪽 원 위 점까지 천천히 빠진다.
+    first = logic.step(robot.observe())
+    assert first.linear <= 0.0
+    commands = []
+    while robot.now < 30.0:
         command = logic.step(robot.observe())
         robot.apply(command)
-        assert command.linear == 0.0
-        assert command.angular == 0.0
+        commands.append(command)
+        assert abs(command.linear) <= GUARD_ESCAPE_SPEED + 1e-9
+        assert distance_to_danger_line(robot.observe()) > 0.4
+    assert logic.state == GUARD
+    assert math.dist((robot.x, robot.y), guard_point(GUARD_HOME_ANGLE)) < GUARD_ARRIVE_M + 0.02
+    # 크게 돌지 않았다 (큐브가 빠지지 않게)
+    assert abs(robot.yaw - grab_yaw) < math.radians(30.0)
 
-    assert logic.state == HOLD
+    # 처음 빠질 때는 GUARD_SPEED보다 빠르게
+    assert max(-c.linear for c in commands) > GUARD_SPEED + 0.1
+
+    # 도착하면 서 있는다.
+    assert all(c.linear == 0.0 and c.angular == 0.0 for c in commands[-20:])
 
 
 # ---------------------------------------------------------------
@@ -221,10 +241,10 @@ def test_search_when_target_not_visible_after_drive():
     # 대상이 중앙에서 옆으로 밀려나 있는 경우 (출발 곡선에서 안 보이는 쪽)
     robot = SimRobot(target=(CENTER_M[0] + 0.5, CENTER_M[1] + 0.5))
 
-    states = run(logic, robot, until=HOLD)
+    states = run(logic, robot, until=GUARD)
 
     assert SEARCH in states
-    assert logic.state == HOLD
+    assert logic.state == GUARD
 
 
 def test_grasp_failed_goes_back_to_search():
@@ -251,17 +271,17 @@ def test_grasp_ends_as_soon_as_gripper_reports_closed():
     started = robot.now
 
     robot.gripper_state = GRIPPER_CLOSED
-    run(logic, robot, max_seconds=started + GRASP_WAIT_S, until=HOLD)
+    run(logic, robot, max_seconds=started + GRASP_WAIT_S, until=GUARD)
 
     # 최대 대기 시간(GRASP_WAIT_S)까지 기다리지 않는다.
-    assert logic.state == HOLD
+    assert logic.state == GUARD
     assert robot.now - started < 0.5
 
 
-def test_lost_target_during_hold_goes_back_to_search():
+def test_lost_target_during_guard_goes_back_to_search():
     logic = Mission2Logic()
     robot = SimRobot()
-    run(logic, robot, until=HOLD)
+    run(logic, robot, until=GUARD)
 
     robot.holding = False
     logic.step(robot.observe())
@@ -272,17 +292,21 @@ def test_lost_target_during_hold_goes_back_to_search():
 def test_retreat_when_pushed_near_elimination_zone():
     logic = Mission2Logic()
     robot = SimRobot()
-    run(logic, robot, until=HOLD)
+    run(logic, robot, until=GUARD)
 
     # 상대에게 밀려서 노란 선 가까이 감
     robot.x, robot.y = 3.15, 1.8
     command = logic.step(robot.observe())
 
     assert logic.state == RETREAT
-    assert command.linear > 0.0 or command.angular != 0.0
+    assert command.linear != 0.0 or command.angular != 0.0
 
-    run(logic, robot, max_seconds=robot.now + 20.0, until=HOLD)
-    assert logic.state == HOLD
+    # 큐브를 잡고 있으므로 천천히 돌아온다.
+    while robot.now < 60.0 and logic.state == RETREAT:
+        command = logic.step(robot.observe())
+        robot.apply(command)
+        assert abs(command.linear) <= GUARD_SPEED + 1e-9
+    assert logic.state == GUARD
     assert distance_to_danger_line(robot.observe()) > 0.15
 
 
@@ -352,9 +376,9 @@ def test_search_finds_target_with_latency_from_any_heading():
             (CENTER_M[0] - 0.5, CENTER_M[1], math.radians(start_deg)))
 
         # 2026-10-31 최저 바퀴 속도 0.25 -> 0.08: 제자리 회전이 느려져 20초 -> 40초
-        states = run(logic, robot, max_seconds=40.0, until=HOLD)
+        states = run(logic, robot, max_seconds=40.0, until=GUARD)
 
-        assert logic.state == HOLD, (start_deg, states)
+        assert logic.state == GUARD, (start_deg, states)
         # 한 번 찾은 대상을 놓쳐서 다시 찾는 일(SEARCH로 되돌아감)이 없어야 한다.
         assert SEARCH not in states[1:], (start_deg, states)
 
@@ -370,3 +394,77 @@ def test_full_run_with_latency_is_fast_and_direct():
     # 시뮬레이션 약 2.35 s (제자리 45도 회전 후 직진은 약 2.8 s, 예전 0.25 m/s 직진은 약 9초)
     assert robot.now < 3.0
     assert math.dist((robot.x, robot.y), CENTER_M) < 0.3
+
+
+# ---------------------------------------------------------------
+# 잡은 뒤 지키기 (GUARD): 상대가 오면 원을 따라 피하기
+# ---------------------------------------------------------------
+
+def guarding_robot():
+    """원 위 처음 점에 서서 지키는 중인 로봇."""
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    run(logic, robot, max_seconds=robot.now + 15.0)
+    assert math.dist((robot.x, robot.y), guard_point(GUARD_HOME_ANGLE)) < GUARD_ARRIVE_M + 0.02
+    return logic, robot
+
+
+def angle_from_center(x, y):
+    return math.atan2(y - CENTER_M[1], x - CENTER_M[0])
+
+
+def test_guard_dodges_along_circle_away_from_opponent():
+    for side in (1.0, -1.0):
+        logic, robot = guarding_robot()
+        # 원 위에서 한쪽(side) 옆으로 0.5 m 떨어진 곳에 상대가 다가와 멈춰 있다.
+        opponent = guard_point(GUARD_HOME_ANGLE + side * 0.6)
+        start_angle = angle_from_center(robot.x, robot.y)
+        moved = False
+        while robot.now < 60.0:
+            obs = robot.observe()
+            obs.opponent = opponent
+            command = logic.step(obs)
+            robot.apply(command)
+            moved = moved or command.linear != 0.0
+            # 원에서 크게 벗어나지 않고, 탈락선에 가까이 가지 않는다
+            assert abs(math.dist((robot.x, robot.y), CENTER_M) - GUARD_RADIUS_M) < 0.25
+            assert distance_to_danger_line(robot.observe()) > 0.3
+        assert moved
+        # 상대 반대쪽으로 원을 따라 돌았고, 피한 뒤에는 멀리 떨어져 서 있다.
+        turned = math.atan2(math.sin(angle_from_center(robot.x, robot.y) - start_angle),
+                            math.cos(angle_from_center(robot.x, robot.y) - start_angle))
+        assert turned * side < 0.0, side
+        assert math.dist((robot.x, robot.y), opponent) > 0.9
+        assert command.linear == 0.0
+
+
+def test_guard_does_not_drive_into_opponent():
+    # 가는 쪽(앞이든 뒤든) 바로 앞에 상대가 있으면 전진·후진하지 않는다 (차체가 약하다).
+    for goal_dx in (0.5, -0.5):
+        logic = Mission2Logic()
+        obs = Observation(x=1.8, y=1.0, yaw=0.0, now=0.0)
+        free = logic._guard_drive(obs, (1.8 + goal_dx, 1.0), GUARD_SPEED)
+        assert free.linear * goal_dx > 0.0
+
+        obs.opponent = (1.8 + 0.28 * math.copysign(1.0, goal_dx), 1.0)
+        blocked = logic._guard_drive(obs, (1.8 + goal_dx, 1.0), GUARD_SPEED, obs.opponent)
+        assert blocked.linear == 0.0
+
+    # 빠르게 가는 중이면 서는 거리만큼 더 일찍 멈춘다 (0.5 m/s, 상대 0.45 m 앞)
+    logic = Mission2Logic()
+    logic._last_linear = GUARD_ESCAPE_SPEED
+    obs = Observation(x=1.8, y=1.0, yaw=0.0, now=0.0, opponent=(2.25, 1.0))
+    assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, obs.opponent).linear == 0.0
+    logic._last_linear = 0.0
+    assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, obs.opponent).linear > 0.0
+
+
+def test_guard_ignores_far_opponent():
+    logic, robot = guarding_robot()
+    for _ in range(40):
+        obs = robot.observe()
+        obs.opponent = (CENTER_M[0] - 1.0, CENTER_M[1] + 1.0)
+        command = logic.step(obs)
+        robot.apply(command)
+        assert command == Command()
