@@ -643,12 +643,7 @@ def test_rolling_decision_keeps_driving_straight_without_stopping(monkeypatch):
     assert command.linear > 0.0
 
 
-def test_rolling_decision_with_turn_stops_and_scans_at_center(monkeypatch):
-    """
-    달리며 판단했는데 꺾어야 하면 그 판단을 버리고 가운데에 서서 스캔한 뒤 정한다.
-
-    (2026-11-01 20:53 실기: 달리며 본 스캔으로 옆 칸을 막힘으로 잘못 보고 막다른 길로 후진했다)
-    """
+def test_rolling_decision_with_turn_stops_and_turns_without_scan_wait(monkeypatch):
     monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     true_grid = GridMap()
     true_grid.mark_blocked((9, 3))
@@ -657,10 +652,10 @@ def test_rolling_decision_with_turn_stops_and_scans_at_center(monkeypatch):
     assert logic.state == DRIVE
     assert logic.target == cell_center_m((9, 2))
     assert logic.grid.get((9, 3)) == BLOCKED
-    # 가운데에 도착하면 서서 스캔한다 (꺾는 판단은 서서 본 스캔으로)
+    # 가운데에 도착하면 SCAN에서 기다리지 않고 바로 회전한다 (2026-11-01 팀: 서서 판단하면 오래 걸림).
     x, y = cell_center_m((9, 2))
     logic.step(Observation(x=x, y=y - 0.02, yaw=math.pi / 2, now=1.05))
-    assert logic.state == SCAN
+    assert logic.state == TURN
 
 
 def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center(monkeypatch):
@@ -1529,15 +1524,3 @@ def test_visited_cell_is_never_marked_blocked():
     x, y = cell_center_m((9, 2))
     logic._map_scan(simulate_scan(true_grid, (x, y, math.pi / 2)), (x, y, math.pi / 2))
     assert logic.grid.get((9, 1)) != BLOCKED
-
-
-def test_rolling_scan_keeps_front_wall_but_not_side_walls(monkeypatch):
-    """달리며 본 스캔으로는 앞 칸 막힘만 남기고 옆 칸 막힘은 남기지 않는다 (서서 본 스캔으로만)."""
-    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
-    true_grid = GridMap()
-    true_grid.mark_blocked((9, 3))
-    true_grid.mark_blocked((8, 2))
-    logic, obs = _rolling_logic(true_grid, 0.06)
-    logic.step(obs)
-    assert logic.grid.get((9, 3)) == BLOCKED
-    assert logic.grid.get((8, 2)) != BLOCKED

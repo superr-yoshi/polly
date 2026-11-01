@@ -109,7 +109,9 @@ CELL_CENTER_TOLERANCE_M = 0.15
 # 조원 A 결정: 주행은 0.25 m/s. 하드웨어가 0.25 m/s 아래로 내지 않으므로
 # 감속(MIN_DRIVE_SPEED)·느린 접근은 실제로는 0.25 m/s가 된다.
 # 2026-10-31 0.6 -> 0.8 (전부 써서 빠르게). hardware.yaml max_linear와 같게. 바퀴 약 235 rpm (정격 250)
-DRIVE_SPEED = 0.8
+# 2026-11-01 0.8 -> 0.6: 여러 칸 직진에서 속도가 붙으면 거리·방향 오차가 커져 옆을 박거나 빗나감 (팀).
+# 10-31 전체 임무 36.6 s 기록도 0.6이었다.
+DRIVE_SPEED = 0.6
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 # 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
 # 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
@@ -657,21 +659,12 @@ class Mission1Logic:
         """
         달리는 중에 다음 칸을 정한다. 직진이면 목표를 바꿔 계속 가고 True.
 
-        달리며 찍은 스캔은 위치·방향이 조금만 틀어져도 옆 칸 상자 모서리가 옆 칸으로 들어와 막힘으로 보인다
-        (2026-11-01 20:53 실기: (9,2)에서 막다른 길로 보고 후진, 0.5 s 뒤 서서 보니 4칸이 뚫려 있었다).
-        그래서 옆 칸 막힘은 남기지 않고, 직진이 아니면 판단을 버리고 가운데에 서서 다시 스캔한다.
+        꺾어야 하면 가운데에 서자마자 (스캔 대기 없이) 돈다 (2026-11-01 팀: 서서 판단하면 너무 오래 걸림).
+        달리며 찍은 스캔에 옆 상자 모서리가 몇 개 걸려 옆 칸을 막힘으로 보던 것(20:53 실기)은
+        scan_to_grid의 막힘 기준을 콘 광선의 25%로 올려 막는다 (예전 3개).
         """
         x, y, yaw = self.scan_pose(obs)
-        before = dict(self.grid.cells)
         self._map_scan(obs.scan, (x, y, yaw), center=self.target)
-        # 앞 칸(진행 방향)은 위치가 앞뒤로 밀려도 판정이 안정적이라 막힘을 남기고, 옆 칸 막힘만 버린다
-        # (앞 벽까지 버리면 앞 벽 감시가 멈춘 뒤 다시 직진 계획을 세워 맴돈다)
-        here = point_to_cell(*self.target)
-        front = (here[0] + round(math.cos(self._drive_heading)),
-                 here[1] + round(math.sin(self._drive_heading)))
-        for cell, value in self.grid.cells.items():
-            if value == BLOCKED and before[cell] != BLOCKED and cell != front:
-                self.grid.cells[cell] = before[cell]
         if self._target_approach(obs, at=self.target, commit=False):
             # 가운데에서 대상에 축 방향으로 다가갈 수 있다 -> 서서 SCAN에서 다시 확인
             self._decided_for = self.target
@@ -697,11 +690,8 @@ class Mission1Logic:
             return True
         (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
          self.state, self.state_started_at, self.stop_reason) = saved
-        self._backtrack = None
-        # 직진이 아니다 (꺾기·후진·막다른 길) -> 가운데에 서서 스캔한 뒤 정한다 (어차피 서야 한다)
         self._decided_for = self.target
-        self._scan_at_arrival = True
-        self.event = '주행 중 판단: 직진 아님 -> 가운데에 서서 스캔'
+        self.event = '주행 중 판단: 가운데에 서서 회전 (판단 대기 없음)'
         return False
 
     def _plan(self, obs):

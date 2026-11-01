@@ -356,3 +356,28 @@ def test_corridor_between_boxes_not_blocked_with_small_pose_error():
             blocked, _ = scan_to_cells(scan, (x, y, yaw))
             assert (8, 3) not in blocked, (cell, dx, dy, dyaw)
             assert (9, 3) in blocked or (7, 3) in blocked
+
+
+def test_neighbor_needs_quarter_of_cone_rays_to_be_blocked():
+    """
+    이웃 칸 막힘은 ±15도 콘 광선의 25% 이상이 가까이 맞아야 한다 (예전 3개).
+
+    2026-11-01 실측: 진짜 벽 방향은 60개 중 52~58개, 뚫린 방향은 0개. 옆 상자 모서리 몇 개로는 막힘이 아니다.
+    """
+    import types
+    from poli_navigation.scan_to_grid import BLOCKED, FREE, neighbor_states
+    n = 720
+    inc = 2 * math.pi / n
+    ranges = [1.0] * n                     # 사방 뚫림 (1 m 너머)
+    # 앞(0도) 콘 끝쪽 4개 광선만 0.3 m에 맞음 (모서리 일부)
+    for k in (26, 27, 28, 29):
+        ranges[n // 2 + k] = 0.3
+    scan = types.SimpleNamespace(ranges=ranges, angle_min=-math.pi + inc / 2, angle_increment=inc,
+                                 range_min=0.05, range_max=12.0)
+    states = neighbor_states(scan, (0.2 + 0.4 * 4, 0.2 + 0.4 * 4, 0.0))
+    assert states[(6, 5)] == FREE
+    # 콘 대부분(40개)이 0.3 m에 맞으면 막힘
+    for k in range(-20, 20):
+        ranges[n // 2 + k] = 0.3
+    states = neighbor_states(scan, (0.2 + 0.4 * 4, 0.2 + 0.4 * 4, 0.0))
+    assert states[(6, 5)] == BLOCKED

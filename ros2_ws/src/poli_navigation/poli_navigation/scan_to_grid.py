@@ -61,6 +61,12 @@ CONE_BLOCK_M = 0.40      # 로봇 중심에서 이 거리 안(이웃 칸 앞쪽 
 CONE_FREE_M = 0.55       # 이보다 멀리 맞은 레이저는 이웃 칸을 지나간 것
 CONE_SKIP_M = 0.12       # 이보다 가까운 점은 로봇 자기 부품으로 보고 버린다
 CONE_MIN_RAYS = 3
+# 이웃 칸 막힘/빈칸 판단 기준 (2026-11-01 팀: "벽이라고 인식하는 기준값을 올리자").
+# 실측 (RPLIDAR C1, 0.5도 간격, ±15도에 60개): 진짜 벽 방향은 가까움 52~58개, 뚫린 방향은 0개.
+# 예전 기준(가까움 3개)은 위치·방향이 조금만 틀어져 옆 상자 모서리가 몇 개 걸려도 막힘이었다.
+# 해상도(실물 60개, 시뮬레이션 30개)와 상관없게 콘 안 광선 수에 대한 비율로 본다.
+NEIGHBOR_BLOCK_FRACTION = 0.25   # 가까움이 이 비율 이상이면 막힘
+NEIGHBOR_FREE_FRACTION = 0.10    # 가까움이 이 비율 이하이고 먼 광선이 CONE_MIN_RAYS 이상이면 빈칸
 # 칸 가운데에 멈췄을 때 가까운 벽(칸 경계, 중심에서 0.2 m)까지 거리로 위치를 바로잡는다 (2026-10-31 팀 요청).
 WALL_FIT_MIN_M = 0.10
 WALL_FIT_MAX_M = 0.32
@@ -282,14 +288,15 @@ def neighbor_states(scan, robot_pose, center=None):
     states = {}
     for phi, (dx, dy) in ((0.0, (1, 0)), (math.pi / 2, (0, 1)),
                           (math.pi, (-1, 0)), (-math.pi / 2, (0, -1))):
-        near = far = 0
+        near = far = in_cone = 0
         for i, distance in enumerate(scan.ranges):
+            angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+            if abs(math.atan2(math.sin(angle - phi), math.cos(angle - phi))) > CONE_HALF_RAD:
+                continue
+            in_cone += 1
             if not math.isfinite(distance):
                 continue
             if not scan.range_min <= distance <= scan.range_max:
-                continue
-            angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
-            if abs(math.atan2(math.sin(angle - phi), math.cos(angle - phi))) > CONE_HALF_RAD:
                 continue
             hit_x = laser_x + distance * math.cos(angle)
             hit_y = laser_y + distance * math.sin(angle)
@@ -302,9 +309,9 @@ def neighbor_states(scan, robot_pose, center=None):
             elif along >= CONE_FREE_M:
                 far += 1
         neighbor = (cell[0] + dx, cell[1] + dy)
-        if near >= CONE_MIN_RAYS:
+        if near >= max(CONE_MIN_RAYS, NEIGHBOR_BLOCK_FRACTION * in_cone):
             states[neighbor] = BLOCKED
-        elif near == 0 and far >= CONE_MIN_RAYS:
+        elif near <= NEIGHBOR_FREE_FRACTION * in_cone and far >= CONE_MIN_RAYS:
             states[neighbor] = FREE
     return states
 
