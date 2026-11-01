@@ -82,6 +82,10 @@ SEARCH_SPEED = 1.5
 # 2026-11-01 실기: 큐브가 오른쪽 44도에 있었는데 왼쪽으로만 돌아 300도(5.8 s) 걸렸다.
 SEARCH_SWEEP_RAD = math.radians(50.0)
 SEARCH_SWEEP_DONE_RAD = math.radians(5.0)
+# 계속 돌며 한 바퀴를 다 봐도 없으면, 중앙에서 SEARCH_CENTER_M 거리까지 다가가 다시 돈다 (RECENTER).
+# 카메라는 약 1.4 m(면적 300)까지만 큐브를 알아본다. 탈락한 팀의 큐브는 중앙으로 돌아온다(3.4.6).
+SEARCH_CENTER_M = 1.0
+RECENTER_SPEED = 0.4
 
 # 카메라: x_offset 1.0 = 화면 끝 = 약 33도
 CAMERA_HALF_FOV_RAD = math.radians(33.0)
@@ -220,6 +224,7 @@ GRASP = 'GRASP'
 HOLD = 'HOLD'
 GUARD = 'GUARD'
 RETREAT = 'RETREAT'
+RECENTER = 'RECENTER'
 BACKOFF = 'BACKOFF'
 # 큐브를 잡고 있는 상태
 HOLDING_STATES = (HOLD, GUARD)
@@ -330,6 +335,9 @@ class Mission2Logic:
         self._search_direction = 1.0
         self._search_start_yaw = 0.0
         self._search_step = 2
+        # 계속 돌기 단계에서 돈 각도 (한 바퀴 다 봤는지)
+        self._search_turned = 0.0
+        self._search_last_yaw = 0.0
         self._area_best = 0.0
         self._area_best_at = None
         self._push_start = None
@@ -355,6 +363,8 @@ class Mission2Logic:
             self._search_direction = 1.0
             self._search_start_yaw = obs.yaw
             self._search_step = 0
+            self._search_turned = 0.0
+            self._search_last_yaw = obs.yaw
             if self.target is not None and distance_to(obs, self.target) > CAMERA_AHEAD_M:
                 self._search_direction = math.copysign(1.0, heading_error_to(obs, self.target))
                 self._search_step = 2
@@ -432,6 +442,10 @@ class Mission2Logic:
             return self._state_before_retreat
         return SEARCH
 
+    def wants_opponents(self):
+        """상대 위치(LiDAR)가 필요한 상태인지. 출발·접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
+        return self.holding_cube() or self.state == RECENTER
+
     def holding_cube(self):
         if self.state == RETREAT:
             return self._state_before_retreat in HOLDING_STATES
@@ -449,6 +463,7 @@ class Mission2Logic:
             HOLD: self._hold,
             GUARD: self._guard,
             BACKOFF: self._backoff,
+            RECENTER: self._recenter,
         }
         return handlers[self.state](obs)
 
@@ -565,8 +580,33 @@ class Mission2Logic:
             if abs(error) < SEARCH_SWEEP_DONE_RAD:
                 self._search_step += 1
             else:
+                self._search_last_yaw = obs.yaw
                 return Command(angular=math.copysign(SEARCH_SPEED, error))
+        self._search_turned += abs(normalize_angle(obs.yaw - self._search_last_yaw))
+        self._search_last_yaw = obs.yaw
+        if (self._search_turned >= 2.0 * math.pi
+                and distance_to(obs, CENTER_M) > SEARCH_CENTER_M + GUARD_ARRIVE_M):
+            self._change_state(RECENTER, obs)
+            return self._recenter(obs)
         return Command(angular=self._search_direction * SEARCH_SPEED)
+
+    def _recenter_goal(self, obs):
+        """중앙에서 SEARCH_CENTER_M 떨어진, 지금 자리 쪽 점."""
+        angle = angle_around_center((obs.x, obs.y))
+        return (CENTER_M[0] + SEARCH_CENTER_M * math.cos(angle),
+                CENTER_M[1] + SEARCH_CENTER_M * math.sin(angle))
+
+    def _recenter(self, obs):
+        """한 바퀴 돌아도 없으면 중앙 쪽으로 다가가 다시 찾는다. 상대가 앞에 있으면 멈춘다."""
+        if obs.detected:
+            self._target_seen_at = obs.now
+            self._change_state(ALIGN, obs)
+            return self._align(obs)
+        goal = self._recenter_goal(obs)
+        if distance_to(obs, goal) < GUARD_ARRIVE_M:
+            self._change_state(SEARCH, obs)
+            return Command()
+        return self._guard_drive(obs, goal, RECENTER_SPEED, self._opponents(obs))
 
     def _turn_speed(self, error):
         speed = max(MIN_TURN_SPEED, min(TURN_SPEED, HEADING_GAIN * abs(error)))

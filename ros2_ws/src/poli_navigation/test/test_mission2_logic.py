@@ -31,8 +31,10 @@ from poli_navigation.mission2_logic import (
     Mission2Logic,
     Observation,
     PUSH,
+    RECENTER,
     RETREAT,
     SEARCH,
+    SEARCH_CENTER_M,
     START_POSE,
     TARGET_AREA_AT_50CM,
     TURN,
@@ -562,3 +564,34 @@ def test_retreat_starts_30cm_from_line_after_start():
     robot = SimRobot()
     logic.step(robot.observe())
     assert logic.state == DRIVE
+
+
+def test_moves_closer_to_center_when_full_turn_finds_nothing():
+    # 구석 쪽에서 큐브를 못 찾고 있다 (큐브는 상대가 가져가 안 보임).
+    logic = Mission2Logic()
+    logic.state = SEARCH
+    robot = SimRobot(pose=(0.75, 0.75, 0.0), target=(100.0, 100.0))
+    states = run(logic, robot, max_seconds=25.0)
+
+    # 한 바퀴 돌고 중앙 쪽으로 다가가 다시 돈다. 탈락선에는 가지 않는다.
+    assert RECENTER in states
+    assert states[-1] == SEARCH
+    assert math.dist((robot.x, robot.y), CENTER_M) < SEARCH_CENTER_M + 0.1
+    assert distance_to_danger_line(robot.observe()) > 0.3
+
+    # 상대가 탈락해 큐브가 중앙으로 돌아오면 찾아서 잡는다.
+    robot.target = CENTER_M
+    run(logic, robot, max_seconds=robot.now + 30.0, until=GUARD)
+    assert logic.state == GUARD
+
+
+def test_recenter_does_not_drive_into_opponent():
+    logic = Mission2Logic()
+    logic.state = RECENTER
+    logic.gripper_opened = True
+    # 중앙 쪽(+x, +y)으로 가야 하는데 바로 앞에 상대가 있다.
+    obs = Observation(x=0.8, y=0.8, yaw=math.pi / 4, now=0.0,
+                      opponents=((1.0, 1.0),))
+    assert logic.wants_opponents()
+    command = logic.step(obs)
+    assert command.linear == 0.0

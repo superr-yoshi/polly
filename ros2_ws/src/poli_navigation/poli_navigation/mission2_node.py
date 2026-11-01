@@ -51,7 +51,8 @@ CALLBACK_WARN_S = 0.05
 # 노드를 미리 켜 두고 시작 신호만 보내 엔터 -> 출발 지연을 약 4 s -> 0.1 s로).
 DEFAULT_START_FILE = '/tmp/poli_mission_start'
 MOTION_LOG_STATES = (
-    'TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT', 'GUARD', 'BACKOFF')
+    'TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT', 'GUARD', 'BACKOFF',
+    'RECENTER')
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
@@ -178,8 +179,8 @@ class Mission2Node(Node):
         if corrected and not self.wall_corrected:
             self.get_logger().info('Wall correction active')
             self.wall_corrected = True
-        # 상대 위치는 큐브를 잡은 뒤(GUARD)에만 쓴다. 출발·접근 중에는 판단을 늦추지 않게 계산하지 않는다.
-        if self.logic.holding_cube():
+        # 상대 위치는 큐브를 잡은 뒤(GUARD)와 중앙으로 다가갈 때(RECENTER)만 쓴다.
+        if self.logic.wants_opponents():
             self.opponents = find_opponents(msg, self.wall_correction.apply(self.odom_pose))
             self.opponent_received_at = self.now_seconds()
         self.warn_if_slow('scan', started)
