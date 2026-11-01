@@ -46,7 +46,7 @@ CALLBACK_WARN_S = 0.05
 # /cmd_vel·/gripper/command를 하나도 내지 않는다 (규정 3.5.6, 2026-11-01 팀 결정:
 # 노드를 미리 켜 두고 시작 신호만 보내 엔터 -> 출발 지연을 약 4 s -> 0.1 s로).
 DEFAULT_START_FILE = '/tmp/poli_mission_start'
-MOTION_LOG_STATES = ('DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
+MOTION_LOG_STATES = ('TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT')
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):

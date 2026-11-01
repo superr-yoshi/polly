@@ -137,12 +137,17 @@ GRIPPER_SETTLE_S = 0.1
 # 큐브까지 갔다. (시작 때 "한 번 오므려 보인" 것은 힘 빠진 집게를 열림 90도로 다시 잡는 동작)
 # 주행과 동시에 열리므로 시간 손해는 없다.
 OPEN_GRIPPER_AT_START = True
+# 출발: True = 제자리에서 중앙 방향(45도)으로 최대 속도로 돈 뒤 곧게 직진 (2026-11-01 팀 요청).
+# False = 출발하자마자 가속하며 곡선으로 튼다 (10-31 방식, 회전과 가속이 겹쳐 조금 빠름).
+START_PIVOT = True
+PIVOT_DECEL = 10.0                   # rad/s^2, 목표각 앞에서 일정하게 감속 (임무 1 TURN_DECEL과 같음)
+PIVOT_DONE_RAD = math.radians(4.0)   # 남은 각도가 이 안이면 직진 시작 (나머지는 직진하며 맞춤)
 
 GRIPPER_OPEN = 'open'
 GRIPPER_GRAB = 'grab'
 GRIPPER_CLOSED = 'closed'
 
-TURN = 'TURN'  # 예전 호환용 (지금은 출발하자마자 DRIVE 곡선)
+TURN = 'TURN'  # 출발 제자리 회전 (START_PIVOT)
 DRIVE = 'DRIVE'
 SEARCH = 'SEARCH'
 ALIGN = 'ALIGN'
@@ -230,7 +235,7 @@ def ramp(target, last, accel, decel, dt):
 class Mission2Logic:
 
     def __init__(self):
-        self.state = DRIVE
+        self.state = TURN if START_PIVOT else DRIVE
         self.state_started_at = None
         self.gripper_opened = False
         self._state_before_retreat = DRIVE
@@ -322,7 +327,7 @@ class Mission2Logic:
 
     def _run_state(self, obs):
         handlers = {
-            TURN: self._drive,
+            TURN: self._pivot,
             DRIVE: self._drive,
             SEARCH: self._search,
             ALIGN: self._align,
@@ -405,6 +410,18 @@ class Mission2Logic:
         self._area_best_at = (obs.x, obs.y)
         self._change_state(APPROACH, obs)
         return self._approach(obs)
+
+    def _pivot(self, obs):
+        """출발 제자리 회전: 중앙 방향으로 최대 속도로 돌고, 목표각 앞에서 일정하게 감속한다."""
+        error = heading_error_to(obs, CENTER_M)
+        # 지금 회전 속도로 더 돌 각도를 빼고 판단 (모터·IMU 지연으로 넘어가지 않게)
+        predicted = error - self._last_angular * TURN_LEAD_S
+        if abs(predicted) < PIVOT_DONE_RAD or predicted * error < 0.0:
+            self._change_state(DRIVE, obs)
+            return self._drive(obs)
+        remaining = abs(predicted) - PIVOT_DONE_RAD
+        speed = min(TURN_SPEED, math.sqrt(MIN_TURN_SPEED ** 2 + 2.0 * PIVOT_DECEL * remaining))
+        return Command(angular=math.copysign(speed, predicted))
 
     def _drive(self, obs):
         # 가는 길에 카메라에 보이면 멈추지 않고 바로 카메라 접근으로

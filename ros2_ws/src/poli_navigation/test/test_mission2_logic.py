@@ -3,6 +3,7 @@ import dataclasses
 import math
 
 from hw_model import actual_twist
+from poli_navigation import mission2_logic
 from poli_navigation.mission2_logic import (
     ALIGN,
     APPROACH,
@@ -25,6 +26,7 @@ from poli_navigation.mission2_logic import (
     SEARCH,
     START_POSE,
     TARGET_AREA_AT_50CM,
+    TURN,
 )
 
 
@@ -109,8 +111,8 @@ def test_full_run_reaches_hold_near_center():
     states = run(logic, robot, until=HOLD)
 
     assert logic.state == HOLD
-    # 출발 곡선 중에 대상이 보이면 서지 않고 바로 카메라 접근
-    assert states == [DRIVE, APPROACH, PUSH, GRASP, HOLD]
+    # 제자리 회전 뒤 직진 중에 대상이 보이면 서지 않고 바로 카메라 접근
+    assert states == [TURN, DRIVE, APPROACH, PUSH, GRASP, HOLD]
 
     # 집는 순간 대상과 가까워야 한다.
     distance = math.hypot(CENTER_M[0] - robot.x, CENTER_M[1] - robot.y)
@@ -120,7 +122,25 @@ def test_full_run_reaches_hold_near_center():
     assert robot.gripper_log == [GRIPPER_OPEN, GRIPPER_GRAB]
 
 
-def test_start_moves_forward_while_turning_left():
+def test_start_pivots_in_place_then_drives_straight():
+    """출발하자마자 제자리에서 중앙 방향(왼쪽 45도)으로 돈 뒤 곧게 직진한다 (START_PIVOT, 2026-11-01)."""
+    logic = Mission2Logic()
+    robot = LaggedSimRobot(START_POSE)
+    command = logic.step(robot.observe())
+    assert logic.state == TURN and command.linear == 0.0 and command.angular > 0.0
+    path = []
+    while logic.state != APPROACH and robot.now < 5.0:
+        robot.apply(logic.step(robot.observe()))
+        path.append((robot.x, robot.y))
+    # 출발 -> 중앙 대각선에서 2 cm 넘게 벗어나지 않는다
+    sx, sy = START_POSE[:2]
+    length = math.dist(START_POSE[:2], CENTER_M)
+    ux, uy = (CENTER_M[0] - sx) / length, (CENTER_M[1] - sy) / length
+    assert max(abs(-(x - sx) * uy + (y - sy) * ux) for x, y in path) < 0.02
+
+
+def test_start_moves_forward_while_turning_left(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'START_PIVOT', False)
     logic = Mission2Logic()
     robot = SimRobot()
 
@@ -133,7 +153,8 @@ def test_start_moves_forward_while_turning_left():
     assert logic.state == DRIVE
 
 
-def test_start_arc_is_small_and_does_not_swing():
+def test_start_arc_is_small_and_does_not_swing(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'START_PIVOT', False)
     logic = Mission2Logic()
     # 모터 지연이 있어야 실제처럼 지나쳐 돈다 (회전 예측 TURN_LEAD_S가 없으면 약 19도 넘어감)
     robot = LaggedSimRobot(START_POSE)
@@ -345,8 +366,8 @@ def test_full_run_with_latency_is_fast_and_direct():
 
     states = run(logic, robot, until=PUSH)
 
-    # 서거나 다시 찾는 일 없이 곡선 -> 카메라 접근 -> 밀어 넣기
-    assert states == [DRIVE, APPROACH, PUSH]
-    # 예전 방식(제자리 45도 회전 + 0.25 m/s 직진)은 집기 시작까지 약 9초 걸렸다.
+    # 서거나 다시 찾는 일 없이 제자리 회전 -> 직진 -> 카메라 접근 -> 밀어 넣기
+    assert states == [TURN, DRIVE, APPROACH, PUSH]
+    # 시뮬레이션 약 2.8 s (곡선 출발은 약 2.35 s). 예전 0.25 m/s 직진은 약 9초.
     assert robot.now < 3.5
     assert math.dist((robot.x, robot.y), CENTER_M) < 0.3
