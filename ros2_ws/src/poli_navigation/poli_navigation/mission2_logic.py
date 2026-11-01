@@ -188,9 +188,10 @@ PIVOT_DONE_RAD = math.radians(4.0)   # 남은 각도가 이 안이면 직진 시
 
 # 잡은 뒤 지키기 (GUARD). False면 예전처럼 잡은 자리에 서 있는다 (HOLD).
 GUARD_ENABLED = True
-# 지키는 원의 반지름 (중앙에서). 정면 방향이면 탈락선까지 0.6 m, 대각선이면 0.83 m 남는다.
+# 지키는 원의 반지름 (중앙에서). 대각선(처음 빠지는 점)이면 탈락선까지 0.69 m, 원이 선과 가장 가까운
+# 정면 방향이면 0.4 m 남는다 (RETREAT 0.3 m보다 멀다). 2026-11-01 0.8 -> 1.0 ("너무 조금 후진", 약 0.87 m 후진)
 # TODO_MEASURE: 연습장에서 상대 로봇 접근을 보고 조정 (제출 전에 확정, 경기장 공개 후 수정 금지)
-GUARD_RADIUS_M = 0.8
+GUARD_RADIUS_M = 1.0
 # 처음 빠지는 방향 (중앙 기준). 우리 출발 위치 쪽 대각선 = 상대가 출발하지 않는 쪽.
 GUARD_HOME_ANGLE = math.atan2(START_POSE[1] - CENTER_M[1], START_POSE[0] - CENTER_M[0])
 # 큐브를 잡고 움직일 때 속도·가감속·회전 (빠르거나 급하면 큐브가 빠진다). TODO_MEASURE
