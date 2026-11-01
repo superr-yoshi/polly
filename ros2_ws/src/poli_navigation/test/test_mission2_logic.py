@@ -448,16 +448,16 @@ def test_guard_does_not_drive_into_opponent():
         assert free.linear * goal_dx > 0.0
 
         obs.opponent = (1.8 + 0.28 * math.copysign(1.0, goal_dx), 1.0)
-        blocked = logic._guard_drive(obs, (1.8 + goal_dx, 1.0), GUARD_SPEED, obs.opponent)
+        blocked = logic._guard_drive(obs, (1.8 + goal_dx, 1.0), GUARD_SPEED, (obs.opponent,))
         assert blocked.linear == 0.0
 
     # 빠르게 가는 중이면 서는 거리만큼 더 일찍 멈춘다 (0.5 m/s, 상대 0.45 m 앞)
     logic = Mission2Logic()
     logic._last_linear = GUARD_ESCAPE_SPEED
     obs = Observation(x=1.8, y=1.0, yaw=0.0, now=0.0, opponent=(2.25, 1.0))
-    assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, obs.opponent).linear == 0.0
+    assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, (obs.opponent,)).linear == 0.0
     logic._last_linear = 0.0
-    assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, obs.opponent).linear > 0.0
+    assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, (obs.opponent,)).linear > 0.0
 
 
 def test_guard_ignores_far_opponent():
@@ -468,3 +468,40 @@ def test_guard_ignores_far_opponent():
         command = logic.step(obs)
         robot.apply(command)
         assert command == Command()
+
+
+def run_guard_with_opponents(logic, robot, opponents, seconds):
+    commands = []
+    end = robot.now + seconds
+    while robot.now < end:
+        obs = robot.observe()
+        obs.opponents = tuple(opponents)
+        command = logic.step(obs)
+        robot.apply(command)
+        commands.append(command)
+        assert distance_to_danger_line(robot.observe()) > 0.3
+    return commands
+
+
+def test_guard_stands_still_when_sandwiched():
+    logic, robot = guarding_robot()
+    # 원 위 양쪽에서 상대가 붙어 온다: 어느 쪽으로 피해도 부딪힌다.
+    opponents = [guard_point(GUARD_HOME_ANGLE + 0.5), guard_point(GUARD_HOME_ANGLE - 0.5)]
+    commands = run_guard_with_opponents(logic, robot, opponents, 3.0)
+    assert all(command.linear == 0.0 for command in commands)
+
+
+def test_guard_dodges_toward_open_side_with_two_opponents():
+    logic, robot = guarding_robot()
+    start_angle = angle_from_center(robot.x, robot.y)
+    # 가까운 상대는 원 안쪽에 비켜 있고(그쪽 길은 지나갈 수 있다), 먼 상대가 반대쪽 원 위를 막고 있다.
+    # 예전(가까운 상대 반대쪽으로만)이면 먼 상대 쪽으로 가서 부딪혔다.
+    near = (CENTER_M[0] + 0.35 * math.cos(GUARD_HOME_ANGLE + 0.3),
+            CENTER_M[1] + 0.35 * math.sin(GUARD_HOME_ANGLE + 0.3))
+    far = guard_point(GUARD_HOME_ANGLE - 0.8)
+    assert math.dist((robot.x, robot.y), near) < math.dist((robot.x, robot.y), far)
+    run_guard_with_opponents(logic, robot, [near, far], 2.0)
+
+    turned = angle_from_center(robot.x, robot.y) - start_angle
+    assert turned > 0.05
+    assert math.dist((robot.x, robot.y), far) > 0.5

@@ -176,8 +176,14 @@ DODGE_START_M = 0.7
 DODGE_CLEAR_M = 0.9
 # 피할 때 원 위에서 한 번에 앞서 보는 각도 (원을 따라가도록 목표 점을 조금씩 옮긴다)
 DODGE_ARC_STEP_RAD = 0.5
-# 상대가 중앙에서 이보다 가까우면 원 위 방향을 알 수 없어 피하던 방향을 그대로 쓴다.
-DODGE_CENTER_M = 0.2
+# 피할 방향 고르기: 원을 따라 양쪽으로 DODGE_LOOKAHEAD_RAD까지 길을 그려 보고,
+# 길에서 상대와 가장 가까워지는 거리가 더 큰 쪽으로 간다 (상대가 여럿이면 더 빈 쪽).
+DODGE_LOOKAHEAD_RAD = math.radians(90.0)
+DODGE_PATH_STEP_RAD = math.radians(15.0)
+# 반대쪽이 이만큼 더 넓어야 피하던 방향을 바꾼다 (왔다 갔다 방지)
+DODGE_SWITCH_M = 0.1
+# 양쪽 길 모두 상대와 이보다 가까우면(끼였다) 들이받지 않게 그 자리에 선다 (로봇 중심 ~ 상대 표면)
+DODGE_BLOCKED_M = 0.35
 # 가는 방향 ±GUARD_BLOCK_RAD 안, 이 거리 + 지금 속도로 서는 거리 안에 상대가 있으면
 # 전진·후진을 멈춘다 (들이받지 않기). 서 있으면 0.3 m, 0.3 m/s면 약 0.42 m, 0.5 m/s면 약 0.58 m.
 # (로봇 중심 ~ 상대 로봇 표면. 우리 차체 앞뒤 끝이 중심에서 약 0.15~0.22 m)
@@ -220,6 +226,8 @@ class Observation:
     vision_stamp: Optional[float] = None
     # LiDAR로 찾은 가장 가까운 상대 로봇 (경기장 좌표). 없거나 모르면 None (opponent_detector.py)
     opponent: Optional[tuple] = None
+    # 찾은 상대 로봇 전부 (가까운 순). 비어 있으면 opponent만 쓴다.
+    opponents: tuple = ()
 
 
 @dataclass
@@ -392,7 +400,7 @@ class Mission2Logic:
 
         if self.holding_cube():
             # 큐브를 잡고 있으면 천천히, 앞뒤 중 덜 도는 쪽으로 (제자리에서 크게 돌면 큐브가 빠진다)
-            return self._guard_drive(obs, CENTER_M, GUARD_SPEED)
+            return self._guard_drive(obs, CENTER_M, GUARD_SPEED, self._opponents(obs))
         return self._drive_toward(obs, CENTER_M, APPROACH_FAST_SPEED)
 
     def _resume_state_after_retreat(self):
@@ -664,8 +672,9 @@ class Mission2Logic:
         if lost is not None:
             return lost
 
-        opponent_distance = (math.inf if obs.opponent is None
-                             else math.dist((obs.x, obs.y), obs.opponent))
+        opponents = self._opponents(obs)
+        opponent_distance = min(
+            (math.dist((obs.x, obs.y), other) for other in opponents), default=math.inf)
         if opponent_distance < DODGE_START_M:
             self._dodging = True
         elif opponent_distance > DODGE_CLEAR_M:
@@ -677,11 +686,14 @@ class Mission2Logic:
         if self._dodging:
             self._escaping = False
             own_angle = angle_around_center((obs.x, obs.y))
-            if math.dist(obs.opponent, CENTER_M) > DODGE_CENTER_M:
-                # 원 위에서 상대와 벌어지는 쪽으로 돈다
-                apart = normalize_angle(own_angle - angle_around_center(obs.opponent))
-                if apart != 0.0:
-                    self._dodge_direction = math.copysign(1.0, apart)
+            clearance = {direction: self._dodge_clearance(own_angle, direction, opponents)
+                         for direction in (1.0, -1.0)}
+            other = -self._dodge_direction
+            if clearance[other] > clearance[self._dodge_direction] + DODGE_SWITCH_M:
+                self._dodge_direction = other
+            if clearance[self._dodge_direction] < DODGE_BLOCKED_M:
+                # 양쪽 다 막혔다. 안쪽은 상대가 모이고 바깥은 탈락선이라 서 있는다.
+                return Command()
             self._guard_angle = own_angle + self._dodge_direction * DODGE_ARC_STEP_RAD
 
         goal = guard_point(self._guard_angle)
@@ -689,9 +701,24 @@ class Mission2Logic:
             self._escaping = False
             return Command()
         speed = GUARD_ESCAPE_SPEED if self._escaping else GUARD_SPEED
-        return self._guard_drive(obs, goal, speed, obs.opponent)
+        return self._guard_drive(obs, goal, speed, opponents)
 
-    def _guard_drive(self, obs, goal, speed, opponent=None):
+    @staticmethod
+    def _opponents(obs):
+        if obs.opponents:
+            return tuple(obs.opponents)
+        return () if obs.opponent is None else (obs.opponent,)
+
+    @staticmethod
+    def _dodge_clearance(own_angle, direction, opponents):
+        """원을 따라 direction 쪽으로 갈 길에서 상대와 가장 가까워지는 거리."""
+        steps = round(DODGE_LOOKAHEAD_RAD / DODGE_PATH_STEP_RAD)
+        path = [guard_point(own_angle + direction * k * DODGE_PATH_STEP_RAD)
+                for k in range(1, steps + 1)]
+        return min((math.dist(point, other) for point in path for other in opponents),
+                   default=math.inf)
+
+    def _guard_drive(self, obs, goal, speed, opponents=()):
         """
         큐브를 잡은 채 goal로 천천히 간다. 앞·뒤 중 덜 도는 쪽으로 간다.
 
@@ -715,9 +742,11 @@ class Mission2Logic:
 
         current = abs(self._last_linear)
         block = GUARD_BLOCK_M + current * MOTOR_LAG_S + current ** 2 / (2.0 * GUARD_ACCEL)
-        if opponent is not None and math.dist((obs.x, obs.y), opponent) < block:
-            heading = obs.yaw + (math.pi if self._guard_reverse else 0.0)
-            toward = math.atan2(opponent[1] - obs.y, opponent[0] - obs.x)
+        heading = obs.yaw + (math.pi if self._guard_reverse else 0.0)
+        for other in opponents:
+            if math.dist((obs.x, obs.y), other) >= block:
+                continue
+            toward = math.atan2(other[1] - obs.y, other[0] - obs.x)
             if abs(normalize_angle(toward - heading)) < GUARD_BLOCK_RAD:
                 linear = 0.0
         return Command(linear=linear, angular=angular)

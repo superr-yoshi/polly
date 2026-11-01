@@ -12,7 +12,7 @@ from poli_navigation.mission2_logic import (
     Observation,
     START_POSE,
 )
-from poli_navigation.opponent_detector import find_opponent
+from poli_navigation.opponent_detector import find_opponents
 from poli_navigation.wall_localizer import WallCorrection
 import rclpy
 from rclpy.node import Node
@@ -92,8 +92,8 @@ class Mission2Node(Node):
         # 외벽까지 거리(LiDAR)로 odom 위치를 보정한다. (wall_localizer.py)
         self.wall_correction = WallCorrection()
         self.wall_corrected = False
-        # LiDAR로 찾은 가장 가까운 상대 로봇 (opponent_detector.py)
-        self.opponent = None
+        # LiDAR로 찾은 상대 로봇들, 가까운 순 (opponent_detector.py)
+        self.opponents = []
         self.opponent_received_at = None
         self.holding = None
         self.holding_received_at = None
@@ -179,7 +179,7 @@ class Mission2Node(Node):
             self.wall_corrected = True
         # 상대 위치는 큐브를 잡은 뒤(GUARD)에만 쓴다. 출발·접근 중에는 판단을 늦추지 않게 계산하지 않는다.
         if self.logic.holding_cube():
-            self.opponent = find_opponent(msg, self.wall_correction.apply(self.odom_pose))
+            self.opponents = find_opponents(msg, self.wall_correction.apply(self.odom_pose))
             self.opponent_received_at = self.now_seconds()
         self.warn_if_slow('scan', started)
 
@@ -251,7 +251,8 @@ class Mission2Node(Node):
         )
         if (self.opponent_received_at is not None
                 and now - self.opponent_received_at <= OPPONENT_TIMEOUT):
-            observation.opponent = self.opponent
+            observation.opponents = tuple(self.opponents)
+            observation.opponent = self.opponents[0] if self.opponents else None
 
         vision = self.fresh_vision(now)
         if vision is not None:
@@ -284,8 +285,7 @@ class Mission2Node(Node):
             self.last_motion_log = now
             target = self.logic.target
             cam_d = '-' if target is None else f'{self.logic._camera_distance(observation):.2f}'
-            opp = observation.opponent
-            opp_text = '-' if opp is None else f'({opp[0]:.2f},{opp[1]:.2f})'
+            opp_text = ' '.join(f'({o[0]:.2f},{o[1]:.2f})' for o in observation.opponents) or '-'
             self.get_logger().info(
                 f'Motion: {self.logic.state} pos=({x:.2f},{y:.2f}) yaw={math.degrees(yaw):.0f} '
                 f'cmd=({command.linear:.2f},{command.angular:+.2f}) '

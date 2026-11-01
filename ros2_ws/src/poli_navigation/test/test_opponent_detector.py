@@ -2,7 +2,7 @@ import math
 from types import SimpleNamespace
 
 from poli_navigation.mission2_logic import ARENA_SIZE_M
-from poli_navigation.opponent_detector import find_opponent
+from poli_navigation.opponent_detector import find_opponent, find_opponents
 
 
 RAYS = 720
@@ -73,3 +73,12 @@ def test_returns_nearest_of_two_opponents():
     near, far = (2.4, 1.4), (1.0, 2.8)
     found = find_opponent(make_scan(pose, [near, far]), pose)
     assert math.dist(found, near) < OPPONENT_RADIUS_M
+
+
+def test_finds_all_opponents_nearest_first():
+    pose = (1.8, 1.0, 0.0)
+    near, middle, far = (2.4, 1.4), (1.0, 1.9), (2.6, 3.0)
+    found = find_opponents(make_scan(pose, [far, near, middle]), pose)
+    assert len(found) == 3
+    for spot, expected in zip(found, (near, middle, far)):
+        assert math.dist(spot, expected) < OPPONENT_RADIUS_M

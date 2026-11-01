@@ -6,8 +6,8 @@ ROS2와 무관한 순수 Python 모듈이다.
 방법:
 - 임무 2 경기장에는 장애물이 없다. 외벽도 아니고 우리 로봇(잡은 큐브 포함)도 아닌 점은 상대 로봇이다.
 - 스캔 점을 경기장 좌표로 바꿔 벽 근처 점과 우리 차체 안 점을 버리고,
-  로봇에서 가까운 점부터 주변에 점이 MIN_POINTS개 이상 모인 곳을 찾아 그 평균 위치를 돌려준다.
-  (점 하나짜리는 잡음으로 본다)
+  로봇에서 가까운 점부터 주변에 점이 MIN_POINTS개 이상 모인 곳을 찾아 그 평균 위치를 상대 하나로 본다.
+  (점 하나짜리는 잡음으로 본다) 묶음에 쓴 점은 빼고 다음 상대를 찾는다.
 
 좌표: 경기장 좌표(m), 왼쪽 아래 모서리가 (0, 0) (mission2_logic.py와 같다)
 """
@@ -31,8 +31,10 @@ BODY_HALF_WIDTH_M = 0.18  # 바퀴 포함 폭 30.5 cm의 절반 + 여유. TODO_M
 # 상대 로봇으로 볼 점 묶음: 기준 점에서 이 거리 안에 MIN_POINTS개 이상
 CLUSTER_M = 0.12
 MIN_POINTS = 3
-# 가까운 점부터 이 개수까지만 묶음 기준으로 본다 (스캔 콜백이 판단을 늦추지 않게)
+# 가까운 점부터 이 개수까지만 묶음 기준으로 본다 (스캔 콜백이 판단을 늦추지 않게, 이미 묶인 점은 안 셈)
 MAX_CANDIDATES = 40
+# 임무 2는 4팀이라 상대는 최대 3대
+MAX_OPPONENTS = 3
 
 
 def inside_body(x, y):
@@ -70,21 +72,40 @@ def opponent_points(scan, pose):
     return points
 
 
-def find_opponent(scan, pose):
+def find_opponents(scan, pose):
     """
-    가장 가까운 상대 로봇의 경기장 좌표 (x, y). 없으면 None.
+    상대 로봇들의 경기장 좌표 [(x, y), ...], 가까운 순 (최대 MAX_OPPONENTS개).
 
     pose: 우리 로봇 위치 (x, y, yaw), 경기장 좌표
     """
     points = opponent_points(scan, pose)
     points.sort(key=lambda point: math.dist(point, pose[:2]))
+    used = set()
+    found = []
 
-    for point in points[:MAX_CANDIDATES]:
-        cluster = [other for other in points if math.dist(other, point) <= CLUSTER_M]
-        if len(cluster) >= MIN_POINTS:
-            return (
-                sum(other[0] for other in cluster) / len(cluster),
-                sum(other[1] for other in cluster) / len(cluster),
-            )
+    tried = 0
+    for i, point in enumerate(points):
+        if i in used:
+            continue
+        tried += 1
+        if tried > MAX_CANDIDATES:
+            break
+        members = [j for j, other in enumerate(points)
+                   if j not in used and math.dist(other, point) <= CLUSTER_M]
+        if len(members) < MIN_POINTS:
+            continue
+        used.update(members)
+        found.append((
+            sum(points[j][0] for j in members) / len(members),
+            sum(points[j][1] for j in members) / len(members),
+        ))
+        if len(found) >= MAX_OPPONENTS:
+            break
 
-    return None
+    return found
+
+
+def find_opponent(scan, pose):
+    """가장 가까운 상대 로봇의 경기장 좌표 (x, y). 없으면 None."""
+    opponents = find_opponents(scan, pose)
+    return opponents[0] if opponents else None
