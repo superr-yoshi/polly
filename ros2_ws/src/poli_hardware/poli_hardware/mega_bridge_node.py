@@ -14,7 +14,7 @@ import time
 from poli_hardware import drive_node
 from poli_hardware.mega_protocol import (
     EncPacket, gripper_action, GstPacket, ImuPacket, make_drive_command, make_grip_command,
-    MegaParser, MOTOR_FAULTS, RngPacket, wheel_to_ticks, WheelSpeedEstimator)
+    MegaParser, MOTOR_FAULTS, MOTOR_STALL_WAIT, RngPacket, wheel_to_ticks, WheelSpeedEstimator)
 import rclpy
 
 MAX_GRIP_TRIES = 3
@@ -152,6 +152,9 @@ class MegaTransport:
             self._log.error(
                 f'Mega 모터 정지: {pkt.status_name}. 엔코더(C1·C2)·모터선 방향 또는 바퀴 막힘 확인. '
                 '이 노드를 다시 켜야 (Mega 리셋) 다시 움직인다 (docs/pin_map.md)')
+        elif pkt.status == MOTOR_STALL_WAIT:
+            self._log.warn('Mega 바퀴 막힘 -> 1초 쉬고 다시 명령 받음 '
+                           '(그 사이 제대로 돈 적 없이 3번 연속이면 리셋까지 정지)')
         else:
             self._log.info(f'Mega 모터 상태: {pkt.status_name}')
 

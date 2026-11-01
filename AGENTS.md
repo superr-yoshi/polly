@@ -64,8 +64,9 @@
 2. **`/odom_raw`는 엔코더 기반이다** (2026-10-29부터). Mega가 JGB37-520 엔코더(C1·C2)를 4체배로 세어 `$ENC`로 보낸다.
    바퀴가 미끄러지면 모르므로 정밀 거리가 필요하면 IMU·LiDAR로 보정한다.
 3. **`/battery_state`는 없다** (2026-10-29). 전압을 재던 RRC Lite를 뺐고 Mega에 전압 측정 회로가 없다. 저전압 판단 코드를 만들지 않는다.
-4. **안전**: Mega 펌웨어는 `$DRV`/`$PWM`이 0.3초 끊기면 스스로 멈추고, 엔코더 방향 반대·신호 없음·바퀴 막힘이면 모터를 끈 채로
-   리셋까지 기다린다 (`firmware/mega_sensor_controller/README.md`). 첫 명령 전에는 모터를 돌리지 않는다.
+4. **안전**: Mega 펌웨어는 `$DRV`/`$PWM`이 0.3초 끊기면 스스로 멈추고, 엔코더 방향 반대이면 모터를 끈 채로 리셋까지 기다린다.
+   바퀴 막힘은 1초 쉬고 다시 받되, 제대로 돈 적 없이 3번 연속이면 리셋까지 기다린다 (2026-11-01,
+   `firmware/mega_sensor_controller/README.md`). 첫 명령 전에는 모터를 돌리지 않는다.
    이 펌웨어 동작과 `poli_hardware`의 `/cmd_vel` 0.3초 timeout, 25 Hz 연속 모터 명령, `node_runner.py`(Ctrl+C·SIGTERM 때 모터 정지 보장)를
    지우거나 우회하지 않는다. **물리 비상정지(배터리 바로 뒤, 전체 전원 차단)는 필수**다 (펌웨어가 멈추거나 MDD10이 고장 나면 소프트웨어 정지는 소용없다).
 5. `poli_navigation/fake_odom.py`와 `poli_hardware`의 `hardware.launch.py`는 둘 다 `/odom_raw`를 발행하므로 **동시에 실행하지 않는다.**

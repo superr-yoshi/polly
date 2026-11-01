@@ -7,7 +7,8 @@ enum MotorStatus : uint8_t {
   MOTOR_DRIVE = 1,        // $DRV 속도 제어 중
   MOTOR_PWM = 2,          // $PWM 직접 출력 중 (배선 확인용)
   MOTOR_FAULT_REVERSE = 3,  // 목표와 반대로 돎 → 정지 (Mega 리셋 전까지 유지)
-  MOTOR_FAULT_STALL = 4,    // 큰 duty인데 안 돎 (엔코더 신호 없음·바퀴 막힘) → 정지 (리셋 전까지 유지)
+  MOTOR_FAULT_STALL = 4,    // 막힘이 STALL_RETRY_MAX번 연속 (엔코더 신호 없음) → 정지 (리셋 전까지 유지)
+  MOTOR_STALL_WAIT = 5,     // 큰 duty인데 안 돎 (바퀴 막힘) → STALL_COOLDOWN_MS 동안 정지 후 다시 명령 받음
 };
 
 void motorBegin();

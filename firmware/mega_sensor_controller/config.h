@@ -71,6 +71,13 @@ constexpr uint8_t US_ECHO[4] = {23, 25, 27, 29};
 #define FAULT_DUTY      100    // duty가 이 값 이상인데 (무부하면 약 2800 tick/s로 돌 세기)
 #define FAULT_STALL_TPS 100    //   측정 속도가 이보다 느린 상태가
 #define FAULT_STALL_MS  300    //   이 시간 넘게 계속되면 → 엔코더 신호 없음 또는 바퀴 막힘
+// 막힘은 잠깐만 멈춘다 (2026-11-01 팀 결정 A안): 임무 2는 상대와 밀기가 허용돼 0.3 s 막힘이 흔하다.
+// 막히면 STALL_COOLDOWN_MS 동안 모터를 끄고 명령을 무시(status 5)한 뒤 다시 받는다.
+// 그 사이 바퀴가 STALL_RESET_MS 넘게 제대로 돈 적 없이 STALL_RETRY_MAX번 연속 막히면
+// 엔코더 신호 없음으로 보고 예전처럼 리셋 전까지 멈춘다 (status 4). 방향 반대(status 3)는 그대로 바로 멈춘다.
+#define STALL_COOLDOWN_MS 1000
+#define STALL_RETRY_MAX   3
+#define STALL_RESET_MS    1000
 #define ENC_REPORT_MS   20     // $ENC 50 Hz
 
 // ---- IMU: BNO085 (I2C, SDA = D20, SCL = D21) -------------------------------

@@ -15,8 +15,10 @@ FIELD_COUNT = {'RNG': 6, 'GST': 5, 'ENC': 5, 'IMU': 12}
 SIGNED = ('ENC', 'IMU')
 
 # ENC status (펌웨어 motor.h MotorStatus)
-MOTOR_STATUS_NAMES = {0: 'idle', 1: 'drive', 2: 'pwm', 3: 'fault_reverse', 4: 'fault_stall'}
+MOTOR_STATUS_NAMES = {0: 'idle', 1: 'drive', 2: 'pwm', 3: 'fault_reverse', 4: 'fault_stall',
+                      5: 'stall_wait'}
 MOTOR_FAULTS = (3, 4)
+MOTOR_STALL_WAIT = 5  # 바퀴 막힘 -> Mega가 1초 쉬고 다시 명령 받음 (2026-11-01)
 
 # RNG 거리값 순서 (Mega 센서 0~3 = D22/23, D24/25, D26/27, D28/29). 토픽 /range/<이름>과 1:1.
 # 좌측만 낮게, 나머지는 지면에서 약 14 cm (docs/pin_map.md).
