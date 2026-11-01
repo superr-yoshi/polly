@@ -381,3 +381,25 @@ def test_neighbor_needs_quarter_of_cone_rays_to_be_blocked():
         ranges[n // 2 + k] = 0.3
     states = neighbor_states(scan, (0.2 + 0.4 * 4, 0.2 + 0.4 * 4, 0.0))
     assert states[(6, 5)] == BLOCKED
+
+
+def test_rolling_scan_from_behind_center_does_not_see_diagonal_box_as_side_wall(monkeypatch):
+    """
+    달리며 판단: LiDAR(축 8 cm 뒤)가 칸 가운데보다 26 cm 뒤여도 옆 칸 (8,2)를 아래 칸 상자 (8,1)로 착각하지 않는다.
+
+    2026-11-01 21:50 실기: 고정된 '왼쪽' 레이저가 (8,1) 옆면을 맞혀 (8,2)를 막힘으로 봤다.
+    """
+    from poli_navigation.grid_map import BLOCKED as GRID_BLOCKED, cell_center_m, GridMap
+    from poli_navigation.scan_to_grid import BLOCKED, neighbor_states
+    from poli_navigation.sim_world import simulate_scan
+    monkeypatch.setattr(scan_to_grid, 'LASER_OFFSET_X_M', -0.08)
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((8, 1), (9, 3)):
+        true_grid.mark_blocked(cell)
+    assert true_grid.get((8, 2)) != GRID_BLOCKED
+    cx, cy = cell_center_m((9, 2))
+    robot = (cx, cy - 0.18, math.pi / 2)
+    laser = (cx, cy - 0.26, math.pi / 2)
+    states = neighbor_states(simulate_scan(true_grid, laser), robot, (cx, cy))
+    assert states.get((8, 2)) != BLOCKED
+    assert states.get((9, 3)) == BLOCKED

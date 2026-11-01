@@ -163,7 +163,9 @@ TURN_CHECK_S = 0.3
 # 2026-10-31 실기 (16:54): 끔. 달리는 동안 위치 추정이 늦어 칸마다 목표를 지나치고(주행 중 보정이 늘
 # 진행 방향 +3 cm 상한), 지도가 어긋나 왕복·STUCK. 서서 판단할 때는 앞뒤 오차 평균 1 cm 이하.
 # TODO: odom 지연을 재고 보정한 뒤 다시 켠다.
-ROLLING_DECISION = False
+# 2026-11-01 저녁: 대회 모드도 켬 (팀: 최대한 안 멈추고). 그날 연습은 모두 켠 상태(--test-noview)로 했다.
+# 옆 칸 오판은 막힘 기준 70%와 LiDAR에서 이웃 벽면을 겨누는 판단(scan_to_grid.neighbor_states)으로 막는다.
+ROLLING_DECISION = True
 # TODO_MEASURE: 판단 속도. 스캔 한 바퀴(0.1초) 동안 2 cm 움직인다. 지도가 이상하면 낮춘다
 # 2026-11-01 0.2 -> 0.35, 0.14 -> 0.20: (5,5)에서 멀어지는 직진은 칸마다 이 속도로 줄여 판단해 칸마다 주춤했다
 # (팀). 벽 판단 기준을 콘 광선 50%로 올려(scan_to_grid) 조금 흐린 스캔으로도 판단이 안정적이다.
@@ -929,7 +931,7 @@ class Mission1Logic:
                 CELL_SIZE_M * 1.5 - CHAIN_WALL_MARGIN_M, CELL_SIZE_M * 1.5 + CHAIN_WALL_MARGIN_M,
                 CHAIN_CHECK_CONE_RAD):
             return 1
-        if self.maze.state.score(after) >= self.maze.state.score(middle):
+        if not self._can_pass(middle, after, step_dir):
             return 1
         path.append(after)
         # 2026-11-01: 세 칸 이상도 같은 규칙(막힘 아님 + 점수가 계속 작아짐)이면 쭉 간다.
@@ -937,13 +939,35 @@ class Mission1Logic:
         # 주행 중 앞 벽 감시(_wall_before_target)에 맡긴다. 중앙 옆 칸에 닿으면 서서 큐브를 본다.
         while not self._next_to_center(path[-1]):
             nxt = (path[-1][0] + step_dir[0], path[-1][1] + step_dir[1])
-            if (not self.grid.in_bounds(nxt) or self.grid.get(nxt) == BLOCKED
-                    or self.maze.state.score(nxt) >= self.maze.state.score(path[-1])):
+            if not self._can_pass(path[-1], nxt, step_dir):
                 break
             path.append(nxt)
         self._note(f'{len(path) - 1}칸 한 번에: {path[0]} -> {path[-1]}')
         self._chained = True
         return len(path) - 1
+
+    def _can_pass(self, cell, nxt, step_dir):
+        """
+        cell에서 서지(판단하지) 않고 nxt까지 곧게 가도 되는지.
+
+        nxt가 막힘이 아니고, (5,5)에 가까워지거나(점수가 작아짐) cell에서 새로 판단할 것이 없을 때
+        (양옆이 막힘·경기장 밖, 또는 지나온 칸인데 nxt는 안 가 본 칸 -> 어차피 직진).
+        2026-11-01 팀 "최대한 안 멈추고": (5,5)에서 멀어지는 통로는 칸마다 줄였다 가속해 주춤했다.
+        """
+        if (not self.grid.in_bounds(nxt) or self.grid.get(nxt) == BLOCKED
+                or self._next_to_center(cell)):
+            return False
+        if self.maze.state.score(nxt) < self.maze.state.score(cell):
+            return True
+        visits = self.maze.state.visits
+        for side in ((-step_dir[1], step_dir[0]), (step_dir[1], -step_dir[0])):
+            n = (cell[0] + side[0], cell[1] + side[1])
+            if not self.grid.in_bounds(n) or self.grid.get(n) == BLOCKED:
+                continue
+            if n in visits and nxt not in visits:
+                continue
+            return False
+        return True
 
     @staticmethod
     def _next_to_center(cell):

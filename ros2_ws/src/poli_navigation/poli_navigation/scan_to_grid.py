@@ -272,11 +272,12 @@ def _trace_scan(scan, robot_pose):
 
 def neighbor_states(scan, robot_pose, center=None):
     """
-    칸 가운데에서 상하좌우 이웃 칸을 각 방향 ±15도 레이저로만 판단한다.
+    칸 가운데에서 상하좌우 이웃 칸을 판단한다: LiDAR에서 이웃 칸 벽면 가운데를 겨눈 ±15도 레이저로.
 
-    center: 거리 기준점(칸 가운데). 없으면 로봇 위치. 달리면서 가운데 몇 cm 앞에서 찍은
-    스캔도 칸 가운데 기준으로 재야 0.40/0.55 m 기준이 맞는다 (2026-10-31: 로봇 기준이라
-    가운데 8 cm 앞에서는 0.6 m 너머 외벽이 0.52 m로 보여 판단이 어긋났다).
+    center: 판단할 칸의 가운데. 없으면 로봇 위치. 거리 기준은 LiDAR에서 그 벽면까지 거리 + 반 칸
+    (CONE_BLOCK_M - 반 칸)이다. 서 있을 때(LiDAR가 거의 칸 가운데)는 예전처럼 상하좌우 ±15도와 같다.
+    2026-11-01 21:50 실기: 달리며 판단할 때 LiDAR(축 8 cm 뒤)가 칸 가운데보다 최대 26 cm 뒤라, 고정된
+    '왼쪽' 레이저가 옆 칸이 아니라 아래 칸 상자 (8,1) 옆면을 맞혀 (8,2)를 막힘으로 봤다.
     반환: {이웃 격자: BLOCKED 또는 FREE}. 판단이 애매한 방향은 넣지 않는다.
     """
     robot_x, robot_y, robot_yaw = robot_pose
@@ -288,13 +289,20 @@ def neighbor_states(scan, robot_pose, center=None):
     sin_r = math.sin(robot_yaw)
     laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
     laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    half = CELL_SIZE_M / 2.0
     states = {}
-    for phi, (dx, dy) in ((0.0, (1, 0)), (math.pi / 2, (0, 1)),
-                          (math.pi, (-1, 0)), (-math.pi / 2, (0, -1))):
+    for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+        # 이웃 칸 쪽 벽면 가운데를 LiDAR에서 겨눈다
+        face_x, face_y = origin_x + half * dx, origin_y + half * dy
+        aim = math.atan2(face_y - laser_y, face_x - laser_x)
+        face = math.hypot(face_x - laser_x, face_y - laser_y)
+        near_limit = face + (CONE_BLOCK_M - half)
+        far_limit = face + (CONE_FREE_M - half)
+        cos_a, sin_a = math.cos(aim), math.sin(aim)
         near = far = in_cone = 0
         for i, distance in enumerate(scan.ranges):
             angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
-            if abs(math.atan2(math.sin(angle - phi), math.cos(angle - phi))) > CONE_HALF_RAD:
+            if abs(math.atan2(math.sin(angle - aim), math.cos(angle - aim))) > CONE_HALF_RAD:
                 continue
             in_cone += 1
             if not math.isfinite(distance):
@@ -303,13 +311,12 @@ def neighbor_states(scan, robot_pose, center=None):
                 continue
             hit_x = laser_x + distance * math.cos(angle)
             hit_y = laser_y + distance * math.sin(angle)
-            # 로봇 자기 부품은 로봇 기준으로 거르고, 이웃 칸 판단은 기준점(칸 가운데)에서 잰다.
-            if (hit_x - robot_x) * math.cos(phi) + (hit_y - robot_y) * math.sin(phi) < CONE_SKIP_M:
+            # 로봇 자기 부품은 로봇(바퀴 축) 기준으로 거른다
+            if (hit_x - robot_x) * cos_a + (hit_y - robot_y) * sin_a < CONE_SKIP_M:
                 continue
-            along = (hit_x - origin_x) * math.cos(phi) + (hit_y - origin_y) * math.sin(phi)
-            if along < CONE_BLOCK_M:
+            if distance < near_limit:
                 near += 1
-            elif along >= CONE_FREE_M:
+            elif distance >= far_limit:
                 far += 1
         neighbor = (cell[0] + dx, cell[1] + dy)
         if near >= max(CONE_MIN_RAYS, NEIGHBOR_BLOCK_FRACTION * in_cone):
