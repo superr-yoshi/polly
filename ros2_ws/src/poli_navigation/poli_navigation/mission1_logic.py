@@ -47,6 +47,7 @@ from poli_navigation.mission2_logic import (
     ramp,
 )
 from poli_navigation.scan_to_grid import (
+    GUARD_AHEAD_M,
     nearest_ahead,
     neighbor_states,
     obstacle_ahead,
@@ -279,6 +280,8 @@ GRAB_TOF_M = 0.05
 # 2026-11-01 21:30 실기: 회전 직후 큐브가 바로 앞이라 카메라 면적이 그대로인 채 끌고 가다
 # '면적이 안 커짐(오탐)'으로 접근을 두 번 그만두며 1.2 m 밀었다
 TOF_NEAR_M = 0.15
+# 적외선에 큐브가 가까이 보이는 동안 접근 중 벽 감시 거리 (집게 끝 앞). 평소는 scan_to_grid.GUARD_AHEAD_M 6 cm
+APPROACH_WALL_GUARD_NEAR_CUBE_M = 0.01
 # 적외선 방식으로 밀며 들어가는 최대 거리 (이만큼 밀어도 안 들어오면 닫지 않고 다시 판단)
 GRAB_TOF_PUSH_MAX_M = 0.15
 # 주행 중 카메라에 큐브가 이만큼 크게(약 45 cm 안) 보이면 그 칸으로 밀고 들어가지 않고 진행선으로 바로 접근한다.
@@ -1422,6 +1425,10 @@ class Mission1Logic:
         """
         if obs.gripper_range is None or obs.gripper_range > within:
             return False
+        if within <= GRAB_TOF_M:
+            # 5 cm 안은 집게 사이뿐이다: 센서가 집게 끝보다 약 9 cm 뒤라 벽은 그 전에 집게 끝에 닿는다
+            # (실측: 잡은 큐브 28 mm). 큐브가 벽에 붙어 있어도 잡게 벽 확인을 하지 않는다 (21:43 실기)
+            return True
         wall = obs.scan is not None and obstacle_ahead(
             obs.scan, (obs.x, obs.y, obs.yaw), ahead=within + 0.05)
         return not wall
@@ -1475,7 +1482,11 @@ class Mission1Logic:
             self._push_tof = obs.gripper_range is not None
             self._change_state(PUSH, obs, reason)
             return self._push(obs)
-        if obs.scan is not None and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw)):
+        # 적외선에 무언가 가까이 보이면(큐브) 벽 바로 앞 큐브까지 집게가 들어가게 감시 거리를 줄인다
+        # (21:43 실기: 벽에 붙은 큐브 앞에서 집게 끝이 벽 6 cm 앞에 와 '집게 앞에 장애물'로 그만둠)
+        near_cube = obs.gripper_range is not None and obs.gripper_range <= TOF_NEAR_M
+        guard = APPROACH_WALL_GUARD_NEAR_CUBE_M if near_cube else GUARD_AHEAD_M
+        if obs.scan is not None and obstacle_ahead(obs.scan, (obs.x, obs.y, obs.yaw), ahead=guard):
             return self._abort_approach(obs, '집게 앞에 장애물')
 
         # 통로 가운데 선에서 옆으로 벗어난 거리 (진행 방향 왼쪽이 +)

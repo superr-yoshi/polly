@@ -1565,14 +1565,20 @@ def test_tof_cube_in_gripper_while_driving_grabs():
 
 
 def test_tof_near_wall_is_not_a_cube():
-    """적외선에 가까이 보여도 LiDAR가 집게 앞에 벽을 보면 큐브가 아니다 (칸 가운데에서 벽을 보고 섬)."""
+    """
+    적외선 15 cm 판단은 LiDAR가 집게 앞에 벽을 보면 큐브가 아니다 (칸 가운데에서 벽을 보고 섬).
+
+    5 cm 안은 집게 사이뿐이라 벽에 붙은 큐브여도 큐브다 (21:43 실기).
+    """
     logic, x, y = _driving_west_logic()
     true_grid = GridMap(use_point_symmetry=False)
     true_grid.mark_blocked((5, 5))
     pose = (x - 0.02, y, math.pi)
     scan = simulate_scan(true_grid, pose)
-    assert not logic._tof_cube(Observation(x=pose[0], y=pose[1], yaw=math.pi, now=0.5,
-                                           scan=scan, gripper_range=0.03))
+    obs = Observation(x=pose[0], y=pose[1], yaw=math.pi, now=0.5, scan=scan, gripper_range=0.12)
+    assert not logic._tof_cube(obs, mission1_logic.TOF_NEAR_M)
+    obs.gripper_range = 0.03
+    assert logic._tof_cube(obs)
 
 
 def test_pushing_cube_with_constant_area_is_not_false_positive():
