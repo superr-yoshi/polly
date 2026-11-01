@@ -15,6 +15,7 @@ from poli_navigation.mission1_logic import (
 )
 from poli_navigation.mission2_node import (
     DEFAULT_START_FILE,
+    HOLDING_TIMEOUT,
     raise_keyboard_interrupt,
     VISION_TIMEOUT,
     yaw_from_quaternion,
@@ -104,6 +105,7 @@ class Mission1Node(Node):
         self.fused = None
         self.wall_fixed_for = None
         self.holding = None
+        self.holding_received_at = None
         self.gripper_state = None
         self.vision = None
         self.vision_received_at = None
@@ -191,6 +193,7 @@ class Mission1Node(Node):
 
     def holding_callback(self, msg):
         self.holding = msg.data
+        self.holding_received_at = self.now_seconds()
 
     def gripper_state_callback(self, msg):
         self.gripper_state = msg.data
@@ -255,7 +258,9 @@ class Mission1Node(Node):
         observation = Observation(
             x=x, y=y, yaw=yaw, now=now,
             scan=scan,
-            holding=self.holding,
+            # 집게 센서(tof_node)가 조용하면 모름(None) -> mission1_logic HOLDING_UNKNOWN 방식으로 판단
+            holding=(self.holding if self.holding_received_at is not None
+                     and now - self.holding_received_at <= HOLDING_TIMEOUT else None),
             gripper_state=self.gripper_state,
         )
         if scan is not None:

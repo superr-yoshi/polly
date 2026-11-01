@@ -27,6 +27,8 @@ CONTROL_PERIOD = 0.05
 # 카메라가 멈췄는데 예전 값을 믿고 움직이지 않기 위해서다.
 # TODO: 조원 B의 전송 주기가 정해지면 조정
 VISION_TIMEOUT = 0.5
+# s, /gripper/holding(tof_node 약 30 Hz)이 이만큼 끊기면 모름(None)으로 본다 (2026-11-01)
+HOLDING_TIMEOUT = 0.5
 
 # 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
 # 조원 A 노드가 임무 노드보다 늦게 켜지면 처음 보낸 명령을 받지 못하기 때문이다.
@@ -87,6 +89,7 @@ class Mission2Node(Node):
         self.wall_correction = WallCorrection()
         self.wall_corrected = False
         self.holding = None
+        self.holding_received_at = None
         self.gripper_state = None
         self.vision = None
         self.vision_received_at = None
@@ -176,6 +179,7 @@ class Mission2Node(Node):
 
     def holding_callback(self, msg):
         self.holding = msg.data
+        self.holding_received_at = self.now_seconds()
 
     def gripper_state_callback(self, msg):
         self.gripper_state = msg.data
@@ -228,7 +232,10 @@ class Mission2Node(Node):
         self.last_control_at = now
 
         observation = Observation(
-            x=x, y=y, yaw=yaw, now=now, holding=self.holding,
+            x=x, y=y, yaw=yaw, now=now,
+            # 집게 센서(tof_node)가 HOLDING_TIMEOUT 넘게 조용하면 모름(None) = 잡았다고 가정 (예전과 같음)
+            holding=(self.holding if self.holding_received_at is not None
+                     and now - self.holding_received_at <= HOLDING_TIMEOUT else None),
             gripper_state=self.gripper_state,
         )
 

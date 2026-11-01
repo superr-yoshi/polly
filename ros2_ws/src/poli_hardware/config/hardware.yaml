@@ -63,3 +63,17 @@ fake_mega_node:
     fake_range: 2.0            # SIM_ONLY
     range_rate: 8.0
     fake_gripper_move_s: 1.0   # SIM_ONLY: 집게 이동 시간 (임무 노드 GRASP_WAIT_S 1.5 s 안)
+
+# VL53L0X (집게 ToF) -> /range/gripper, /gripper/holding (2026-11-01)
+# 파이 소프트웨어 I2C 버스 4: VCC 1번 3.3V, GND 20번, SDA 11번(GPIO17), SCL 13번(GPIO27)
+# 필요: /boot/firmware/config.txt 에 dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=17,i2c_gpio_scl=27
+#       (scripts/pi_setup/vl53l0x_i2c.sh). 거리 확인: scripts/vl53l0x_test.py
+tof_node:
+  ros__parameters:
+    i2c_bus: 4
+    i2c_address: 41            # 0x29
+    rate: 30.0                 # Hz (센서 연속 측정 약 33 ms)
+    frame: gripper_tof_link    # 위치는 URDF tof_x/tof_y/tof_h (TODO_MEASURE)
+    hold_max_mm: 60            # TODO_MEASURE: 집게 안 큐브까지 거리 + 여유. 빈 집게(열림·닫힘)보다 작게
+    on_samples: 3              # 가까움이 이만큼 이어지면 holding true (약 0.1 s)
+    off_samples: 5             # 멂이 이만큼 이어지면 false (끌고 가다 잠깐 튀는 값 무시)

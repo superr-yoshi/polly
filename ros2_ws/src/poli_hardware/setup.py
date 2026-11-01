@@ -33,6 +33,7 @@ setup(
             'mega_bridge_node = poli_hardware.mega_bridge_node:main',
             'drive_test = poli_hardware.drive_test:main',
             'imu_node = poli_hardware.imu_node:main',
+            'tof_node = poli_hardware.tof_node:main',
         ],
     },
 )

@@ -45,4 +45,6 @@ def generate_launch_description():
         node('mega_bridge_node', UnlessCondition(fake)),
         # 실제 로봇의 /imu/data는 MPU6050 (파이 I2C). mega_bridge_node는 publish_imu: false
         node('imu_node', UnlessCondition(fake)),
+        # 집게 VL53L0X -> /gripper/holding. 센서가 없으면 보내지 않고 2초마다 다시 찾는다 (2026-11-01)
+        node('tof_node', UnlessCondition(fake)),
     ])

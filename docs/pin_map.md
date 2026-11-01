@@ -98,6 +98,7 @@
 | RPLIDAR | USB (어댑터 보드) | /dev/robot_lidar |
 | 카메라 | CSI | — |
 | IMU MPU6050 (GY-521) | 소프트웨어 I2C 버스 3, 주소 0x68 | /dev/i2c-3 |
+| 집게 ToF VL53L0X | 소프트웨어 I2C 버스 4, 주소 0x29 | /dev/i2c-4 |
 | 전원 | 5V 10A 컨버터 출력 → USB-C | — |
 
 - ⚠ Pi 5는 USB-C로 5 V 5 A(USB PD) 협상을 못 하면 USB 포트 전체 전류를 600 mA로 제한한다. 일반 5 V 컨버터는 PD를 못 하므로
@@ -108,6 +109,20 @@
 - 사용 중: **2, 3, 6, 7, 9, 18, 19, 30, 31번** (용도 기록 필요: TODO. 2·4·6번 = 전원 입력 계획과 관련)
 - 3번(하드웨어 I2C SDA)이 사용 중이라 IMU는 **소프트웨어 I2C(15·16번)**로 연결한다.
   3번에 꽂힌 것이 I2C 장치로 확인되면 IMU를 3·5번에 함께 연결해도 된다 (그때 `i2c_bus: 1`).
+
+### 집게 ToF 센서 VL53L0X — 파이 GPIO 직접 연결 (2026-11-01)
+| VL53L0X | 파이 40핀 |
+|---|---|
+| VCC | **1번 3.3V** (5V 핀 금지: SDA/SCL이 5 V로 끌어올려질 수 있음) |
+| GND | **20번 GND** |
+| SDA | **11번 GPIO 17** |
+| SCL | **13번 GPIO 27** |
+| XSHUT, GPIO1 | 연결 안 함 |
+
+- 파이 설정 (한 번): `sudo bash ~/polly/scripts/pi_setup/vl53l0x_i2c.sh` →
+  `/boot/firmware/config.txt`에 `dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=17,i2c_gpio_scl=27` → 재부팅 → `i2cdetect -y 4`에 `29`.
+- 거리 확인: `python3 ~/polly/scripts/vl53l0x_test.py`. 코드: `tof_node` (`hardware.yaml`, `/gripper/holding`, `/range/gripper`).
+- 위치는 URDF `tof_x`, `tof_y`, `tof_h` (TODO_MEASURE). 모듈에 빨간 LED가 있으면 가린다 (규정 Q6).
 
 ### IMU MPU6050 (GY-521) — 파이 GPIO 직접 연결 (2026-10-30, RRC Lite 내장 IMU 대체)
 | GY-521 | 파이 40핀 |
