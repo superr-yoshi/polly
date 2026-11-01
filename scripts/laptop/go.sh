@@ -28,6 +28,21 @@ stop_now() {
 trap stop_now INT TERM
 
 pi '~/polly/scripts/stop_mission.sh > /dev/null 2>&1'
+# Pi의 install은 복사본이라 git pull만으로는 실행 코드가 안 바뀐다 (2026-11-01: 옛 코드로 두 번 시험).
+# 노트북에 push된 최신 커밋과 Pi 빌드가 다르면 알려 주고, y면 받아서 빌드한다.
+STALE=$(pi 'cd ~/polly && git fetch -q origin 2>/dev/null; H=$(git rev-parse --short HEAD); \
+  for f in $(cd ros2_ws/src && ls */*/*.py | grep -E "^poli_(navigation|hardware)/poli_"); do \
+    cmp -s ros2_ws/src/$f ros2_ws/install/${f%%/*}/lib/python3.12/site-packages/${f#*/} || { echo "빌드 안 됨: $f"; break; }; done; \
+  [ "$H" = "$(git rev-parse --short origin/integrate/mdd10-control)" ] || echo "Pi 저장소 $H, 원격 최신 $(git rev-parse --short origin/integrate/mdd10-control)"')
+if [ -n "$STALE" ]; then
+  echo "⚠️  Pi 코드가 최신이 아니다: $STALE"
+  read -r -p "지금 받아서 빌드하려면 y (약 10초), 그냥 옛 코드로 하려면 엔터: " ANSWER
+  if [ "$ANSWER" = y ]; then
+    pi 'cd ~/polly && git pull -q --ff-only origin integrate/mdd10-control && git log --oneline -1 && \
+        cd ros2_ws && source /opt/ros/jazzy/setup.bash && \
+        colcon build --packages-select poli_navigation poli_hardware 2>&1 | tail -1' || stop_now
+  fi
+fi
 # 따로 켜 둔 LiDAR·Foxglove(view_lidar.sh 등)가 있으면 임무 LiDAR가 장치를 못 잡는다 (2026-11-01: health 80008002)
 pi 'pkill -INT -f "^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 (launch sllidar|run foxglove_bridge)" && sleep 2
     pgrep -x sllidar_node | xargs -r kill -9; pgrep -x foxglove_bridge | xargs -r kill -9; true'
