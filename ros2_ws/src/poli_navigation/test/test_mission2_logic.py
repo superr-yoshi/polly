@@ -13,6 +13,7 @@ from poli_navigation.mission2_logic import (
     CENTER_M,
     Command,
     distance_to_danger_line,
+    DODGE_START_M,
     DRIVE,
     GRASP,
     GRASP_WAIT_S,
@@ -480,7 +481,9 @@ def test_guard_dodges_along_circle_away_from_opponent():
         turned = math.atan2(math.sin(angle_from_center(robot.x, robot.y) - start_angle),
                             math.cos(angle_from_center(robot.x, robot.y) - start_angle))
         assert turned * side < 0.0, side
-        assert math.dist((robot.x, robot.y), opponent) > 0.9
+        # 상대가 DODGE_CLEAR_M 밖으로 가면 그 자리에서 원 위로 돌아오느라 몇 cm 가까워질 수 있다.
+        # 다시 피하기 시작하는 거리(DODGE_START_M)보다 넉넉히 멀면 된다.
+        assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M + 0.15
         assert command.linear == 0.0
 
 
@@ -564,6 +567,22 @@ def test_retreat_starts_30cm_from_line_after_start():
     robot = SimRobot()
     logic.step(robot.observe())
     assert logic.state == DRIVE
+
+
+def test_retreat_pushes_back_when_opponent_squeezes_toward_line():
+    # 2026-11-01 실기: 사방에서 조이면 노란 선 밖으로 나갔다. 중앙 쪽 상대가 차체에 붙어(표면 0.2 m)
+    # 0.15 m/s로 밀고 온다.
+    # 예전에는 중앙으로 가려다 앞의 상대 때문에 서 버려 그대로 밀려 나갔다.
+    logic, robot = guarding_robot()
+    robot.x, robot.y = 2.95, 1.8
+    push = 0.15
+    for _ in range(round(4.0 / DT)):
+        obs = robot.observe()
+        obs.opponents = ((robot.x - 0.2, robot.y), (robot.x, robot.y + 0.4),
+                         (robot.x, robot.y - 0.4))
+        robot.apply(logic.step(obs))
+        robot.x += push * DT
+        assert distance_to_danger_line(robot.observe()) > 0.1
 
 
 def test_moves_closer_to_center_when_full_turn_finds_nothing():

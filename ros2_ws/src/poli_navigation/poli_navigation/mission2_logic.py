@@ -51,6 +51,10 @@ DANGER_MARGIN_M = 0.3
 START_DANGER_MARGIN_M = 0.15
 # 복귀 시작 거리보다 이만큼 더 들어오면 원래 하던 동작으로
 RETREAT_EXIT_EXTRA_M = 0.15
+# 큐브를 잡고 복귀할 때는 중앙이 아니라 선에서 곧장 안쪽으로, 복귀 끝 거리보다 이만큼 더 들어간 점을
+# 향하고, 앞에 상대가 있어도 서지 않고 밀고 들어간다 (상대 밀기는 허용 3.4.6, 선 밖은 즉시 탈락).
+# 2026-11-01 실기: 사방에서 조이면 중앙 쪽에서 미는 상대 앞에서 서 버려 그대로 선 밖으로 밀려 나갔다.
+RETREAT_GOAL_EXTRA_M = 0.1
 
 # 이 거리(중앙까지)에 오면 카메라로 넘긴다 (그 전에라도 보이면 바로 넘긴다).
 VISION_HANDOFF_M = 0.6
@@ -195,15 +199,17 @@ GUARD_RADIUS_M = 1.0
 # 처음 빠지는 방향 (중앙 기준). 우리 출발 위치 쪽 대각선 = 상대가 출발하지 않는 쪽.
 GUARD_HOME_ANGLE = math.atan2(START_POSE[1] - CENTER_M[1], START_POSE[0] - CENTER_M[0])
 # 큐브를 잡고 움직일 때 속도·가감속·회전 (빠르거나 급하면 큐브가 빠진다). TODO_MEASURE
-GUARD_SPEED = 0.3
+# 2026-11-01 0.3 -> 0.5, 가감속 0.6 -> 1.0 (실기: 집게 힘이 충분해 큐브가 빠지지 않음, 피하기가 느렸다)
+GUARD_SPEED = 0.5
 # 잡자마자 원 위 처음 점까지 빠질 때만 (상대가 중앙에 오기 전에 벗어나기, 2026-11-01).
-# 정격 근처(0.8 m/s, hardware.yaml max_linear)는 큐브를 끌면 속도가 흔들리고, 가감속 0.6으로는
-# 0.8 m 안에서 0.69 m/s 넘게 내지도 못한다. 0.5면 0.3보다 약 0.8 s 빠르다.
-# TODO_MEASURE: 큐브를 잡고 0.5 m/s로 후진했다 서도 빠지지 않는지 확인
-GUARD_ESCAPE_SPEED = 0.5
-GUARD_ACCEL = 0.6
+# 정격 근처(0.8 m/s, hardware.yaml max_linear)는 큐브를 끌면 속도가 흔들린다.
+# 2026-11-01 0.5 -> 0.65 (가감속 1.0이면 0.8 m 안에서 약 0.89 m/s까지 낼 수 있다)
+# TODO_MEASURE: 큐브를 잡고 0.65 m/s로 후진했다 서도 빠지지 않는지 확인
+GUARD_ESCAPE_SPEED = 0.65
+GUARD_ACCEL = 1.0
 GUARD_HEADING_GAIN = 2.0
-GUARD_MAX_ANGULAR = 1.0
+# 2026-11-01 1.0 -> 1.6: GUARD_SPEED 0.3 -> 0.5와 같은 비율 (같은 회전 반경, 피할 때 원 밖으로 크게 돌지 않게)
+GUARD_MAX_ANGULAR = 1.6
 # 목표 점에서 이 안이면 선다
 GUARD_ARRIVE_M = 0.08
 # 앞·뒤 중 덜 도는 쪽으로 간다. 지금 방향을 바꾸려면 이만큼 더 틀어져야 한다 (앞뒤 왔다 갔다 방지).
@@ -300,6 +306,17 @@ def distance_to_danger_line(obs):
         obs.y - SAFE_ZONE_MIN_M,
         SAFE_ZONE_MAX_M - obs.y,
     )
+
+
+def retreat_goal(obs, exit_margin):
+    """선에서 곧장 안쪽으로, 복귀 끝 거리보다 RETREAT_GOAL_EXTRA_M 더 들어간 가장 가까운 점."""
+    low = SAFE_ZONE_MIN_M + exit_margin + RETREAT_GOAL_EXTRA_M
+    high = SAFE_ZONE_MAX_M - exit_margin - RETREAT_GOAL_EXTRA_M
+    return clamp_range(obs.x, low, high), clamp_range(obs.y, low, high)
+
+
+def clamp_range(value, low, high):
+    return min(max(value, low), high)
 
 
 def guard_point(angle):
@@ -454,8 +471,10 @@ class Mission2Logic:
             return None
 
         if self.holding_cube():
-            # 큐브를 잡고 있으면 천천히, 앞뒤 중 덜 도는 쪽으로 (제자리에서 크게 돌면 큐브가 빠진다)
-            return self._guard_drive(obs, CENTER_M, GUARD_SPEED, self._opponents(obs))
+            # 큐브를 잡고 있으면 앞뒤 중 덜 도는 쪽으로 (제자리에서 크게 돌면 큐브가 빠진다).
+            # 선에서 곧장 안쪽으로 가고, 상대가 막아도 서지 않는다 (RETREAT_GOAL_EXTRA_M 주석).
+            goal = retreat_goal(obs, self._retreat_exit_margin)
+            return self._guard_drive(obs, goal, GUARD_SPEED)
         return self._drive_toward(obs, CENTER_M, APPROACH_FAST_SPEED)
 
     def _resume_state_after_retreat(self):
