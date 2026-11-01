@@ -36,6 +36,8 @@ from poli_navigation.mission2_logic import (
     RETREAT,
     SEARCH,
     SEARCH_CENTER_M,
+    SPIN,
+    SPIN_SPEED,
     START_POSE,
     TARGET_AREA_AT_50CM,
     TURN,
@@ -253,7 +255,8 @@ def test_search_when_target_not_visible_after_drive():
     assert logic.state == GUARD
 
 
-def test_grasp_failed_backs_off_then_searches():
+def test_grasp_failed_backs_off_then_searches(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GRASP)
@@ -266,7 +269,8 @@ def test_grasp_failed_backs_off_then_searches():
     assert robot.gripper_log[-1] == GRIPPER_OPEN
 
 
-def test_grasp_failure_backs_off_far_enough_to_see_cube():
+def test_grasp_failure_backs_off_far_enough_to_see_cube(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GRASP)
@@ -295,7 +299,8 @@ def test_grasp_waits_for_holding_sensor_before_failing():
     assert logic.state == GUARD
 
 
-def test_retries_after_failed_grab_and_holds():
+def test_retries_after_failed_grab_and_holds(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GRASP)
@@ -323,7 +328,8 @@ def test_grasp_ends_as_soon_as_gripper_reports_closed():
     assert robot.now - started < 0.5
 
 
-def test_lost_target_during_guard_backs_off():
+def test_lost_target_during_guard_backs_off(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
@@ -684,8 +690,9 @@ def test_push_closes_when_tof_sees_cube_inside_gripper():
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
 
 
-def test_push_backs_off_without_closing_when_cube_never_enters():
+def test_push_backs_off_without_closing_when_cube_never_enters(monkeypatch):
     """15 cm를 밀어도 적외선에 안 잡히면(옆으로 비켜 감) 닫지 않고 집게를 연 채 물러난다 (헛 집게질 없음)."""
+    monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = _close_approach_logic()
     logic._approach(Observation(x=2.0, y=2.0, yaw=math.radians(90), now=0.1, detected=True,
                                 x_offset=0.0, area=36000.0, gripper_range=math.inf))
@@ -701,3 +708,61 @@ def test_tof_inside_during_approach_closes_right_away():
     logic = _close_approach_logic()
     command = logic._approach(Observation(x=2.0, y=2.05, yaw=0.0, now=0.1, gripper_range=0.03))
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
+
+
+def test_grasp_failed_spins_in_place_forever():
+    """잡기 실패 뒤에는 쫓아가지 않고 끝까지 제자리에서 돌기만 한다 (2026-11-01 팀)."""
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+
+    robot.holding = False
+    run(logic, robot, max_seconds=robot.now + GRASP_WAIT_S + 1.0, until=SPIN)
+    assert logic.state == SPIN
+    spot = (robot.x, robot.y)
+    gripper_commands = len(robot.gripper_log)
+    for _ in range(int(3.0 / DT)):
+        command = logic.step(robot.observe())
+        robot.apply(command)
+        assert logic.state == SPIN
+        assert command.linear == 0.0
+    assert command.angular == SPIN_SPEED
+    assert math.dist((robot.x, robot.y), spot) < 0.02
+    assert len(robot.gripper_log) == gripper_commands  # 집게는 그대로
+
+
+def test_lost_cube_during_guard_spins():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+
+    robot.holding = False
+    command = logic.step(robot.observe())
+    assert logic.state == SPIN
+    assert command.gripper is None
+
+
+def test_spin_returns_to_spin_after_retreat():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    robot.holding = False
+    run(logic, robot, max_seconds=robot.now + GRASP_WAIT_S + 1.0, until=SPIN)
+
+    # 밀려서 탈락선 가까이 가면 RETREAT로 안쪽에 돌아온 뒤 다시 돌기만 한다.
+    robot.x, robot.y = 0.6, 1.8
+    states = run(logic, robot, max_seconds=robot.now + 5.0, until=SPIN)
+    assert RETREAT in states
+    assert logic.state == SPIN
+
+
+def test_push_fail_spins_without_closing():
+    """밀어도 큐브가 안 들어오면 닫지 않고(헛 집게질 없음) 그 자리에서 돌기만 한다."""
+    logic = _close_approach_logic()
+    logic._approach(Observation(x=2.0, y=2.0, yaw=math.radians(90), now=0.1, detected=True,
+                                x_offset=0.0, area=36000.0, gripper_range=math.inf))
+    assert logic.state == PUSH
+    command = logic._push(Observation(x=2.0, y=2.16, yaw=math.radians(90), now=0.5,
+                                      gripper_range=math.inf))
+    assert logic.state == SPIN
+    assert command.gripper is None and command.linear == 0.0

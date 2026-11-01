@@ -8,7 +8,8 @@ ROS2와 무관한 순수 Python 모듈이다.
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
   -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(중앙에서 떨어진 원 위로 빠져서 지키기)
-  못 잡았거나 놓치면(/gripper/holding false) BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기
+  못 잡았거나 놓치면(/gripper/holding false) SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀)
+  (SPIN_AFTER_FAIL False면 예전처럼 BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기)
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
   + 언제나 탈락선 감시 (RETREAT)
 
@@ -178,6 +179,12 @@ BACKOFF_M = 0.18
 BACKOFF_SPEED = 0.3
 BACKOFF_TIMEOUT_S = 1.5
 
+# 2026-11-01 팀 결정: 잡기에 실패하거나(헛 집게질·밀어도 안 들어옴) 잡았다가 놓치면(뺏김)
+# 큐브를 쫓아가지 않고 그 자리에서 끝까지 돌기만 한다 (SPIN). 탈락선 감시(RETREAT)는 그대로.
+# 집게는 그대로 둔다 (닫힌 채라 차체가 작고, ToF가 잘못 '놓침'으로 봐도 큐브를 떨어뜨리지 않는다).
+SPIN_AFTER_FAIL = True
+SPIN_SPEED = 1.5  # rad/s (SEARCH_SPEED와 같게). TODO_MEASURE: 차체가 흔들리면 낮춘다
+
 # 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False로 했다가 True로 되돌림:
 # 임무를 켜면 Mega가 리셋돼 서보 힘이 빠지고 집게가 조금 닫힌다. 열기를 안 보내면 덜 열린 채로
 # 큐브까지 갔다. (시작 때 "한 번 오므려 보인" 것은 힘 빠진 집게를 열림 90도로 다시 잡는 동작)
@@ -249,6 +256,7 @@ GUARD = 'GUARD'
 RETREAT = 'RETREAT'
 RECENTER = 'RECENTER'
 BACKOFF = 'BACKOFF'
+SPIN = 'SPIN'
 # 큐브를 잡고 있는 상태
 HOLDING_STATES = (HOLD, GUARD)
 
@@ -393,6 +401,8 @@ class Mission2Logic:
         # 집게가 닫혔다고 본 시각 (GRASP), 후진 시작 위치 (BACKOFF)
         self._grasp_closed_at = None
         self._backoff_start = None
+        # 잡기에 실패했거나 놓쳐서 SPIN으로 간 뒤인지 (RETREAT 뒤에도 SPIN으로 돌아간다)
+        self.gave_up = False
 
     def _change_state(self, new_state, obs):
         if new_state == SEARCH and new_state != self.state:
@@ -478,6 +488,8 @@ class Mission2Logic:
         return self._drive_toward(obs, CENTER_M, APPROACH_FAST_SPEED)
 
     def _resume_state_after_retreat(self):
+        if self.gave_up:
+            return SPIN
         if self._state_before_retreat in HOLDING_STATES:
             return self._state_before_retreat
         return SEARCH
@@ -503,6 +515,7 @@ class Mission2Logic:
             HOLD: self._hold,
             GUARD: self._guard,
             BACKOFF: self._backoff,
+            SPIN: self._spin,
             RECENTER: self._recenter,
         }
         return handlers[self.state](obs)
@@ -804,6 +817,10 @@ class Mission2Logic:
         return self._start_backoff(obs)
 
     def _start_backoff(self, obs):
+        if SPIN_AFTER_FAIL:
+            self.gave_up = True
+            self._change_state(SPIN, obs)
+            return self._spin(obs)
         self._target_seen_at = obs.now
         self._backoff_start = (obs.x, obs.y)
         self._change_state(BACKOFF, obs)
@@ -817,6 +834,10 @@ class Mission2Logic:
             self._change_state(SEARCH, obs)
             return Command()
         return Command(linear=-BACKOFF_SPEED)
+
+    def _spin(self, obs):
+        """잡기 실패·놓침 뒤: 아무것도 쫓지 않고 제자리에서 계속 돈다 (SPIN_AFTER_FAIL)."""
+        return Command(angular=SPIN_SPEED)
 
     def _hold(self, obs):
         # 규정 3.4.7.3: 끝날 때까지 연속으로 오래 확보한 팀이 유리하다.

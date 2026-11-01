@@ -52,7 +52,7 @@ CALLBACK_WARN_S = 0.05
 DEFAULT_START_FILE = '/tmp/poli_mission_start'
 MOTION_LOG_STATES = (
     'TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT', 'GUARD', 'BACKOFF',
-    'RECENTER')
+    'RECENTER', 'SPIN')
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
