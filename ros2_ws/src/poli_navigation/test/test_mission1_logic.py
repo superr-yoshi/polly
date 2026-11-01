@@ -13,6 +13,7 @@ from poli_navigation.grid_map import (
 from poli_navigation.mission1_logic import (
     ALIGN,
     APPROACH,
+    ARC,
     CENTER_M,
     Command,
     DONE,
@@ -1399,3 +1400,84 @@ def test_closed_area_clears_blocked_cells_without_waiting():
     logic.state, logic.state_started_at = SCAN, 0.0
     logic._scan(Observation(x=x2, y=y2, yaw=yaw, now=5.0, scan=scan))
     assert logic._forgot_at == 1.0
+
+
+# ---------------------------------------------------------------
+# 2026-11-01: 곡선 꺾기 (복귀·되돌아가기에서 꺾는 칸에 서지 않음)
+# ---------------------------------------------------------------
+
+def _returning_logic():
+    """(9,3)에서 (9,1)로 내려가 (8,1)로 꺾는 복귀 길: (9,1)이 꺾는 칸."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.phase = RETURN
+    for cell in ((7, 1), (8, 1), (9, 1), (9, 2), (9, 3)):
+        logic.maze.observe(cell, math.pi / 2)
+    return logic
+
+
+def test_arc_planned_only_when_outer_cell_is_known_free():
+    """꺾는 칸 너머(원래 방향의 다음 칸)가 빈칸으로 확인됐을 때만 곡선으로 꺾는다."""
+    path = [(9, 3), (9, 2), (9, 1), (8, 1), (7, 1)]
+    logic = Mission1Logic(point_symmetry=False)
+    logic.phase = RETURN
+    # 아래로 내려가다 왼쪽으로: 원래 방향 다음 칸 (9,0)은 경기장 밖 -> 안 됨
+    assert logic._arc_plan(path, 2) is None
+    # 위로 올라가다 왼쪽으로 꺾는 (8,2)->(8,3)->(7,3): 너머 (8,4)가 모름이면 안 되고, 빈칸이면 된다
+    path = [(8, 2), (8, 3), (7, 3)]
+    assert logic._arc_plan(path, 1) is None
+    logic.grid.mark_free((8, 4))
+    arc = logic._arc_plan(path, 1)
+    assert arc['corner'] == (8, 3) and arc['d1'] == (0, 1) and arc['d2'] == (-1, 0)
+    # 탐색 중(지도가 없는 길)에는 하지 않는다
+    logic.phase = EXPLORE
+    assert logic._arc_plan(path, 1) is None
+
+
+def test_drive_enters_arc_without_stopping_and_continues_straight():
+    """꺾는 칸 앞 R에서 서지 않고 원호로 들어가고, 나갈 방향이 되면 다음 직선으로 이어 간다."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.phase = RETURN
+    logic.grid.mark_free((8, 4))
+    for cell in ((8, 2), (8, 3), (7, 3), (6, 3)):
+        logic.maze.observe(cell, math.pi / 2)
+    logic.maze.observe((8, 2), math.pi / 2)
+    x, y = cell_center_m((8, 2))
+    logic._arc = logic._arc_plan([(8, 2), (8, 3), (7, 3), (6, 3)], 1)
+    logic.target = cell_center_m((8, 3))
+    logic._drive_heading = math.pi / 2
+    logic._drive_origin_cell = (x, y)
+    logic.state = DRIVE
+    bx, by = cell_center_m((8, 3))
+    command = logic._drive(Observation(x=bx, y=by - 0.19, yaw=math.pi / 2, now=1.0))
+    assert logic.state == ARC
+    assert command.linear > 0.0 and command.angular > 0.0   # 왼쪽으로 돌며 계속 간다
+    # 나갈 방향(-x)이 되면 다음 직선: (6,3)까지 서지 않고
+    command = logic._arc_step(Observation(x=bx - 0.2, y=by, yaw=math.pi - 0.05, now=2.0))
+    assert logic.state == DRIVE
+    assert logic.target == cell_center_m((6, 3))
+    assert command.linear > 0.0
+
+
+def test_arc_cancelled_when_entering_off_line():
+    """원호에 들어갈 때 진행선에서 4 cm 넘게 비켜 있으면 곡선을 포기하고 칸 가운데에서 선다."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.phase = RETURN
+    logic.grid.mark_free((8, 4))
+    logic._arc = logic._arc_plan([(8, 2), (8, 3), (7, 3)], 1)
+    logic.target = cell_center_m((8, 3))
+    logic._drive_heading = math.pi / 2
+    logic._drive_origin_cell = cell_center_m((8, 2))
+    logic.state = DRIVE
+    bx, by = cell_center_m((8, 3))
+    logic._drive(Observation(x=bx + 0.06, y=by - 0.19, yaw=math.pi / 2, now=1.0))
+    assert logic.state == DRIVE and logic._arc is None
+
+
+def test_full_run_with_arc_turns_stays_out_of_blocked_cells():
+    true_grid = example_grid()
+    logic = Mission1Logic()
+    robot = SimRobot(true_grid)
+    states = run(logic, robot, until=DONE)
+    assert logic.state == DONE
+    assert ARC in states
+    assert [c for c in robot.visited if not true_grid.is_passable(c)] == []

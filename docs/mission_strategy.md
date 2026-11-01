@@ -108,6 +108,10 @@
 - rosbag: `BAG=1 bash scripts/laptop/go.sh 1` (Pi `~/poli_bags/`, `scripts/record_bag.sh`). 커밋하지 않는다
 - odom 보정: Pi에서 `python3 ~/polly/scripts/odom_calibrate.py line 1.0` / `spin 1`, 실제 값을 넣으면
   `wheel_radius`·`wheel_separation` 보정값 계산. 계산만: `odom_calibrate.py calc --line ODOM REAL --spin ODOM REAL`
+- 곡선 꺾기 (`ARC_TURNS`): 복귀·막다른 길 되돌아가기(지도가 있는 길)에서 꺾는 칸에 서지 않고, 네 칸이 만나는
+  모서리 점을 중심으로 0.4 m/s 원호로 돈다. 원래 방향의 다음 칸이 빈칸으로 확인됐을 때만 (바깥 앞모서리가 약 19 cm 나감).
+  반지름은 들어갈 때 실제 거리로 맞춰 안쪽 여유가 직선 주행과 같다. 진행선에서 4 cm 넘게 비켜 있으면 서서 회전.
+  시뮬레이션: 원호 중 상자까지 최소 16.5 cm(직선 주행 중 13.8 cm), 15개 배치 합계 365.5 -> 362.0 s
 - ⚠️ Pi의 install은 복사본이다 (symlink 아님). `git pull` 뒤 Pi에서 `colcon build`를 해야 실행에 반영된다
   (2026-11-01: 0068ff4를 pull만 하고 빌드하지 않아 15:24 실행이 옛 코드로 돎)
 

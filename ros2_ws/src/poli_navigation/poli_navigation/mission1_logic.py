@@ -31,6 +31,7 @@ from poli_navigation.grid_map import (
     cell_center_m,
     CELL_SIZE_M,
     CENTER,
+    FREE,
     GridMap,
     MISSION1_START,
     UNKNOWN,
@@ -231,6 +232,21 @@ START_WALL_TOL_M = 0.07
 START_WALL_BAND_M = 0.08
 START_WALL_MIN_M = 0.12
 
+# 곡선 꺾기 (2026-11-01): 지도가 있는 길(복귀·막다른 길 되돌아가기)에서 꺾는 칸에 서서 제자리 회전하지 않고,
+# 네 칸이 만나는 안쪽 모서리 점을 중심으로 반지름 ARC_RADIUS_M 원호를 ARC_SPEED로 돈다 (회전마다 약 1초 단축).
+# 원호에서 바깥 앞모서리가 원래 방향의 다음 칸 쪽으로 약 19 cm(벽까지 8 mm) 나가므로, 그 칸이 빈칸(FREE)으로
+# 확인됐을 때만 한다. 차체 치수 BODY_* 실측 후 재확인 (TODO_MEASURE)
+ARC_TURNS = True
+ARC_RADIUS_M = CELL_SIZE_M / 2.0
+ARC_SPEED = 0.4           # m/s -> 회전 2 rad/s. TODO_MEASURE: 바퀴 미끄러짐·큐브 빠짐이 보이면 낮춘다
+ARC_RADIAL_GAIN = 3.0     # rad/m, 원에서 벗어난 거리만큼 안·밖으로 튼다 (최대 ARC_MAX_CORRECTION_RAD)
+ARC_MAX_CORRECTION_RAD = math.radians(30.0)
+ARC_EXIT_RAD = math.radians(10.0)   # 나갈 방향과 이만큼 안이면 원호를 끝내고 직진
+# 원호 반지름은 들어가는 순간 로봇과 모서리 점 거리로 맞춘다. 그러면 안쪽 여유가 직선 주행 때와 같게 유지된다
+# (시뮬레이션: 고정 반지름으로 5 cm 비켜 들어가면 원 안쪽으로 5 cm 들어갔다).
+# 진행선에서 옆으로 이보다 비켜 있으면 곡선을 포기하고 칸 가운데에서 제자리 회전한다.
+ARC_MAX_LATERAL_M = 0.04
+
 # 큐브(50mm)가 이 크기 이상으로 보이면 집을 수 있는 거리 (카메라 픽셀 면적, 640x480)
 # 2026-10-30 실측 (주황 시험 대상, 같은 크기): 열린 집게 사이 잡는 위치에서 area 약 33000
 # (아래가 화면 밖으로 잘려 사실상 최댓값) -> 집게 안에 들어온 순간 잡도록 조금 낮춤 (TODO_MEASURE: 경기장에서 재확인)
@@ -282,6 +298,7 @@ GRASP = 'GRASP'
 RELEASE = 'RELEASE'
 DONE = 'DONE'
 STUCK = 'STUCK'
+ARC = 'ARC'
 
 
 def start_wall_check(scan):
@@ -386,6 +403,8 @@ class Mission1Logic:
         self._guard_off_cell = None
         # 막다른 길에서 되돌아 나오는 경로 (지나온 칸, 끝 = 안 가 본 이웃이 있는 칸). 없으면 None
         self._backtrack = None
+        # 지금 직선 구간 끝에서 곡선으로 꺾을 계획 (_arc_plan). 없으면 None
+        self._arc = None
         # 임무 시작 시각(첫 step), 마지막으로 처음 가 본 칸에 들어간 시각
         self.started_at = None
         self._new_cell_at = None
@@ -427,6 +446,8 @@ class Mission1Logic:
         self.turn_pulse.reset()
         self._turn_sign = 0
         self._turn_flips = 0
+        if new_state not in (TURN, DRIVE, ARC):
+            self._arc = None
         if new_state not in (TURN, DRIVE):
             self._chained = False
         if new_state != DRIVE:
@@ -478,7 +499,7 @@ class Mission1Logic:
         # 돌아가는 중에 큐브를 놓치면 다시 찾아서 잡는다.
         if self.phase != RETURN or obs.holding is not False:
             return None
-        if self.state not in (SCAN, TURN, DRIVE):
+        if self.state not in (SCAN, TURN, DRIVE, ARC):
             return None
 
         self.phase = EXPLORE
@@ -500,6 +521,7 @@ class Mission1Logic:
             RELEASE: self._release,
             DONE: self._done,
             STUCK: self._stuck,
+            ARC: self._arc_step,
         }
         return handlers[self.state](obs)
 
@@ -712,11 +734,84 @@ class Mission1Logic:
             # 구석이라 후진으로는 큐브 전체를 격자 안에 넣을 수 없다 (문의 16).
             # TODO_MEASURE: 복귀 중 후진으로 끌 때 큐브가 집게에서 빠지지 않는지 실기 확인
             self.reverse = abs(heading_error_to(obs, self.target)) > 3 * math.pi / 4
+            self._arc = None if self.reverse else self._arc_plan(path, end)
 
         self._drive_heading = math.atan2(
             self.target[1] - drive_origin[1], self.target[0] - drive_origin[0])
         self._change_state(TURN, obs)
         return Command()
+
+    def _arc_plan(self, path, end):
+        """
+        path[end](꺾는 칸)에서 곡선으로 꺾을 수 있으면 그 계획, 아니면 None.
+
+        지도가 있는 길(복귀·되돌아가기)에서 전진으로 들어와 90도 옆으로 나가고, 원래 방향의 다음 칸이
+        빈칸(FREE)으로 확인됐을 때만. 다음 구간이 출발 격자에 넣는 칸(delivering)이면 하지 않는다.
+        """
+        if not ARC_TURNS or (self.phase != RETURN and self._backtrack is None):
+            return None
+        if end < 1 or end + 1 >= len(path):
+            return None
+        corner = path[end]
+        d1 = (corner[0] - path[end - 1][0], corner[1] - path[end - 1][1])
+        d2 = (path[end + 1][0] - corner[0], path[end + 1][1] - corner[1])
+        if d1[0] * d2[0] + d1[1] * d2[1] != 0:
+            return None
+        if self.phase == RETURN and path[end + 1] == MISSION1_START:
+            return None
+        # 바깥: 원래 방향의 다음 칸 (바깥 앞모서리가 약 19 cm 나감).
+        # 안쪽 대각선 칸은 보지 않는다: 반지름을 들어갈 때 거리로 맞추므로 그 칸에 상자가 있어도
+        # 모서리까지 여유가 직선으로 그 옆을 달릴 때와 같고, 차체가 그 칸 쪽으로 들어가지 않는다.
+        outer = (corner[0] + d1[0], corner[1] + d1[1])
+        if not self.grid.in_bounds(outer) or self.grid.get(outer) != FREE:
+            return None
+        return {'corner': corner, 'd1': d1, 'd2': d2, 'next': path[end:]}
+
+    def _arc_step(self, obs):
+        """안쪽 모서리 점을 중심으로 원호를 따라 돌고, 나갈 방향이 되면 다음 직선 구간으로 이어 간다."""
+        arc = self._arc
+        if arc is None:
+            self._change_state(SCAN, obs)
+            return Command()
+        (d1x, d1y), (d2x, d2y) = arc['d1'], arc['d2']
+        cx, cy = self._arc_center(arc)
+        radius = arc.get('radius', ARC_RADIUS_M)
+        turn = 1.0 if d1x * d2y - d1y * d2x > 0 else -1.0   # +1 = 왼쪽(반시계)
+        goal_yaw = math.atan2(d2y, d2x)
+        left = math.atan2(math.sin(goal_yaw - obs.yaw), math.cos(goal_yaw - obs.yaw))
+        past = (obs.x - cx) * d2x + (obs.y - cy) * d2y >= 0.0
+        if abs(left) < ARC_EXIT_RAD or past or turn * left < 0.0:
+            return self._after_arc(obs, arc, goal_yaw)
+        rx, ry = obs.x - cx, obs.y - cy
+        # 원의 접선 방향 + 원 밖이면 안쪽으로, 안이면 바깥으로
+        tangent = math.atan2(ry, rx) + turn * math.pi / 2.0
+        correction = clamp(ARC_RADIAL_GAIN * (math.hypot(rx, ry) - radius),
+                           ARC_MAX_CORRECTION_RAD)
+        desired = tangent + turn * correction
+        error = math.atan2(math.sin(desired - obs.yaw), math.cos(desired - obs.yaw))
+        angular = turn * ARC_SPEED / radius + HEADING_GAIN * error
+        return Command(linear=ARC_SPEED, angular=clamp(angular, TURN_SPEED))
+
+    @staticmethod
+    def _arc_center(arc):
+        """원 중심 = 꺾는 칸 가운데에서 들어온 쪽으로 R, 나갈 쪽으로 R (네 칸이 만나는 모서리 점)."""
+        (d1x, d1y), (d2x, d2y) = arc['d1'], arc['d2']
+        bx, by = cell_center_m(arc['corner'])
+        return (bx + ARC_RADIUS_M * (d2x - d1x), by + ARC_RADIUS_M * (d2y - d1y))
+
+    def _after_arc(self, obs, arc, heading):
+        """원호 다음 직선 구간 (지나온 칸이라 같은 방향이 이어지는 데까지, 서지 않고)."""
+        path = arc['next']
+        end = self._straight_end(obs, path)
+        self.target = cell_center_m(path[end])
+        self.path = path
+        self.delivering = False
+        self.reverse = False
+        self._drive_origin_cell = cell_center_m(arc['corner'])
+        self._drive_heading = heading
+        self._arc = self._arc_plan(path, end)
+        self._change_state(DRIVE, obs)
+        return self._drive(obs)
 
     def _straight_end(self, obs, path):
         """
@@ -1034,6 +1129,7 @@ class Mission1Logic:
 
         endpoint_reached = False
         remaining = distance
+        lateral = 0.0
         if self._drive_heading is not None:
             # 목표 점을 겨누지 않고 계획한 진행선(출발 가운데 -> 목표 가운데)을 따라간다.
             # 2026-10-31 실기: 위치 보정으로 목표 점이 옆으로 옮겨지면 점을 겨누느라 대각선·45도 꺾임.
@@ -1050,6 +1146,18 @@ class Mission1Logic:
                           else clamp(DRIVE_LATERAL_GAIN * lateral, DRIVE_MAX_CORRECTION_RAD))
             desired_yaw = axis + correction + (math.pi if self.reverse else 0.0)
             error = math.atan2(math.sin(desired_yaw - obs.yaw), math.cos(desired_yaw - obs.yaw))
+
+        arc = self._arc is not None and self._arc['corner'] == target_cell
+        if arc and remaining <= ARC_RADIUS_M and abs(lateral) > ARC_MAX_LATERAL_M:
+            self._note(f'옆 오차 {lateral * 100:+.1f} cm -> 곡선 꺾기 취소, 서서 회전')
+            self._arc = None
+            arc = False
+        if arc and remaining <= ARC_RADIUS_M:
+            # 꺾는 칸 가운데 R 앞(칸 경계)에서 서지 않고 원호로 들어간다.
+            cx, cy = self._arc_center(self._arc)
+            self._arc['radius'] = math.hypot(obs.x - cx, obs.y - cy)
+            self._change_state(ARC, obs)
+            return self._arc_step(obs)
 
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
@@ -1078,6 +1186,10 @@ class Mission1Logic:
         # 목표에 가까워지면 일정한 감속으로 줄여 최저 속도로 도착한다. (출발 가속은 _limit_accel)
         remaining = max(0.0, remaining - ARRIVE_TOLERANCE_M)
         speed = min(DRIVE_SPEED, math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
+        if arc:
+            # 원호 시작점(꺾는 칸 가운데 R 앞)에서 ARC_SPEED가 되게 줄인다 (멈추지 않음)
+            to_arc = max(0.0, remaining - ARC_RADIUS_M)
+            speed = min(DRIVE_SPEED, math.sqrt(ARC_SPEED ** 2 + 2.0 * DRIVE_DECEL * to_arc))
         if obs.scan_time is not None:
             self._has_scan_time = True
         if (self.rolling and self._has_scan_time and not self.delivering
