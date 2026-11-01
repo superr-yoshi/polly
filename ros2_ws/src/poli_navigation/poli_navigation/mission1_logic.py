@@ -164,8 +164,11 @@ TURN_CHECK_S = 0.3
 # TODO: odom 지연을 재고 보정한 뒤 다시 켠다.
 ROLLING_DECISION = False
 # TODO_MEASURE: 판단 속도. 스캔 한 바퀴(0.1초) 동안 2 cm 움직인다. 지도가 이상하면 낮춘다
-ROLL_SPEED = 0.2
-ROLL_ZONE_M = 0.14     # 칸 가운데 이 거리 앞부터 ROLL_SPEED로 달린다
+# 2026-11-01 0.2 -> 0.35, 0.14 -> 0.20: (5,5)에서 멀어지는 직진은 칸마다 이 속도로 줄여 판단해 칸마다 주춤했다
+# (팀). 벽 판단 기준을 콘 광선 50%로 올려(scan_to_grid) 조금 흐린 스캔으로도 판단이 안정적이다.
+# 0.35 m/s면 스캔 한 바퀴(0.1 s) 동안 3.5 cm. TODO_MEASURE: 지도가 다시 어긋나면 낮춘다
+ROLL_SPEED = 0.35
+ROLL_ZONE_M = 0.20     # 칸 가운데 이 거리 앞부터 ROLL_SPEED로 달린다
 ROLL_WINDOW_M = 0.10   # 스캔을 찍은 위치가 칸 가운데에서 이 안이어야 판단에 쓴다
 # 속도를 바꾼(가감속) 뒤 차체 숙여짐이 가라앉을 때까지. 이 시간 뒤 시작한 스캔만 쓴다. TODO_MEASURE
 ROLL_SETTLE_S = 0.15

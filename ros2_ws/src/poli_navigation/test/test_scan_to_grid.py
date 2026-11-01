@@ -360,7 +360,7 @@ def test_corridor_between_boxes_not_blocked_with_small_pose_error():
 
 def test_neighbor_needs_quarter_of_cone_rays_to_be_blocked():
     """
-    이웃 칸 막힘은 ±15도 콘 광선의 50% 이상이 가까이 맞아야 한다 (예전 3개).
+    이웃 칸 막힘은 ±15도 콘 광선의 70% 이상이 가까이 맞아야 한다 (예전 3개).
 
     2026-11-01 실측: 진짜 벽 방향은 60개 중 52~58개, 뚫린 방향은 0개. 옆 상자 모서리 몇 개로는 막힘이 아니다.
     """
@@ -376,8 +376,8 @@ def test_neighbor_needs_quarter_of_cone_rays_to_be_blocked():
                                  range_min=0.05, range_max=12.0)
     states = neighbor_states(scan, (0.2 + 0.4 * 4, 0.2 + 0.4 * 4, 0.0))
     assert states[(6, 5)] == FREE
-    # 콘 대부분(40개)이 0.3 m에 맞으면 막힘
-    for k in range(-20, 20):
+    # 콘 대부분(50개, 약 83%)이 0.3 m에 맞으면 막힘
+    for k in range(-25, 25):
         ranges[n // 2 + k] = 0.3
     states = neighbor_states(scan, (0.2 + 0.4 * 4, 0.2 + 0.4 * 4, 0.0))
     assert states[(6, 5)] == BLOCKED
