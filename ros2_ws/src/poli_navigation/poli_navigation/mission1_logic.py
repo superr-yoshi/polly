@@ -119,6 +119,12 @@ DRIVE_SPEED = 0.6
 RETURN_DRIVE_SPEED = 0.45
 RETURN_LINEAR_ACCEL = 0.6
 RETURN_LINEAR_DECEL = 2.0  # LINEAR_DECEL과 같게
+# 복귀 회전은 부드럽게 (2026-11-01 23:11 실기: 잡은 큐브가 제자리 회전 직후 화면 면적 35000 -> 16000~23000으로
+# 집게 안에서 틀어지고, 복귀 중 벽에 몇 번 부딪힘). 바닥에 끌리는 큐브가 빠른 회전에 비틀리지 않게
+# 최고 회전 속도·각가속도를 낮추고, 방향을 거의 다 맞춘 뒤 출발한다. TODO_MEASURE: 큐브가 계속 틀어지면 더 낮춘다
+RETURN_TURN_SPEED = 2.0       # rad/s (탐색 TURN_SPEED 3.5)
+RETURN_ANGULAR_ACCEL = 6.0    # rad/s^2 (탐색 ANGULAR_ACCEL 15)
+RETURN_TURN_EXIT_RAD = math.radians(6.0)  # (탐색 TURN_EXIT_RAD 10도)
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 # 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
 # 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
@@ -282,9 +288,13 @@ ARC_MAX_LATERAL_M = 0.04
 GRAB_AREA = 35000.0
 # TODO_MEASURE: 큐브가 집게 안쪽 끝에 닿는 거리. 아직 얕으면 늘리고, 큐브를 앞으로 밀어내면 줄인다
 GRAB_PUSH_M = 0.04
-# 집게 안 적외선(VL53L0X, /range/gripper)이 있으면 큐브가 이 거리 안에 보이는 순간 닫는다 (임무 2와 같음).
+# 집게 안 적외선(VL53L0X, /range/gripper)에 큐브가 이 거리 안에 보이면 밀어 넣기(PUSH)를 시작한다.
 # 실측: 잡은 큐브 28 mm, 빈 집게 닫힘 108 mm. TODO_MEASURE: 열린 집게 안으로 충분히 들어온 거리
 GRAB_TOF_M = 0.05
+# 밀어 넣으며 닫는 거리 (GRAB_TOF_M보다 깊게). 2026-11-01 23:11 실기: 43 mm에서 닫아 잡은 뒤 32~38 mm,
+# 집게 힘이 약해 복귀 회전 때 큐브가 틀어짐 -> 큐브를 집게 안쪽(가득 들어감 28 mm)까지 넣고 닫는다.
+# TODO_MEASURE: 'm 밀어도 적외선에 안 들어옴'이 나오면 올린다
+GRAB_TOF_CLOSE_M = 0.035
 # 적외선에 이 거리 안으로 무언가 보이고 LiDAR(17 cm 높이)는 앞에 벽을 못 보면 낮은 큐브가 집게 앞에 있는 것.
 # 2026-11-01 21:30 실기: 회전 직후 큐브가 바로 앞이라 카메라 면적이 그대로인 채 끌고 가다
 # '면적이 안 커짐(오탐)'으로 접근을 두 번 그만두며 1.2 m 밀었다
@@ -318,8 +328,8 @@ GRIPPER_SETTLE_S = 0.1
 GRIPPER_CLOSED = 'closed'
 GRIPPER_OPENED = 'open'
 
-# 출발 칸에 와서 집게를 열지 (True) 잡은 채 끝낼지 (False, 기본). _deliver 참고
-RELEASE_AT_START = False
+# 출발 칸에 와서 집게를 열지 (True, 기본) 잡은 채 끝낼지 (False). _deliver 참고
+RELEASE_AT_START = True
 
 # 갈 길이 없을 때 다시 스캔하기 전까지 기다리는 시간
 STUCK_RETRY_S = 1.0
@@ -540,8 +550,9 @@ class Mission1Logic:
         command.linear = ramp(command.linear, self._last_linear, accel, decel, dt)
         if abs(command.linear - self._last_linear) > 0.005:
             self._speed_changed_at = now
+        angular_accel = RETURN_ANGULAR_ACCEL if self.phase == RETURN else ANGULAR_ACCEL
         command.angular = ramp(
-            command.angular, self._last_angular, ANGULAR_ACCEL, ANGULAR_ACCEL, dt)
+            command.angular, self._last_angular, angular_accel, angular_accel, dt)
         self._last_linear = command.linear
         self._last_angular = command.angular
         self._last_command_at = now
@@ -874,13 +885,16 @@ class Mission1Logic:
         error = math.atan2(math.sin(desired - obs.yaw), math.cos(desired - obs.yaw))
         arc_speed = self._arc_speed()
         angular = turn * arc_speed / radius + HEADING_GAIN * error
-        return Command(linear=arc_speed, angular=clamp(angular, TURN_SPEED))
+        return Command(linear=arc_speed, angular=clamp(angular, self._turn_speed()))
 
     def _arc_speed(self):
         return RETURN_ARC_SPEED if self.phase == RETURN else ARC_SPEED
 
     def _max_speed(self):
         return RETURN_DRIVE_SPEED if self.phase == RETURN else DRIVE_SPEED
+
+    def _turn_speed(self):
+        return RETURN_TURN_SPEED if self.phase == RETURN else TURN_SPEED
 
     @staticmethod
     def _arc_center(arc):
@@ -1159,7 +1173,8 @@ class Mission1Logic:
     def _turn_toward(self, error, obs):
         """IMU 각도 오차에 따라 연속 회전하고 목표각 앞에서 일정하게 감속한다."""
         remaining = max(0.0, abs(error) - TURN_TOLERANCE_RAD)
-        speed = min(TURN_SPEED, math.sqrt(MIN_TURN_SPEED ** 2 + 2.0 * TURN_DECEL * remaining))
+        speed = min(self._turn_speed(),
+                    math.sqrt(MIN_TURN_SPEED ** 2 + 2.0 * TURN_DECEL * remaining))
         return math.copysign(speed, error)
 
     def _turn(self, obs):
@@ -1168,7 +1183,8 @@ class Mission1Logic:
         predicted = error - self._last_angular * TURN_LEAD_S
 
         flipped = self._turn_flipped(predicted)
-        if abs(predicted) < TURN_EXIT_RAD or flipped:
+        exit_rad = RETURN_TURN_EXIT_RAD if self.phase == RETURN else TURN_EXIT_RAD
+        if abs(predicted) < exit_rad or flipped:
             self._turn_heading = obs.yaw + error
             self._turn_ended_at = obs.now
             self._change_state(DRIVE, obs, self._flip_reason(error) if flipped else None)
@@ -1334,7 +1350,7 @@ class Mission1Logic:
             roll_left = max(0.0, remaining - ROLL_ZONE_M)
             roll = math.sqrt(ROLL_SPEED ** 2 + 2.0 * DRIVE_DECEL * roll_left)
             speed = min(speed, roll)
-        angular = clamp(HEADING_GAIN * error, TURN_SPEED)
+        angular = clamp(HEADING_GAIN * error, self._turn_speed())
         # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
         linear = speed if abs(error) < math.radians(45.0) else 0.0
         return Command(linear=-linear if self.reverse else linear, angular=angular)
@@ -1557,8 +1573,8 @@ class Mission1Logic:
         # 큐브가 너무 가까워 카메라 값(잘림·놓침)은 믿지 않고 엔코더 거리만 본다.
         pushed = math.hypot(obs.x - self._push_start[0], obs.y - self._push_start[1])
         if self._push_tof and self._grab_sent_at is None:
-            # 적외선: 큐브가 집게 안(GRAB_TOF_M)에 보이는 순간 닫는다. 안 들어오면 닫지 않고 다시 판단
-            if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+            # 적외선: 큐브가 집게 안쪽(GRAB_TOF_CLOSE_M)까지 들어오면 닫는다. 안 들어오면 닫지 않고 다시 판단
+            if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_CLOSE_M:
                 self._change_state(GRASP, obs, f'적외선 {obs.gripper_range * 1000:.0f} mm')
                 self._grab_sent_at = obs.now
                 return Command(gripper=GRIPPER_GRAB)
@@ -1621,8 +1637,9 @@ class Mission1Logic:
         """
         출발 칸에 큐브를 가져왔다.
 
-        규정 3.3.4: 시작 지점으로 '운송'하면 승리 (내려놓을 필요 없음), 3.3.6: 상대가 탈취 가능.
-        그래서 기본은 놓지 않고 잡은 채로 끝낸다 (2026-10-31, 놓기 대기 0.7초도 줄어든다).
+        규정 3.3.4: 시작 지점으로 '운송'하면 승리, 문의 16: 블록 전체가 시작 격자 안이면 인정.
+        2026-10-31에는 놓지 않고 끝냈으나 2026-11-01 팀 결정으로 다시 놓는다 (RELEASE_AT_START).
+        놓는 위치는 _release_point (큐브가 격자 가운데).
         """
         if RELEASE_AT_START:
             self._change_state(RELEASE, obs)

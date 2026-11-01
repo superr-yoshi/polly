@@ -167,17 +167,17 @@ def test_full_run_delivers_cube_to_start_cell():
     assert logic.state == DONE
     assert FACE in states
     assert GRASP in states
-    assert RELEASE not in states  # 놓지 않고 잡은 채로 끝낸다 (규정 3.3.4·3.3.6)
+    assert RELEASE in states  # 출발 격자에서 놓는다 (2026-11-01 팀 결정)
 
     # 큐브가 출발 격자 가운데에 놓여 있어야 한다.
     assert distance_to_start(robot.cube) < 0.1
     assert point_to_cell(*robot.cube) == MISSION1_START
 
-    # 처음에 집게를 열고, 잡은 뒤, 출발 칸에서도 잡은 채로 끝낸다.
+    # 처음에 집게를 열고, 잡은 뒤, 출발 칸에서 열어 놓는다.
     assert robot.gripper_log[0] == GRIPPER_OPEN
     assert GRIPPER_GRAB in robot.gripper_log
-    assert robot.gripper_log[-1] == GRIPPER_GRAB
-    assert robot.holding is True
+    assert robot.gripper_log[-1] == GRIPPER_OPEN
+    assert robot.holding is False
 
 
 def test_full_run_never_enters_blocked_cell():
@@ -1595,7 +1595,7 @@ def test_pushing_cube_with_constant_area_is_not_false_positive():
         if logic.state != APPROACH:
             break
     assert logic.state == PUSH
-    command = logic._push(Observation(x=x + 0.03, y=1.0, yaw=0.0, now=2.0, gripper_range=0.04))
+    command = logic._push(Observation(x=x + 0.03, y=1.0, yaw=0.0, now=2.0, gripper_range=0.03))
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
 
 
@@ -1609,3 +1609,15 @@ def test_wall_guard_rests_right_after_arc_turn():
     logic._arc_step(Observation(x=bx - 0.2, y=by, yaw=math.pi - 0.05, now=2.0))
     assert logic.state == DRIVE
     assert logic._turn_ended_at == 2.0
+
+
+def test_return_turns_gently():
+    """복귀(큐브를 끔) 중 회전은 탐색보다 느리게 (23:11 실기: 빠른 회전에 큐브가 틀어짐)."""
+    logic = Mission1Logic()
+    obs = Observation(x=1.0, y=1.0, yaw=0.0, now=0.0)
+    assert logic._turn_toward(math.pi, obs) == mission1_logic.TURN_SPEED
+    logic.phase = RETURN
+    assert logic._turn_toward(math.pi, obs) == mission1_logic.RETURN_TURN_SPEED
+    logic._limit_accel(Command(), 0.0)
+    command = logic._limit_accel(Command(angular=3.0), 0.05)
+    assert command.angular <= mission1_logic.RETURN_ANGULAR_ACCEL * 0.05 + 1e-9
