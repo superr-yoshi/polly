@@ -595,3 +595,50 @@ def test_recenter_does_not_drive_into_opponent():
     assert logic.wants_opponents()
     command = logic.step(obs)
     assert command.linear == 0.0
+
+
+# ---------------------------------------------------------------
+# 2026-11-01 실기 19:30: 큐브 옆을 집음, 경기장 밖 빨간 물체
+# ---------------------------------------------------------------
+
+def _close_approach_logic():
+    logic = Mission2Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    logic.target = (1.8, 1.8)
+    logic._area_best = 13000.0
+    logic._area_best_at = (2.1, 2.0)
+    logic._target_seen_at = 0.0
+    return logic
+
+
+def test_close_off_center_cube_turns_to_center_before_going_straight():
+    """가까이서 큐브가 화면 가운데가 아니면(x_offset -0.43) 곧게 가지 않고 서서 카메라 방향으로 돈다."""
+    logic = _close_approach_logic()
+    command = logic._approach(Observation(x=2.06, y=2.02, yaw=math.radians(154), now=0.1,
+                                          detected=True, x_offset=-0.43, area=13500.0))
+    assert logic.state == APPROACH
+    assert command.linear == 0.0 and command.angular > 0.0   # 큐브가 왼쪽 -> 왼쪽으로
+    # 가운데로 들어오면 곧게
+    command = logic._approach(Observation(x=2.06, y=2.02, yaw=math.radians(160), now=0.2,
+                                          detected=True, x_offset=-0.05, area=14000.0))
+    assert command.linear > 0.0 and command.angular == 0.0
+
+
+def test_grab_waits_until_cube_is_centered():
+    """잡을 만큼 커도 큐브가 화면 옆(x_offset -0.54)이면 집게를 닫지 않는다 (헛 집게질)."""
+    logic = _close_approach_logic()
+    logic._approach(Observation(x=2.0, y=2.05, yaw=math.radians(156), now=0.1,
+                                detected=True, x_offset=-0.54, area=36000.0))
+    assert logic.state == APPROACH
+    logic._approach(Observation(x=2.0, y=2.05, yaw=math.radians(170), now=0.3,
+                                detected=True, x_offset=-0.05, area=36000.0))
+    assert logic.state == PUSH
+
+
+def test_red_object_outside_arena_is_not_used_as_cube():
+    """출발 전 오른쪽 경기장 밖 빨간 물체(x_offset +0.81, 면적 430)는 큐브 위치로 쓰지 않는다."""
+    logic = Mission2Logic()
+    x, y, yaw = START_POSE
+    logic.step(Observation(x=x, y=y, yaw=yaw, now=0.0, detected=True, x_offset=0.81, area=430.0))
+    assert logic.target is None

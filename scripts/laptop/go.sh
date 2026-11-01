@@ -39,6 +39,13 @@ if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
   echo "30초 안에 준비가 안 됐다 (카메라·Mega·LiDAR 확인). 로그: Pi ~/poli_logs/"
   stop_now
 fi
+# LiDAR가 죽은 채로도 임무는 Ready가 된다 (2026-11-01: USB가 빠져 18:58·19:30 실행이 LiDAR 없이 돎)
+if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
+         grep -q "SLLidar health status : OK" "$f" && ! grep -q "sllidar_node-[0-9]*\]: process has died" "$f"'; then
+  echo "⚠️  LiDAR가 안 켜졌다 (USB·/dev/robot_lidar 확인). 이대로면 위치 보정·상대 감지·탈락선 판단이 안 된다."
+  read -r -p "그래도 시작하려면 y, 멈추려면 엔터: " ANSWER
+  [ "$ANSWER" = y ] || stop_now
+fi
 read -r -p "준비 완료. 엔터 = 시작 (Ctrl+C = 취소) "
 pi '~/polly/scripts/start_mission.sh go' | grep -v "^$"
 echo "진행 보기 (Ctrl+C = 정지)"

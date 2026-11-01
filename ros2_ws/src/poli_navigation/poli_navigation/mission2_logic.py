@@ -32,6 +32,8 @@ from typing import Optional
 
 CELL_SIZE_M = 0.4
 ARENA_SIZE_M = 9 * CELL_SIZE_M
+# 카메라로 계산한 큐브 위치가 외벽에서 이 안이면 경기장 밖 물체로 보고 버린다
+ARENA_MARGIN_M = 0.05
 
 START_POSE = (7.5 * CELL_SIZE_M, 1.5 * CELL_SIZE_M, math.pi / 2)
 CENTER_M = (4.5 * CELL_SIZE_M, 4.5 * CELL_SIZE_M)
@@ -129,6 +131,12 @@ APPROACH_DECEL = DRIVE_DECEL
 # 이만큼 가까우면(카메라 약 25 cm) 더 틀지 않고 곧게 들어간다 (조금 비켜 잡아도 됨, 2026-11-01).
 # 가까울수록 위치 추정의 작은 오차에도 방향이 크게 바뀌어 막판에 꺾였다 (시뮬레이션).
 APPROACH_STRAIGHT_AREA = 10000.0
+# 곧게 들어가기·잡기 전에 큐브가 화면 가운데(x_offset) 이 안이어야 한다. 밖이면 서서(비킨 만큼 느리게)
+# 카메라 방향으로 돌아 맞춘다. 2026-11-01 실기 19:30: 면적 13500, x_offset -0.43(약 14도)에서 곧게 고정해
+# 큐브 옆을 집었다 (ToF가 못 잡음 -> 후진 -> 다시 찾다 놓침). TODO_MEASURE: 집게 폭에 맞춰 조정
+APPROACH_STRAIGHT_MAX_OFFSET = 0.15
+APPROACH_GRAB_MAX_OFFSET = 0.3
+APPROACH_CENTER_GAIN = 2.0   # rad/s 당 카메라 방향 오차(rad)
 APPROACH_SLOW_AREA = 20000.0  # 카메라에서 약 18 cm (잡기 GRAB_AREA는 약 13 cm, 2026-11-01 실측 기준)
 # 카메라가 대상을 잠깐 놓쳐도 이 시간은 기다린다 (카메라 지연 약 0.3초)
 TARGET_LOST_S = 0.5
@@ -515,6 +523,10 @@ class Mission2Logic:
         bearing = yaw - obs.x_offset * CAMERA_HALF_FOV_RAD
         distance = CAMERA_AHEAD_M + area_to_distance(obs.area)
         point = (x + distance * math.cos(bearing), y + distance * math.sin(bearing))
+        # 경기장 밖으로 계산되면 큐브가 아니다 (2026-11-01 실기: 출발 전 오른쪽 경기장 밖 빨간 물체가
+        # 면적 430으로 보여 큐브 위치에 섞였다)
+        if not all(ARENA_MARGIN_M < c < ARENA_SIZE_M - ARENA_MARGIN_M for c in point):
+            return
         if self.target is None:
             self.target = point
         else:
@@ -645,7 +657,9 @@ class Mission2Logic:
         # 빨리 달릴 때 본 위치는 카메라 지연 차이 x 속도만큼 틀려서(0.8 m/s면 0.15 s에 12 cm) 쓰지 않는다.
         close_by_pose = (self._area_best >= APPROACH_SLOW_AREA
                          and self._camera_distance(obs) <= area_to_distance(GRAB_AREA))
-        if close_by_pose or (obs.detected and (obs.area >= GRAB_AREA or stalled)):
+        off_center = obs.detected and abs(obs.x_offset) > APPROACH_GRAB_MAX_OFFSET
+        grab = close_by_pose or (obs.detected and (obs.area >= GRAB_AREA or stalled))
+        if grab and not off_center:
             self._push_start = (obs.x, obs.y)
             self._grab_sent_at = None
             self._change_state(PUSH, obs)
@@ -664,7 +678,14 @@ class Mission2Logic:
         command = self._drive_toward(
             obs, self.target, speed, APPROACH_HEADING_GAIN, APPROACH_MAX_ANGULAR)
         if self._area_best >= APPROACH_STRAIGHT_AREA:
-            command = Command(linear=speed)
+            if obs.detected and abs(obs.x_offset) > APPROACH_STRAIGHT_MAX_OFFSET:
+                # 가운데가 아니다 -> 카메라 방향으로 돌며 비킨 만큼 느리게 (2배 넘게 비키면 제자리)
+                bearing = -obs.x_offset * CAMERA_HALF_FOV_RAD
+                scale = max(0.0, 2.0 - abs(obs.x_offset) / APPROACH_STRAIGHT_MAX_OFFSET)
+                angular = clamp(APPROACH_CENTER_GAIN * bearing, APPROACH_MAX_ANGULAR)
+                command = Command(linear=speed * min(1.0, scale), angular=angular)
+            else:
+                command = Command(linear=speed)
         return command
 
     def _push(self, obs):
