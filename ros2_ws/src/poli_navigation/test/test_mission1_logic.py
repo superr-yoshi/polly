@@ -658,6 +658,27 @@ def test_rolling_decision_with_turn_stops_and_turns_without_scan_wait(monkeypatc
     assert logic.state == TURN
 
 
+def test_rolling_decision_stops_to_scan_when_turn_cell_is_unknown(monkeypatch):
+    """꺾을 옆 칸이 '모름'(판단 애매)이면 바로 돌지 않고 서서 다시 본다 (2026-11-02 19:24 벽 뚫음)."""
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 3))
+    original = mission1_logic.neighbor_states
+
+    def without_side(scan, pose, center=None):
+        states = original(scan, pose, center)
+        states.pop((8, 2), None)
+        return states
+
+    monkeypatch.setattr(mission1_logic, 'neighbor_states', without_side)
+    logic, obs = _rolling_logic(true_grid, 0.06)
+    logic.step(obs)
+    assert logic.grid.get((8, 2)) != FREE
+    x, y = cell_center_m((9, 2))
+    logic.step(Observation(x=x, y=y - 0.02, yaw=math.pi / 2, now=1.05))
+    assert logic.state == SCAN
+
+
 def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center(monkeypatch):
     monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     logic, obs = _rolling_logic(GridMap(), 0.06)

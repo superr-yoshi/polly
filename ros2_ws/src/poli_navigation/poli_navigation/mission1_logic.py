@@ -737,9 +737,18 @@ class Mission1Logic:
             self._decided_for = None
             self.event = f'주행 중 판단: 직진 계속 -> {self.path}'
             return True
+        next_cell = self.path[1] if self.state == TURN and self.path else None
         (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
          self.state, self.state_started_at, self.stop_reason) = saved
         self._decided_for = self.target
+        if (next_cell is not None and self.grid.get(next_cell) != FREE
+                and next_cell not in self.maze.state.visits):
+            # 꺾어 들어갈 옆 칸을 빈칸으로 못 봤다 (애매해서 '모름'). 미로는 모름을 지나갈 수 있다고 보지만
+            # 옆 칸 벽은 집게 끝에서 몇 cm라 돌고 나서는 앞 벽 감시로 못 막는다 -> 서서 다시 본다.
+            # 2026-11-02 19:24 실기: (8,5)->(8,6), (8,6)->(7,6) 둘 다 '?'인 왼쪽 칸으로 꺾어 벽을 뚫고 감.
+            self._scan_at_arrival = True
+            self.event = f'주행 중 판단: 꺾을 칸 {next_cell}을 못 봐서 가운데에 서서 다시 본다'
+            return False
         self.event = '주행 중 판단: 가운데에 서서 회전 (판단 대기 없음)'
         return False
 
