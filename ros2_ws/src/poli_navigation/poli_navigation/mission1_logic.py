@@ -353,6 +353,12 @@ CAMERA_GAP_S = 0.5
 TOF_GRAB_CAMERA_S = 2.0
 # 적외선 방식으로 밀며 들어가는 최대 거리 (이만큼 밀어도 안 들어오면 닫지 않고 다시 판단)
 GRAB_TOF_PUSH_MAX_M = 0.15
+# 큐브가 집게 입구(GRAB_TOF_MOUTH_M 안)에 있는데 GRAB_TOF_STALL_S 동안 GRAB_TOF_PROGRESS_M도 더 안 들어오면(같이 밀려감)
+# 깊이(GRAB_TOF_CLOSE_M)까지 기다리지 않고 그 자리에서 닫는다. 벽은 집게 끝이 먼저 닿아 적외선이 약 90 mm 아래로 안 온다.
+# 2026-11-02 22:25 실기: 55 mm에서 더 안 들어온 채 1초 동안 11 cm 밀다 '안 들어옴'으로 그만둬 큐브가 옆으로 빠짐.
+GRAB_TOF_MOUTH_M = 0.07
+GRAB_TOF_PROGRESS_M = 0.005
+GRAB_TOF_STALL_S = 0.3
 # 주행 중 카메라에 큐브가 이만큼 크게(약 45 cm 안) 보이면 그 칸으로 밀고 들어가지 않고 진행선으로 바로 접근한다.
 # 21:30 실기: 멀리서 작게 본 큐브 거리를 멀게 계산해 큐브 칸으로 들어가며 밀었다. TODO_MEASURE
 DRIVE_CUBE_AREA = 11000.0
@@ -553,6 +559,9 @@ class Mission1Logic:
         self._start_checked = False
         # 이번 밀기를 적외선으로 판단하는지 (밀기 시작할 때 센서가 살아 있었는지)
         self._push_tof = False
+        # 밀기 중 집게 입구 큐브: 어느 밀기 것인지, 가장 가까웠던 거리와 그 시각
+        self._mouth_for = None
+        self._mouth_best = None
         self._forgot_at = -math.inf
         self._forget_interval = FORGET_MIN_INTERVAL_S
         self._last_forgot_blocked = None
@@ -1698,6 +1707,19 @@ class Mission1Logic:
         speed = APPROACH_SLOW_SPEED if obs.area >= APPROACH_SLOW_AREA else APPROACH_SPEED
         return Command(linear=speed, angular=clamp(HEADING_GAIN * error, TURN_SPEED))
 
+    def _mouth_stalled(self, obs):
+        """밀기 중 큐브가 집게 입구에 있는데 GRAB_TOF_STALL_S 동안 더 안 들어오는지 (같이 밀려감)."""
+        if self._mouth_for != self.state_started_at:
+            self._mouth_for = self.state_started_at
+            self._mouth_best = None
+        distance = obs.gripper_range
+        if distance is None or distance > GRAB_TOF_MOUTH_M:
+            return False
+        if self._mouth_best is None or distance < self._mouth_best[0] - GRAB_TOF_PROGRESS_M:
+            self._mouth_best = (distance, obs.now)
+            return False
+        return obs.now - self._mouth_best[1] >= GRAB_TOF_STALL_S
+
     def _push(self, obs):
         """GRAB_AREA에 닿은 뒤 GRAB_PUSH_M만큼 곧게 더 들어가 큐브를 집게 안쪽까지 넣고 닫는다."""
         # 큐브가 너무 가까워 카메라 값(잘림·놓침)은 믿지 않고 엔코더 거리만 본다.
@@ -1706,6 +1728,11 @@ class Mission1Logic:
             # 적외선: 큐브가 집게 안쪽(GRAB_TOF_CLOSE_M)까지 들어오면 닫는다. 안 들어오면 닫지 않고 다시 판단
             if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_CLOSE_M:
                 self._change_state(GRASP, obs, f'적외선 {obs.gripper_range * 1000:.0f} mm')
+                self._grab_sent_at = obs.now
+                return Command(gripper=GRIPPER_GRAB)
+            if self._mouth_stalled(obs):
+                self._change_state(
+                    GRASP, obs, f'적외선 {obs.gripper_range * 1000:.0f} mm에서 더 안 들어옴 -> 입구에서 닫음')
                 self._grab_sent_at = obs.now
                 return Command(gripper=GRIPPER_GRAB)
             too_long = obs.now - self.state_started_at > GRAB_PUSH_TIMEOUT_S

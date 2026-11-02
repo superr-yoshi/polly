@@ -1798,3 +1798,31 @@ def test_side_guard_ignores_open_gripper_claws(monkeypatch):
                                  angle_increment=2.0 * math.pi / count,
                                  range_min=0.05, range_max=12.0)
     assert mission1_logic.side_clearance(scan) == (math.inf, math.inf)
+
+
+def test_push_closes_at_mouth_when_cube_does_not_go_deeper():
+    """큐브가 입구(55 mm)에서 더 안 들어오고 같이 밀리면 0.3 s 뒤 그 자리에서 닫는다 (2026-11-02 22:25)."""
+    logic, x, y = _driving_west_logic()
+    logic._push_start = (x, y)
+    logic._push_tof = True
+    logic._change_state(PUSH, Observation(x=x, y=y, yaw=math.pi, now=1.0))
+    command = None
+    for k in range(10):
+        now = 1.0 + 0.05 * k
+        command = logic._push(Observation(x=x - 0.01 * k, y=y, yaw=math.pi, now=now,
+                                          gripper_range=0.055))
+        if logic.state == GRASP:
+            break
+    assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
+    assert 0.3 <= now - 1.0 <= 0.4
+
+
+def test_push_keeps_going_while_cube_slides_deeper():
+    logic, x, y = _driving_west_logic()
+    logic._push_start = (x, y)
+    logic._push_tof = True
+    logic._change_state(PUSH, Observation(x=x, y=y, yaw=math.pi, now=1.0))
+    for k in range(5):  # 65 -> 41 mm: 계속 들어오는 중 (35 mm에 닿으면 원래대로 닫는다)
+        command = logic._push(Observation(x=x - 0.01 * k, y=y, yaw=math.pi, now=1.0 + 0.1 * k,
+                                          gripper_range=0.065 - 0.006 * k))
+        assert logic.state == PUSH and command.linear > 0.0
