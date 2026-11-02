@@ -162,8 +162,10 @@ DRIVE_MAX_CORRECTION_RAD = math.radians(15.0)
 # 직진 중 방향 오차가 DRIVE_FULL_SPEED_RAD를 넘으면 속도를 줄이고(DRIVE_PIVOT_RAD에서 0), 그 이상이면 제자리에서 돈다.
 # 2026-11-02 20:03 실기: 복귀 중 곡선·회전 뒤 방향 오차 8~20도인 채 최고 속도로 출발해 사선으로 감
 # (예전에는 45도 안이면 최고 속도, HEADING_GAIN 1.5라 20도를 맞추는 동안 몇 cm 옆으로 감).
-DRIVE_FULL_SPEED_RAD = math.radians(5.0)
-DRIVE_PIVOT_RAD = math.radians(25.0)
+# 2026-11-02 5 -> 10도, 25 -> 30도, 진행선 기준 방향 오차만 본다: 20:3x 실기에서 주행 중 벽 보정(2~3 cm)으로
+# 진행선 복귀 각도가 5도를 넘을 때마다 중간중간 감속했다.
+DRIVE_FULL_SPEED_RAD = math.radians(10.0)
+DRIVE_PIVOT_RAD = math.radians(30.0)
 # 직진 중 방향 맞추는 이득 (HEADING_GAIN 1.5는 20도를 맞추는 데 약 1초). 시뮬레이션(모터 지연 0.12 s):
 # 20도 틀어진 출발에서 옆 오차 3.8 -> 1.8 cm, 좌우 흔들림 없음 (3.5까지도 없음).
 # TODO_MEASURE: 직진 중 좌우로 흔들리면 낮춘다
@@ -1399,9 +1401,14 @@ class Mission1Logic:
             speed = min(speed, roll)
         angular = clamp(DRIVE_HEADING_GAIN * error, self._turn_speed())
         # 방향이 틀어져 있으면 그만큼 천천히 가며 맞추고(사선 방지), 많이 틀어져 있으면 제자리에서 먼저 돈다.
+        # 진행선으로 돌아오려고 일부러 트는 각도(옆 오차 보정)는 빼고 진행선 기준으로 본다.
+        misaligned = error
+        if self._drive_heading is not None:
+            facing = self._drive_heading + (math.pi if self.reverse else 0.0)
+            misaligned = math.atan2(math.sin(obs.yaw - facing), math.cos(obs.yaw - facing))
+        linear = self._heading_limited(speed, misaligned)
         self._drive_max_lateral = max(self._drive_max_lateral, abs(lateral))
-        return Command(linear=-self._heading_limited(speed, error) if self.reverse
-                       else self._heading_limited(speed, error), angular=angular)
+        return Command(linear=-linear if self.reverse else linear, angular=angular)
 
     @staticmethod
     def _heading_limited(speed, error):

@@ -1675,16 +1675,30 @@ def test_return_turns_same_as_explore():
 
 
 def test_drive_slows_down_when_heading_is_off():
-    """방향 오차가 크면 천천히 가며 맞추고, 25도 넘으면 제자리에서 돈다 (2026-11-02 사선 주행)."""
+    """방향 오차가 크면 천천히 가며 맞추고, 30도 넘으면 제자리에서 돈다 (2026-11-02 사선 주행)."""
     speed = 0.6
-    assert Mission1Logic._heading_limited(speed, math.radians(3.0)) == speed
-    assert Mission1Logic._heading_limited(speed, math.radians(-3.0)) == speed
-    half = Mission1Logic._heading_limited(speed, math.radians(15.0))
+    assert Mission1Logic._heading_limited(speed, math.radians(8.0)) == speed
+    assert Mission1Logic._heading_limited(speed, math.radians(-8.0)) == speed
+    half = Mission1Logic._heading_limited(speed, math.radians(20.0))
     assert abs(half - speed * 0.5) < 1e-9
-    assert Mission1Logic._heading_limited(speed, math.radians(30.0)) == 0.0
+    assert Mission1Logic._heading_limited(speed, math.radians(31.0)) == 0.0
     # 줄여도 하드웨어 최저 속도 아래로는 내리지 않는다 (바퀴가 안 돈다)
     assert Mission1Logic._heading_limited(
-        speed, math.radians(24.9)) == mission1_logic.MIN_DRIVE_SPEED
+        speed, math.radians(29.9)) == mission1_logic.MIN_DRIVE_SPEED
+
+
+def test_lateral_correction_alone_does_not_slow_down():
+    """진행선 방향을 보고 있으면 옆 오차를 고치려고 트는 중에도 감속하지 않는다 (중간중간 감속)."""
+    logic = Mission1Logic()
+    logic.state = DRIVE
+    logic.target = (3.4, 1.8)
+    logic._drive_heading = math.pi / 2
+    logic._last_linear = 0.6
+    logic._last_command_at = 0.0
+    # 진행선에서 4 cm 옆 (벽 보정으로 옮겨짐), 방향은 진행선과 같다
+    command = logic._drive(Observation(x=3.36, y=0.6, yaw=math.pi / 2, now=0.05))
+    assert command.linear == mission1_logic.DRIVE_SPEED
+    assert command.angular < 0.0
 
 
 def test_drive_after_turn_with_heading_error_stays_near_line():
