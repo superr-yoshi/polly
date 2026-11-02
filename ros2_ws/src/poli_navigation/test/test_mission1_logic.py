@@ -1791,7 +1791,8 @@ def test_side_guard_ignores_open_gripper_claws(monkeypatch):
         for side in (1.0, -1.0):
             dx, dy = claw_x + 0.08, 0.12 * side
             angle = math.atan2(dy, dx)
-            ranges[int(round((angle + math.pi) / (2.0 * math.pi / count))) % count] = math.hypot(dx, dy)
+            index = int(round((angle + math.pi) / (2.0 * math.pi / count))) % count
+            ranges[index] = math.hypot(dx, dy)
     scan = types.SimpleNamespace(ranges=ranges, angle_min=-math.pi,
                                  angle_increment=2.0 * math.pi / count,
                                  range_min=0.05, range_max=12.0)
