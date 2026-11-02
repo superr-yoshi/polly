@@ -1579,7 +1579,7 @@ def test_big_cube_ahead_while_driving_switches_to_approach():
 def test_tof_cube_in_gripper_while_driving_grabs():
     """지금 카메라에 안 보여도(집게 앞으로 사라짐) 조금 전에 봤고 적외선이 집게 안(5 cm) 큐브를 보면 닫는다."""
     logic, x, y = _driving_west_logic()
-    logic._camera_seen_at = 0.0
+    logic._camera_streak_start, logic._camera_seen_at = -1.5, 0.0  # 1.5초 이어서 봤다
     scan = simulate_scan(GridMap(use_point_symmetry=False), (x - 0.05, y, math.pi))
     command = logic._drive(Observation(x=x - 0.05, y=y, yaw=math.pi, now=0.5, scan=scan,
                                        gripper_range=0.03))
@@ -1587,14 +1587,28 @@ def test_tof_cube_in_gripper_while_driving_grabs():
 
 
 def test_tof_alone_while_driving_does_not_grab_without_camera():
-    """카메라가 큐브를 본 적 없으면 적외선 값만으로 닫지 않는다 (2026-11-02 (6,2) 헛 집게질)."""
-    for seen_at in (None, 0.5 - mission1_logic.DRIVE_TOF_CAMERA_S - 0.1):
+    """카메라가 큐브를 1초 넘게 이어서 보지 않았으면 적외선 값만으로 닫지 않는다 (2026-11-02 (6,2))."""
+    late = 0.5 - mission1_logic.TOF_GRAB_CAMERA_S - 0.1
+    for streak_start, seen_at in ((None, None),     # 본 적 없음
+                                  (0.0, 0.3),       # 잠깐(0.3초)만 봄 (빨간 오탐)
+                                  (late - 1.5, late)):  # 오래전에 봄
         logic, x, y = _driving_west_logic()
-        logic._camera_seen_at = seen_at
+        logic._camera_streak_start, logic._camera_seen_at = streak_start, seen_at
         scan = simulate_scan(GridMap(use_point_symmetry=False), (x - 0.05, y, math.pi))
         command = logic._drive(Observation(x=x - 0.05, y=y, yaw=math.pi, now=0.5, scan=scan,
                                            gripper_range=0.033))
         assert logic.state == DRIVE and command.gripper is None
+
+
+def test_camera_streak_counts_short_gaps_as_continuous():
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    x, y, yaw = START_POSE
+    for k in range(13):  # 0.1초마다, 0.4초 끊김 한 번 (CAMERA_GAP_S 안)
+        now = 0.1 * k
+        detected = not 4 <= k <= 6
+        logic.step(Observation(x=x, y=y, yaw=yaw, now=now, detected=detected, area=500.0))
+    assert logic._camera_confirmed(Observation(x=x, y=y, yaw=yaw, now=1.2))
 
 
 def test_tof_near_wall_is_not_a_cube():
