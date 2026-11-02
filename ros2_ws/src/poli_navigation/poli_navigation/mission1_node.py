@@ -68,6 +68,15 @@ def mapping_scan_ready(scan_started_at, now, stop_started_at):
 # -7.6 cm, +9.4 cm로 반대여서 대각선 주행). 서서 찍은 스캔은 다 반영한다. TODO_MEASURE
 MOVING_FIX_GAIN = 0.5
 MOVING_FIX_MAX_M = 0.03
+# 직진 중 스캔마다 진행 방향에 수직인(옆) 위치만 벽으로 조금씩 바로잡는다 (2026-11-02).
+# 예전에는 칸 가운데 근처(주행 중 판단)에서만 고쳐, 여러 칸 직진하는 동안 옆으로 흐른 것을 벽에 닿은 뒤에야 알았다
+# (21:55·21:58 실기: 오른쪽 바깥 벽 구간에서 22~23 cm 밀려 박음). 위치만 고치고 핸들은 진행선 따라가기가 부드럽게 맞춘다.
+# 방향이 진행선과 LATERAL_FIX_MAX_HEADING 안이고 회전 명령이 LATERAL_FIX_MAX_TURN 아래일 때만 (회전 중 스캔은 비틀린다)
+LATERAL_FIX = True
+LATERAL_FIX_GAIN = 0.3
+LATERAL_FIX_MAX_M = 0.01           # 스캔 한 번(0.1 s)에 최대 1 cm
+LATERAL_FIX_MAX_HEADING = math.radians(10.0)
+LATERAL_FIX_MAX_TURN = 0.5         # rad/s
 
 
 # 마지막 집게 명령을 이 주기(초)로 다시 보낸다.
@@ -114,6 +123,9 @@ class Mission1Node(Node):
         self.prev_odom = None
         self.fused = None
         self.wall_fixed_for = None
+        # 직진 중 옆 위치 보정: 마지막으로 쓴 스캔, 이번 주행 누적 보정량 (로그용)
+        self.lateral_fixed_scan = None
+        self.lateral_fix_total = 0.0
         self.holding = None
         self.holding_received_at = None
         # 집게 안 적외선 거리 (tof_node /range/gripper, m, 범위 밖 inf)
@@ -275,6 +287,33 @@ class Mission1Node(Node):
         self.get_logger().info(
             f'{source} 보정: dx={dx:+.3f} m, dy={dy:+.3f} m, dyaw={math.degrees(dyaw):+.1f}도')
 
+    def straight_driving(self, scan):
+        """직진 중이고 이 스캔으로 아직 옆 위치를 안 고쳤는지 (LATERAL_FIX)."""
+        logic = self.logic
+        if (not LATERAL_FIX or logic.state != 'DRIVE' or scan is None
+                or scan is self.lateral_fixed_scan or logic._drive_heading is None
+                or abs(logic._last_angular) > LATERAL_FIX_MAX_TURN):
+            return False
+        facing = logic._drive_heading + (math.pi if logic.reverse else 0.0)
+        error = math.atan2(math.sin(self.pose[2] - facing), math.cos(self.pose[2] - facing))
+        return abs(error) < LATERAL_FIX_MAX_HEADING
+
+    def fix_lateral_with_walls(self, scan, pose, heading):
+        """벽으로 잰 위치 오차 중 진행 방향에 수직인 성분만 조금(LATERAL_FIX_GAIN, 최대 1 cm) 고친다."""
+        dyaw = wall_yaw_offset(scan, pose)
+        dx, dy = wall_offset(scan, (pose[0], pose[1], pose[2] + dyaw))
+        nx, ny = -math.sin(heading), math.cos(heading)
+        lateral = dx * nx + dy * ny
+        lateral = max(-LATERAL_FIX_MAX_M, min(LATERAL_FIX_MAX_M, LATERAL_FIX_GAIN * lateral))
+        if abs(lateral) < 1e-4:
+            return
+        dx, dy = lateral * nx, lateral * ny
+        start_yaw = START_POSE[2]
+        self.fused[0] += dx * math.cos(start_yaw) + dy * math.sin(start_yaw)
+        self.fused[1] += -dx * math.sin(start_yaw) + dy * math.cos(start_yaw)
+        self.pose = odom_to_arena(*self.fused)
+        self.lateral_fix_total += lateral
+
     def make_observation(self, now, scan):
         x, y, yaw = self.pose
         observation = Observation(
@@ -361,6 +400,10 @@ class Mission1Node(Node):
             # 달리면서 판단할 때: 스캔을 찍던 순간 위치로 보정 (판단도 같은 스캔으로 한다)
             self.fix_pose_with_walls(scan, logic.scan_pose(observation), moving=True)
             observation = self.make_observation(now, scan)
+        elif self.straight_driving(scan):
+            self.lateral_fixed_scan = scan
+            self.fix_lateral_with_walls(scan, logic.scan_pose(observation), logic._drive_heading)
+            observation = self.make_observation(now, scan)
         x, y, yaw = self.pose
 
         command = self.logic.step(observation)
@@ -423,6 +466,7 @@ class Mission1Node(Node):
         if self.drive_logged_for != logic.state_started_at:
             self.drive_logged_for = logic.state_started_at
             self.yaw_gap = 0.0
+            self.lateral_fix_total = 0.0
         if now - self.last_drive_log < DRIVE_LOG_PERIOD:
             return
         self.last_drive_log = now
@@ -433,6 +477,7 @@ class Mission1Node(Node):
             f'cmd=({command.linear:.2f},{command.angular:+.2f}) '
             f'enc_w={self.enc_w:+.2f} imu_w={self.imu_w:+.2f} '
             f'yaw_gap={math.degrees(self.yaw_gap):+.1f}deg '
+            f'lat_fix={self.lateral_fix_total * 100:+.1f}cm '
             f'side=(L {left * 100:.1f}, R {right * 100:.1f}) cm')
 
     def send_gripper(self, command):
