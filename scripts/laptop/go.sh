@@ -37,7 +37,7 @@ STALE=$(pi 'cd ~/polly && git fetch -q origin 2>/dev/null; H=$(git rev-parse --s
 if [ -n "$STALE" ]; then
   echo "⚠️  Pi 코드가 최신이 아니다: $STALE"
   read -r -p "지금 받아서 빌드하려면 y (약 10초), 그냥 옛 코드로 하려면 엔터: " ANSWER
-  if [ "$ANSWER" = y ]; then
+  if [[ "$ANSWER" == [yYㅛ] ]]; then
     pi 'cd ~/polly && git pull -q --ff-only origin integrate/mdd10-control && git log --oneline -1 && \
         cd ros2_ws && source /opt/ros/jazzy/setup.bash && \
         colcon build --packages-select poli_navigation poli_hardware 2>&1 | tail -1' || stop_now
@@ -59,7 +59,7 @@ if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
          grep -q "SLLidar health status : OK" "$f" && ! grep -q "sllidar_node-[0-9]*\]: process has died" "$f"'; then
   echo "⚠️  LiDAR가 안 켜졌다 (USB·/dev/robot_lidar 확인). 이대로면 위치 보정·상대 감지·탈락선 판단이 안 된다."
   read -r -p "그래도 시작하려면 y, 멈추려면 엔터: " ANSWER
-  [ "$ANSWER" = y ] || stop_now
+  [[ "$ANSWER" == [yYㅛ] ]] || stop_now
 fi
 read -r -p "준비 완료. 엔터 = 시작 (Ctrl+C = 취소) "
 pi '~/polly/scripts/start_mission.sh go' | grep -v "^$"
