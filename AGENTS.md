@@ -6,7 +6,8 @@
 
 ## 1. 프로젝트
 - 2026 창원대 전국대학생 자율로봇경진대회 출전 자율 구조 로봇 "POLI"
-- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·IMU·초음파·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · BNO085 IMU · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
+- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·IMU·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · BNO085 IMU · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
+- **2026-11-02: 실제 로봇에 초음파 센서가 없다.** 아래·다른 문서·URDF·펌웨어에 남은 HC-SR04 ×4, `/range/front·left·right·rear`는 옛 계획이다. 초음파를 쓰는 기능을 만들지 않는다.
 - **2026-10-29: RRC Lite를 쓰지 않는다** (MDD10 + Mega로 변경). 옛 RRC 문서·코드 기록(`docs/rrc_*.md`, `firmware/rrc_lite_patch/`)은 참고용이다.
 
 ## 0. 대회 규정이 최우선 (이 로봇은 이 대회를 위해 만든다)
@@ -51,7 +52,7 @@
 | `ros2_ws/src/poli_navigation/` | 임무(mission2), 격자 지도, LiDAR 처리, fake_scan / fake_odom | 담당 1 |
 | `ros2_ws/src/poli_hardware/` | Mega 브리지 `mega_bridge_node`(주행·센서·집게), fake 하드웨어 `fake_mega_node`, 보정 도구 `drive_test` | 조원 A |
 | `ros2_ws/src/poli_description/` | 로봇 위치 모델 URDF (센서 frame: `laser`, `imu_link`, `camera_link`, `ultrasonic_*_link`) | 조원 A |
-| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, BNO085, 초음파 4개, 집게 서보 1개) | 조원 A |
+| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, BNO085, 집게 서보 1개. 초음파 코드는 남아 있지만 실제 센서 없음) | 조원 A |
 | `firmware/rrc_lite_patch/` | **사용 안 함** (RRC Lite를 뺌, 2026-10-29). 기록용 | — |
 | (예정) 카메라 / `/vision/target` | 빨간 대상 탐지 | 조원 B |
 | `firmware/nucleo_controller/` | 옛 NUCLEO 계획. 사용하지 않음 | — |
@@ -73,7 +74,7 @@
    fake 테스트는 `ros2 launch poli_hardware hardware.launch.py`(기본 fake 모드)만 켜면 조원 A 토픽이 전부 나온다.
 6. odom → base_link TF는 robot_localization(EKF)만 발행한다. 하드웨어 노드는 TF를 발행하지 않는다.
    base_link → 센서 frame은 `poli_description`(robot_state_publisher)만 발행한다. 센서 위치를 코드 상수로 따로 두지 말고 URDF를 고친다.
-   초음파 토픽은 `/range/front`, `/range/left`, `/range/right`, `/range/rear` (좌측만 낮게 장착).
+   (초음파 토픽 `/range/front` 등은 옛 계획. 2026-11-02 실제 로봇에 초음파 없음)
    IMU frame `imu_link` = BNO085 위치.
 7. 실측하지 않은 값(바퀴 지름·간격, 센서 위치, 서보 각도 등)은 상수/파라미터로 빼고 `TODO_MEASURE`(실측 필요) 또는 `SIM_ONLY`(시뮬레이션 임시값) 주석을 단다. 임시값을 진짜 값처럼 굳히지 않는다.
 8. Mega 시리얼 packet 형식을 바꾸면 `docs/serial_protocol.md`, 펌웨어, `poli_hardware/mega_protocol.py`를 **함께** 고친다.
