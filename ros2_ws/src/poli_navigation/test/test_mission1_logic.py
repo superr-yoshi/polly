@@ -1,4 +1,5 @@
 import math
+import types
 
 from hw_model import actual_twist
 from poli_navigation import mission1_logic
@@ -1731,3 +1732,49 @@ def test_return_turns_in_place_without_arc_by_default():
     logic.phase = RETURN
     logic.grid.mark_free((8, 4))
     assert logic._arc_plan([(8, 2), (8, 3), (7, 3)], 1) is None
+
+
+def _wall_scan(side_m, side):
+    """로봇 기준 한쪽(side +1 왼쪽, -1 오른쪽)에 축과 나란한 벽이 side_m 거리에 있는 스캔 (LiDAR 축 위 가정)."""
+    ranges = []
+    count = 360
+    for i in range(count):
+        angle = -math.pi + i * 2.0 * math.pi / count
+        s = math.sin(angle) * side
+        ranges.append(side_m / s if s > 0.05 else math.inf)
+    return types.SimpleNamespace(ranges=ranges, angle_min=-math.pi,
+                                 angle_increment=2.0 * math.pi / count,
+                                 range_min=0.05, range_max=12.0)
+
+
+def test_side_wall_guard_steers_away_without_slowing(monkeypatch):
+    """옆 벽이 가까우면 반대쪽으로 더 튼다. 감속은 DRIVE_SLOW_FOR_WALLS일 때만 (2026-11-02 21:57 사선 충돌)."""
+    monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_OFFSET_X_M', 0.0)
+    monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_OFFSET_Y_M', 0.0)
+    monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_YAW_RAD', 0.0)
+    for side, sign in ((-1, 1.0), (1, -1.0)):   # 오른쪽 벽 -> 왼쪽(+)으로, 왼쪽 벽 -> 오른쪽으로
+        logic = Mission1Logic()
+        logic.state = DRIVE
+        logic.target = (3.4, 1.8)
+        logic._drive_heading = math.pi / 2
+        free = logic._drive(Observation(x=3.4, y=0.6, yaw=math.pi / 2, now=0.0,
+                                        scan=_wall_scan(0.30, side)))
+        near = logic._drive(Observation(x=3.4, y=0.6, yaw=math.pi / 2, now=0.05,
+                                        scan=_wall_scan(0.155, side)))
+        assert near.linear == free.linear > mission1_logic.SIDE_GUARD_SPEED
+        assert (near.angular - free.angular) * sign > 0.3
+        monkeypatch.setattr(mission1_logic, 'DRIVE_SLOW_FOR_WALLS', True)
+        slowed = logic._drive(Observation(x=3.4, y=0.6, yaw=math.pi / 2, now=0.1,
+                                          scan=_wall_scan(0.155, side)))
+        assert slowed.linear <= mission1_logic.SIDE_GUARD_SPEED + 1e-9
+        monkeypatch.setattr(mission1_logic, 'DRIVE_SLOW_FOR_WALLS', False)
+
+
+def test_drive_slows_when_far_off_line_only_if_enabled(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'DRIVE_SLOW_FOR_WALLS', True)
+    logic = Mission1Logic()
+    logic.state = DRIVE
+    logic.target = (3.4, 1.8)
+    logic._drive_heading = math.pi / 2
+    command = logic._drive(Observation(x=3.47, y=0.6, yaw=math.pi / 2, now=0.0))
+    assert command.linear <= mission1_logic.DRIVE_LATERAL_SLOW_SPEED + 1e-9

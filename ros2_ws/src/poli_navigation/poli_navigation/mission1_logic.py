@@ -172,6 +172,25 @@ DRIVE_PIVOT_RAD = math.radians(30.0)
 DRIVE_HEADING_GAIN = 2.5
 # 한 번 주행에서 진행선 옆으로 이보다 많이 벗어났으면 도착할 때 로그로 남긴다 (사선 주행 확인용)
 DRIVE_LATERAL_LOG_M = 0.03
+# 진행선에서 이보다 벗어나면 DRIVE_LATERAL_SLOW_SPEED로 줄인다: 빠르면 약한 쪽 바퀴가 돌 여유가 없어 못 돌아온다.
+# 2026-11-02 21:21·21:55 실기: 오른쪽 바깥 벽을 따라 오른쪽으로 19·23 cm 밀려 벽에 박음 (방향을 고치라는
+# 명령은 나갔는데 0.6 m/s에서 한쪽 바퀴가 그만큼 더 빨리 못 돎). TODO_MEASURE
+DRIVE_LATERAL_SLOW_M = 0.05
+DRIVE_LATERAL_SLOW_SPEED = 0.35
+# 위 감속과 옆 벽 감시 감속(SIDE_GUARD_SPEED)을 쓸지. 2026-11-02 팀: 감속 없이 -> 끔. 옆 벽 감시를 일찍(0.19 m)
+# 시작해 작게 자주 틀어 바퀴 속도 차이를 작게 둔다. 그래도 벽에 박으면 True로 켠다.
+DRIVE_SLOW_FOR_WALLS = False
+# 옆 벽 감시: 직진 중 차체 옆(축 기준 앞뒤 SIDE_GUARD_BACK_M ~ SIDE_GUARD_FRONT_M)의 LiDAR 점이 축에서 옆으로
+# SIDE_GUARD_M보다 가까우면 반대쪽으로 SIDE_GUARD_GAIN x 들어온 거리만큼 더 틀고 SIDE_GUARD_SPEED로 줄인다.
+# 차체 반폭 0.1525 m(바퀴 포함 30.5 cm), 통로 가운데면 벽은 0.2 m. 2026-11-02 21:57 실기: 오른쪽 벽이 축에서
+# 0.15~0.17 m(바퀴와 0~2 cm)인 채 달리다 사선으로 박음. 축에서 SIDE_GUARD_SELF_M 안 점은 우리 부품으로 본다.
+# 2026-11-02 0.18 -> 0.19: 통로 가운데(벽 0.2 m)에서 1 cm만 비켜도 작게 틀기 시작 (감속 없이 일찍 고친다)
+SIDE_GUARD_M = 0.19
+SIDE_GUARD_GAIN = 20.0       # rad/s 당 m (1 cm 들어오면 0.2 rad/s, 3 cm면 0.6 rad/s 더)
+SIDE_GUARD_SPEED = 0.3
+SIDE_GUARD_BACK_M = -0.15
+SIDE_GUARD_FRONT_M = 0.20
+SIDE_GUARD_SELF_M = 0.12
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
@@ -377,6 +396,25 @@ STUCK = 'STUCK'
 ARC = 'ARC'
 
 
+def side_clearance(scan):
+    """차체 옆 구간의 LiDAR 점까지 옆 거리 (왼쪽, 오른쪽) (m, 축 기준). 없으면 inf."""
+    left = right = math.inf
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance) or not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = scan_to_grid.LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        # 로봇 기준 점 (앞 = +x, 왼쪽 = +y)
+        px = scan_to_grid.LASER_OFFSET_X_M + distance * math.cos(angle)
+        py = scan_to_grid.LASER_OFFSET_Y_M + distance * math.sin(angle)
+        if not SIDE_GUARD_BACK_M <= px <= SIDE_GUARD_FRONT_M or abs(py) < SIDE_GUARD_SELF_M:
+            continue
+        if py > 0.0:
+            left = min(left, py)
+        else:
+            right = min(right, -py)
+    return left, right
+
+
 def start_wall_check(scan):
     """
     출발 자세 확인: 오른쪽·뒤 외벽이 축에서 약 START_WALL_M에 있는지 (로그용 한 줄).
@@ -475,8 +513,9 @@ class Mission1Logic:
         self._scan_at_arrival = False
         # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
         self._chained = False
-        # 이번 주행에서 진행선 옆으로 가장 많이 벗어난 거리 (로그용)
+        # 이번 주행에서 진행선 옆으로 가장 많이 벗어난 거리, 옆 벽 감시를 로그로 남겼는지 (로그용)
         self._drive_max_lateral = 0.0
+        self._side_guard_noted = False
         # 여러 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
         self._no_chain_from = set()
         self._drive_origin_cell = None
@@ -540,6 +579,7 @@ class Mission1Logic:
             self._chained = False
         if new_state == DRIVE and self.prev_state != DRIVE:
             self._drive_max_lateral = 0.0
+            self._side_guard_noted = False
         if new_state != DRIVE:
             # 다른 일(대상 발견 등)로 주행이 끊기면 미리 한 판단은 버린다.
             self._decided_for = None
@@ -1407,6 +1447,21 @@ class Mission1Logic:
             facing = self._drive_heading + (math.pi if self.reverse else 0.0)
             misaligned = math.atan2(math.sin(obs.yaw - facing), math.cos(obs.yaw - facing))
         linear = self._heading_limited(speed, misaligned)
+        if DRIVE_SLOW_FOR_WALLS and abs(lateral) > DRIVE_LATERAL_SLOW_M:
+            linear = min(linear, DRIVE_LATERAL_SLOW_SPEED)
+        if obs.scan is not None:
+            left, right = side_clearance(obs.scan)
+            # 오른쪽 벽이 가까우면 왼쪽(+)으로, 왼쪽 벽이 가까우면 오른쪽으로 (후진이면 반대로 돌아야 같은 쪽으로 비킨다)
+            push = max(0.0, SIDE_GUARD_M - right) - max(0.0, SIDE_GUARD_M - left)
+            if push:
+                angular = clamp(angular + (-1.0 if self.reverse else 1.0) * SIDE_GUARD_GAIN * push,
+                                self._turn_speed())
+                if DRIVE_SLOW_FOR_WALLS:
+                    linear = min(linear, SIDE_GUARD_SPEED)
+                if not self._side_guard_noted and min(left, right) < SIDE_GUARD_M - 0.02:
+                    side = '오른쪽' if push > 0.0 else '왼쪽'
+                    self._note(f'옆 벽 감시: {side} 벽이 축에서 {min(left, right) * 100:.1f} cm -> 비켜 감')
+                    self._side_guard_noted = True
         self._drive_max_lateral = max(self._drive_max_lateral, abs(lateral))
         return Command(linear=-linear if self.reverse else linear, angular=angular)
 
