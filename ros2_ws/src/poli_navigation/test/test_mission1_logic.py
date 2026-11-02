@@ -438,7 +438,7 @@ def test_drive_follows_planned_line_with_limited_correction():
     obs = Observation(x=3.25, y=0.3, yaw=math.pi / 2, now=0.0)
     command = logic._drive(obs)
     assert command.linear > 0.0
-    expected = mission1_logic.HEADING_GAIN * -mission1_logic.DRIVE_MAX_CORRECTION_RAD
+    expected = mission1_logic.DRIVE_HEADING_GAIN * -mission1_logic.DRIVE_MAX_CORRECTION_RAD
     assert abs(command.angular - expected) < 1e-9
 
 
@@ -1668,3 +1668,40 @@ def test_return_turns_gently():
     logic._limit_accel(Command(), 0.0)
     command = logic._limit_accel(Command(angular=3.0), 0.05)
     assert command.angular <= mission1_logic.RETURN_ANGULAR_ACCEL * 0.05 + 1e-9
+
+
+def test_drive_slows_down_when_heading_is_off():
+    """방향 오차가 크면 천천히 가며 맞추고, 25도 넘으면 제자리에서 돈다 (2026-11-02 사선 주행)."""
+    speed = 0.6
+    assert Mission1Logic._heading_limited(speed, math.radians(3.0)) == speed
+    assert Mission1Logic._heading_limited(speed, math.radians(-3.0)) == speed
+    half = Mission1Logic._heading_limited(speed, math.radians(15.0))
+    assert abs(half - speed * 0.5) < 1e-9
+    assert Mission1Logic._heading_limited(speed, math.radians(30.0)) == 0.0
+    # 줄여도 하드웨어 최저 속도 아래로는 내리지 않는다 (바퀴가 안 돈다)
+    assert Mission1Logic._heading_limited(
+        speed, math.radians(24.9)) == mission1_logic.MIN_DRIVE_SPEED
+
+
+def test_drive_after_turn_with_heading_error_stays_near_line():
+    """20도 틀어진 채 출발해도 진행선에서 옆으로 크게 벗어나지 않는다."""
+    logic = Mission1Logic()
+    logic.gripper_opened = True
+    logic.started_at = 0.0
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    start = cell_center_m((7, 2))
+    logic.target = cell_center_m((9, 2))
+    logic._drive_origin_cell = start
+    logic._drive_heading = 0.0
+    x, y, yaw = start[0], start[1], math.radians(-20.0)
+    worst = 0.0
+    now = 0.0
+    while now < 3.0 and logic.state == DRIVE:
+        command = logic.step(Observation(x=x, y=y, yaw=yaw, now=now))
+        yaw += command.angular * 0.05
+        x += command.linear * math.cos(yaw) * 0.05
+        y += command.linear * math.sin(yaw) * 0.05
+        worst = max(worst, abs(y - start[1]))
+        now += 0.05
+    assert worst < 0.03  # 예전(45도 안이면 최고 속도, 이득 1.5)은 약 5.5 cm

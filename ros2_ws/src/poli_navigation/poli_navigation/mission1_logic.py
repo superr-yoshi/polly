@@ -157,6 +157,17 @@ HEADING_GAIN = 1.5
 # 진행선에서 옆으로 벗어났을 때 돌아오는 방향 = 옆 오차 x 이득, 최대 각도
 DRIVE_LATERAL_GAIN = 2.0  # rad/m (5 cm -> 약 6도)
 DRIVE_MAX_CORRECTION_RAD = math.radians(15.0)
+# 직진 중 방향 오차가 DRIVE_FULL_SPEED_RAD를 넘으면 속도를 줄이고(DRIVE_PIVOT_RAD에서 0), 그 이상이면 제자리에서 돈다.
+# 2026-11-02 20:03 실기: 복귀 중 곡선·회전 뒤 방향 오차 8~20도인 채 최고 속도로 출발해 사선으로 감
+# (예전에는 45도 안이면 최고 속도, HEADING_GAIN 1.5라 20도를 맞추는 동안 몇 cm 옆으로 감).
+DRIVE_FULL_SPEED_RAD = math.radians(5.0)
+DRIVE_PIVOT_RAD = math.radians(25.0)
+# 직진 중 방향 맞추는 이득 (HEADING_GAIN 1.5는 20도를 맞추는 데 약 1초). 시뮬레이션(모터 지연 0.12 s):
+# 20도 틀어진 출발에서 옆 오차 3.8 -> 1.8 cm, 좌우 흔들림 없음 (3.5까지도 없음).
+# TODO_MEASURE: 직진 중 좌우로 흔들리면 낮춘다
+DRIVE_HEADING_GAIN = 2.5
+# 한 번 주행에서 진행선 옆으로 이보다 많이 벗어났으면 도착할 때 로그로 남긴다 (사선 주행 확인용)
+DRIVE_LATERAL_LOG_M = 0.03
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다
 TURN_TOLERANCE_RAD = math.radians(5.0)
@@ -458,6 +469,8 @@ class Mission1Logic:
         self._scan_at_arrival = False
         # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
         self._chained = False
+        # 이번 주행에서 진행선 옆으로 가장 많이 벗어난 거리 (로그용)
+        self._drive_max_lateral = 0.0
         # 여러 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
         self._no_chain_from = set()
         self._drive_origin_cell = None
@@ -519,6 +532,8 @@ class Mission1Logic:
             self._arc = None
         if new_state not in (TURN, DRIVE):
             self._chained = False
+        if new_state == DRIVE and self.prev_state != DRIVE:
+            self._drive_max_lateral = 0.0
         if new_state != DRIVE:
             # 다른 일(대상 발견 등)로 주행이 끊기면 미리 한 판단은 버린다.
             self._decided_for = None
@@ -1336,6 +1351,10 @@ class Mission1Logic:
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
         if distance < ARRIVE_TOLERANCE_M or passed or endpoint_reached:
+            if self._drive_max_lateral > DRIVE_LATERAL_LOG_M:
+                self._note(f'진행선 옆 오차 최대 {self._drive_max_lateral * 100:.1f} cm '
+                           f'({target_cell}까지)')
+            self._drive_max_lateral = 0.0
             self._guard_stop_cell = None
             self._guard_stops = 0
             if target_cell == self._guard_off_cell:
@@ -1374,10 +1393,19 @@ class Mission1Logic:
             roll_left = max(0.0, remaining - ROLL_ZONE_M)
             roll = math.sqrt(ROLL_SPEED ** 2 + 2.0 * DRIVE_DECEL * roll_left)
             speed = min(speed, roll)
-        angular = clamp(HEADING_GAIN * error, self._turn_speed())
-        # 방향이 많이 틀어져 있으면 제자리에서 먼저 돈다.
-        linear = speed if abs(error) < math.radians(45.0) else 0.0
-        return Command(linear=-linear if self.reverse else linear, angular=angular)
+        angular = clamp(DRIVE_HEADING_GAIN * error, self._turn_speed())
+        # 방향이 틀어져 있으면 그만큼 천천히 가며 맞추고(사선 방지), 많이 틀어져 있으면 제자리에서 먼저 돈다.
+        self._drive_max_lateral = max(self._drive_max_lateral, abs(lateral))
+        return Command(linear=-self._heading_limited(speed, error) if self.reverse
+                       else self._heading_limited(speed, error), angular=angular)
+
+    @staticmethod
+    def _heading_limited(speed, error):
+        """방향 오차에 따른 직진 속도: DRIVE_FULL_SPEED_RAD까지 그대로, DRIVE_PIVOT_RAD에서 0."""
+        if abs(error) >= DRIVE_PIVOT_RAD:
+            return 0.0
+        scale = min(1.0, (DRIVE_PIVOT_RAD - abs(error)) / (DRIVE_PIVOT_RAD - DRIVE_FULL_SPEED_RAD))
+        return max(MIN_DRIVE_SPEED, speed * scale)
 
     def _cell_before_wall(self, obs):
         """
