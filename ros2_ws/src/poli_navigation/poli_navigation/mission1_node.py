@@ -11,6 +11,7 @@ from poli_navigation.mission1_logic import (
     Observation,
     SCAN,
     SCAN_SETTLE_S,
+    side_clearance,
     STUCK,
 )
 from poli_navigation.mission2_node import (
@@ -52,6 +53,9 @@ ODOM_TIMEOUT = 0.3  # s, 엔코더 위치 갱신이 끊기면 주행을 멈춘�
 STILL_LINEAR_MPS = 0.02
 # 2026-10-31 0.1 -> 0.2: 감속을 세게 한 뒤 작은 흔들림 때문에 정지 확인을 다시 세지 않게
 STILL_ANGULAR_RPS = 0.2
+# 직진(DRIVE) 중 이 주기로 'Drive:' 로그 (2026-11-02 사선 주행 진단: IMU와 엔코더가 본 회전이 같은지,
+# 옆 벽까지 거리). yaw_gap = 이번 주행 동안 IMU 회전 - 엔코더 회전 (바퀴가 미끄러지거나 IMU가 틀리면 커진다)
+DRIVE_LOG_PERIOD = 0.2
 
 
 def mapping_scan_ready(scan_started_at, now, stop_started_at):
@@ -101,6 +105,12 @@ class Mission1Node(Node):
         self.imu_dyaw = 0.0
         self.imu_stamp = None
         self.imu_received_at = None
+        # 진단 로그용: 마지막 IMU 회전 속도, 엔코더 회전 속도, 이번 주행의 IMU - 엔코더 회전 누적
+        self.imu_w = 0.0
+        self.enc_w = 0.0
+        self.yaw_gap = 0.0
+        self.last_drive_log = 0.0
+        self.drive_logged_for = None
         self.prev_odom = None
         self.fused = None
         self.wall_fixed_for = None
@@ -161,6 +171,7 @@ class Mission1Node(Node):
             self.imu_dyaw += self.imu_yaw_sign * msg.angular_velocity.z * (stamp - self.imu_stamp)
         self.imu_stamp = stamp
         self.imu_received_at = self.now_seconds()
+        self.imu_w = self.imu_yaw_sign * msg.angular_velocity.z
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
@@ -178,10 +189,12 @@ class Mission1Node(Node):
                   + (position.y - prev_y) * math.sin(prev_yaw))
             imu_ok = (self.use_imu_yaw and self.imu_received_at is not None
                       and now - self.imu_received_at < 0.3)
+            enc_dyaw = math.atan2(math.sin(odom_yaw - prev_yaw), math.cos(odom_yaw - prev_yaw))
             if imu_ok:
                 dyaw = self.imu_dyaw
+                self.yaw_gap += self.imu_dyaw - enc_dyaw
             else:
-                dyaw = math.atan2(math.sin(odom_yaw - prev_yaw), math.cos(odom_yaw - prev_yaw))
+                dyaw = enc_dyaw
             mid_yaw = self.fused[2] + dyaw / 2.0
             self.fused[0] += ds * math.cos(mid_yaw)
             self.fused[1] += ds * math.sin(mid_yaw)
@@ -190,6 +203,7 @@ class Mission1Node(Node):
         self.prev_odom = (position.x, position.y, odom_yaw)
         self.pose = odom_to_arena(*self.fused)
         self.odom_received_at = now
+        self.enc_w = msg.twist.twist.angular.z
 
     def scan_callback(self, msg):
         self.scan = msg
@@ -361,6 +375,7 @@ class Mission1Node(Node):
 
         if command.gripper is not None:
             self.send_gripper(command.gripper)
+        self.log_drive(now, command, scan)
 
         if self.logic.phase != self.last_phase:
             self.get_logger().info(f'Phase: {self.logic.phase}')
@@ -399,6 +414,26 @@ class Mission1Node(Node):
                 '탐색 지도 (# 막힘, . 빈칸, ? 미관측):\n' + self.logic.grid.to_text()
                 + '\n방문 횟수: ' + str(self.logic.maze.state.visits))
             self.last_path = self.logic.path
+
+    def log_drive(self, now, command, scan):
+        """직진 중 0.2 s마다 위치·명령·IMU/엔코더 회전·옆 벽 거리 (사선 주행 진단)."""
+        logic = self.logic
+        if logic.state != 'DRIVE':
+            return
+        if self.drive_logged_for != logic.state_started_at:
+            self.drive_logged_for = logic.state_started_at
+            self.yaw_gap = 0.0
+        if now - self.last_drive_log < DRIVE_LOG_PERIOD:
+            return
+        self.last_drive_log = now
+        x, y, yaw = self.pose
+        left, right = (math.inf, math.inf) if scan is None else side_clearance(scan)
+        self.get_logger().info(
+            f'Drive: pos=({x:.3f},{y:.3f}) yaw={math.degrees(yaw):.1f} '
+            f'cmd=({command.linear:.2f},{command.angular:+.2f}) '
+            f'enc_w={self.enc_w:+.2f} imu_w={self.imu_w:+.2f} '
+            f'yaw_gap={math.degrees(self.yaw_gap):+.1f}deg '
+            f'side=(L {left * 100:.1f}, R {right * 100:.1f}) cm')
 
     def send_gripper(self, command):
         self.gripper_command = command
