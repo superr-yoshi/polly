@@ -229,18 +229,20 @@ GUARD_HOME_ANGLE = math.atan2(START_POSE[1] - CENTER_M[1], START_POSE[0] - CENTE
 # 2026-11-01 0.3 -> 0.5, 가감속 0.6 -> 1.0 (실기: 집게 힘이 충분해 큐브가 빠지지 않음, 피하기가 느렸다)
 # 2026-11-02 0.5 -> 0.65 (팀: 피하는 속도를 더 올리자). 21:24 실기: 큐브를 잡고 0.65 m/s 후진·0.5 m/s 피하기 내내
 # 집게 ToF 22~30 mm로 큐브가 빠지지 않았다. TODO_MEASURE: 피하다 큐브가 틀어지거나 빠지면 낮춘다
-GUARD_SPEED = 0.65
+# 2026-11-02 0.65 -> 0.8 (팀: 올릴 수 있는 만큼). 0.8 = hardware.yaml max_linear (바퀴 약 235 rpm, 정격 250)
+GUARD_SPEED = 0.8
 # 잡자마자 원 위 처음 점까지 빠질 때만 (상대가 중앙에 오기 전에 벗어나기, 2026-11-01).
 # 정격 근처(0.8 m/s, hardware.yaml max_linear)는 큐브를 끌면 속도가 흔들린다.
 # 2026-11-01 0.5 -> 0.65 (가감속 1.0이면 0.8 m 안에서 약 0.89 m/s까지 낼 수 있다)
 # 2026-11-02 21:24 실기: 0.65 m/s로 후진했다 서도 큐브가 빠지지 않음 (ToF 22~30 mm)
-GUARD_ESCAPE_SPEED = 0.65
+GUARD_ESCAPE_SPEED = 0.8  # 2026-11-02 0.65 -> 0.8 (max_linear)
 # 2026-11-02 1.0 -> 1.3: 피하기 시작해서 0.65 m/s까지 약 0.65 -> 0.5 s. TODO_MEASURE: 큐브가 빠지면 1.0으로
-GUARD_ACCEL = 1.3
+GUARD_ACCEL = 1.6  # 2026-11-02 1.3 -> 1.6 (= LINEAR_ACCEL, 전체 출발 가속 한도)
 GUARD_HEADING_GAIN = 2.0
 # 2026-11-01 1.0 -> 1.6: GUARD_SPEED 0.3 -> 0.5와 같은 비율 (같은 회전 반경, 피할 때 원 밖으로 크게 돌지 않게)
 # 2026-11-02 1.6 -> 2.1: GUARD_SPEED 0.5 -> 0.65와 같은 비율 (회전 반경 그대로)
-GUARD_MAX_ANGULAR = 2.1
+# 2026-11-02 2.1 -> 2.6: GUARD_SPEED 0.65 -> 0.8과 같은 비율
+GUARD_MAX_ANGULAR = 2.6
 # 목표 점에서 이 안이면 선다
 GUARD_ARRIVE_M = 0.08
 # 앞·뒤 중 덜 도는 쪽으로 간다. 지금 방향을 바꾸려면 이만큼 더 틀어져야 한다 (앞뒤 왔다 갔다 방지).
@@ -1006,15 +1008,17 @@ class Mission2Logic:
         if self._guard_reverse:
             error = normalize_angle(error + math.pi)
 
+        # 큐브를 잡고 있으면 부드럽게(GUARD_ACCEL) 서고, 없으면(LURK) 최대 감속으로 선다
+        decel = GUARD_ACCEL if self.holding_cube() else LINEAR_DECEL
         remaining = distance_to(obs, goal)
-        speed = min(speed, braking_speed(remaining, self._last_linear, 0.0, GUARD_ACCEL))
+        speed = min(speed, braking_speed(remaining, self._last_linear, 0.0, decel))
         linear = speed * max(0.0, math.cos(error))
         if self._guard_reverse:
             linear = -linear
         angular = clamp(GUARD_HEADING_GAIN * error, GUARD_MAX_ANGULAR)
 
         current = abs(self._last_linear)
-        block = GUARD_BLOCK_M + current * MOTOR_LAG_S + current ** 2 / (2.0 * GUARD_ACCEL)
+        block = GUARD_BLOCK_M + current * MOTOR_LAG_S + current ** 2 / (2.0 * decel)
         heading = obs.yaw + (math.pi if self._guard_reverse else 0.0)
         for other in opponents:
             if math.dist((obs.x, obs.y), other) >= block:
