@@ -186,6 +186,9 @@ DRIVE_SLOW_FOR_WALLS = False
 # 0.15~0.17 m(바퀴와 0~2 cm)인 채 달리다 사선으로 박음. 축에서 SIDE_GUARD_SELF_M 안 점은 우리 부품으로 본다.
 # 2026-11-02 0.18 -> 0.19: 통로 가운데(벽 0.2 m)에서 1 cm만 비켜도 작게 틀기 시작 (감속 없이 일찍 고친다)
 SIDE_GUARD_M = 0.19
+# 2026-11-02 끔: 22:1x 실기에서 지그재그로 가며 벽에 박음. 연습장 통로는 좌우 벽이 축에서 17~19 cm라 감시 거리(19 cm)
+# 안에 늘 양쪽 벽이 있고, LiDAR 흔들림(10 Hz, ±1 cm)마다 좌우로 틀었다. 'Drive:' 로그(옆 거리)는 그대로 남긴다.
+SIDE_GUARD_ENABLED = False
 # 2026-11-02 20 -> 12: 22:08 실기에서 주행 방향이 65~116도로 흔들림 (집게 날 오판과 겹침). 3 cm면 0.36 rad/s 더
 SIDE_GUARD_GAIN = 12.0       # rad/s 당 m
 SIDE_GUARD_SPEED = 0.3
@@ -1452,7 +1455,7 @@ class Mission1Logic:
         linear = self._heading_limited(speed, misaligned)
         if DRIVE_SLOW_FOR_WALLS and abs(lateral) > DRIVE_LATERAL_SLOW_M:
             linear = min(linear, DRIVE_LATERAL_SLOW_SPEED)
-        if obs.scan is not None:
+        if SIDE_GUARD_ENABLED and obs.scan is not None:
             left, right = side_clearance(obs.scan)
             # 오른쪽 벽이 가까우면 왼쪽(+)으로, 왼쪽 벽이 가까우면 오른쪽으로 (후진이면 반대로 돌아야 같은 쪽으로 비킨다)
             push = max(0.0, SIDE_GUARD_M - right) - max(0.0, SIDE_GUARD_M - left)

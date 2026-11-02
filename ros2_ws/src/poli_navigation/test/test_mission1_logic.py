@@ -1749,6 +1749,7 @@ def _wall_scan(side_m, side):
 
 def test_side_wall_guard_steers_away_without_slowing(monkeypatch):
     """옆 벽이 가까우면 반대쪽으로 더 튼다. 감속은 DRIVE_SLOW_FOR_WALLS일 때만 (2026-11-02 21:57 사선 충돌)."""
+    monkeypatch.setattr(mission1_logic, 'SIDE_GUARD_ENABLED', True)
     monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_OFFSET_X_M', 0.0)
     monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_OFFSET_Y_M', 0.0)
     monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_YAW_RAD', 0.0)
