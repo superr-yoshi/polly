@@ -42,11 +42,11 @@ GRIPPER_RESEND_PERIOD = 1.0
 # 움직이는 동안 이 주기(초)로 속도·카메라·추정 거리를 로그에 남긴다 (실기 분석용)
 MOTION_LOG_PERIOD = 0.2
 # 잡은 뒤(GUARD)·실패 뒤(LURK) 서 있는 동안 밀린 흔적이 보이면 이 주기로 'Push:' 로그를 남긴다
-# (2026-11-02 밀림 감지 기준을 정하려는 실측용). 엔코더 속도·IMU 회전·수평 가속·벽 보정 변화 중 하나라도 넘으면.
+# (2026-11-02 밀림 실측용). 엔코더 속도·IMU 회전·벽 보정 변화 중 하나라도 넘으면.
+# 가속도계는 x축에 늘 -1.1 m/s^2이 실려(기울기·장착) 조건에서 뺐다 (값은 그대로 남긴다).
 PUSH_LOG_PERIOD = 0.1
 PUSH_LOG_ENC_V = 0.02      # m/s
 PUSH_LOG_IMU_W = 0.1       # rad/s
-PUSH_LOG_ACCEL = 0.8       # m/s^2 (수평, 중력 뺀 값이 아니라 x·y축 그대로)
 PUSH_LOG_WALL_JUMP = 0.01  # m, 직전 로그 뒤 벽 보정 변화
 # 판단 주기가 이보다 벌어지면 경고 (Mega는 0.3 s 명령이 끊기면 멈춘다)
 CONTROL_GAP_WARN_S = 0.15
@@ -100,8 +100,10 @@ class Mission2Node(Node):
         self.imu_w = 0.0
         self.imu_accel = (0.0, 0.0)
         self.linear_speed = 0.0
+        self.odom_received_at = None
         self.last_push_log = 0.0
         self.last_push_offset = None
+        self.last_push_opponent = None
         self.prev_odom = None
         self.fused = None
         # 외벽까지 거리(LiDAR)로 odom 위치를 보정한다. (wall_localizer.py)
@@ -187,6 +189,7 @@ class Mission2Node(Node):
         self.odom_pose = odom_to_arena(*self.fused)
         self.angular_speed = msg.twist.twist.angular.z
         self.linear_speed = msg.twist.twist.linear.x
+        self.odom_received_at = now
 
     def scan_callback(self, msg):
         if self.odom_pose is None:
@@ -276,6 +279,9 @@ class Mission2Node(Node):
             gripper_state=self.gripper_state,
             gripper_range=(self.gripper_range if self.gripper_range_received_at is not None
                            and now - self.gripper_range_received_at <= HOLDING_TIMEOUT else None),
+            # 엔코더 앞뒤 속도 (밀림 감지). odom이 끊기면 모름
+            measured_linear=(self.linear_speed if self.odom_received_at is not None
+                             and now - self.odom_received_at <= HOLDING_TIMEOUT else None),
         )
         if (self.opponent_received_at is not None
                 and now - self.opponent_received_at <= OPPONENT_TIMEOUT):
@@ -304,6 +310,12 @@ class Mission2Node(Node):
         if self.logic.state != self.last_state:
             self.get_logger().info(f'State: {self.logic.state}')
             self.last_state = self.logic.state
+        push = self.logic.push_opponent
+        if push is not None and push != self.last_push_opponent:
+            self.get_logger().info(
+                f'밀림 감지: 엔코더 {observation.measured_linear:+.2f} m/s -> '
+                f'미는 상대 ({push[0]:.2f},{push[1]:.2f})로 보고 피함')
+        self.last_push_opponent = push
 
         # GUARD는 서 있는 동안 남기지 않는다 (5분 동안 로그가 너무 많아진다)
         moving = command.linear != 0.0 or command.angular != 0.0
@@ -337,9 +349,8 @@ class Mission2Node(Node):
         offset = (self.wall_correction.offset_x, self.wall_correction.offset_y)
         jump = (0.0 if self.last_push_offset is None
                 else math.dist(offset, self.last_push_offset))
-        accel = math.hypot(*self.imu_accel)
         pushed = (abs(self.linear_speed) > PUSH_LOG_ENC_V or abs(self.imu_w) > PUSH_LOG_IMU_W
-                  or accel > PUSH_LOG_ACCEL or jump > PUSH_LOG_WALL_JUMP)
+                  or jump > PUSH_LOG_WALL_JUMP)
         if not pushed or now - self.last_push_log < PUSH_LOG_PERIOD:
             return
         self.last_push_log = now

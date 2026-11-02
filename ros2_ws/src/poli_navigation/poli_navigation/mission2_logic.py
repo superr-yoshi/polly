@@ -58,6 +58,24 @@ RETREAT_EXIT_EXTRA_M = 0.15
 # 향하고, 앞에 상대가 있어도 서지 않고 밀고 들어간다 (상대 밀기는 허용 3.4.6, 선 밖은 즉시 탈락).
 # 2026-11-01 실기: 사방에서 조이면 중앙 쪽에서 미는 상대 앞에서 서 버려 그대로 선 밖으로 밀려 나갔다.
 RETREAT_GOAL_EXTRA_M = 0.1
+# RETREAT 중 이 시간 동안 선에서 RETREAT_STUCK_PROGRESS_M도 못 멀어지면(미는 상대에 막혀 바퀴만 돎) 곧장 안쪽 대신
+# RETREAT_SIDESTEP_RAD 비스듬히 비켜 간다. 또 막히면 반대쪽으로. 2026-11-02 21:47 실기: 선 앞에서 4초 동안
+# 0.8 m/s로 맞서 밀다 바퀴만 헛돌고(엔코더 2.8 m, LiDAR 위치 그대로) 선 밖으로 밀려남. TODO_MEASURE
+RETREAT_STUCK_S = 0.8
+RETREAT_STUCK_PROGRESS_M = 0.03
+RETREAT_SIDESTEP_RAD = math.radians(50.0)
+
+# 밀림 감지 (2026-11-02 팀: 외력으로 밀리면 바로 빠져나오기). GUARD·LURK에서 서 있는데(명령 0인 지 PUSH_SETTLE_S)
+# 엔코더 속도가 PUSH_SPEED_M_S를 PUSH_CONFIRM_STEPS번 연속 넘으면 밀린 것. 21:47 실기: 서 있을 때 엔코더는 0.000,
+# 밀리면 0.05~0.28 m/s (MDD10이 바퀴를 꽉 잡지 않아 밀리면 바퀴가 돈다). 가속도계는 x축에 -1.1 m/s^2이 늘 실려 못 쓴다.
+# 미는 상대가 밀리는 방향 반대쪽 PUSH_OPPONENT_M에 있다고 보고 PUSH_MEMORY_S 동안 상대 목록에 넣는다
+# -> 원을 따라 피하기(_keep_away)가 바로 시작된다. 밀리는 쪽으로 도망가면 선 쪽일 수 있어 원을 따라 비켜 간다.
+PUSH_REACT = True
+PUSH_SPEED_M_S = 0.03
+PUSH_CONFIRM_STEPS = 2
+PUSH_SETTLE_S = 0.3
+PUSH_OPPONENT_M = 0.3
+PUSH_MEMORY_S = 1.5
 
 # 이 거리(중앙까지)에 오면 카메라로 넘긴다 (그 전에라도 보이면 바로 넘긴다).
 VISION_HANDOFF_M = 0.6
@@ -310,6 +328,8 @@ class Observation:
     opponents: tuple = ()
     # 집게 안 적외선 거리 (m, 범위 밖이면 inf). 센서가 없거나 끊기면 None (예전 카메라 면적 방식)
     gripper_range: Optional[float] = None
+    # 엔코더로 잰 앞뒤 속도 (m/s, 앞 +). 모르면 None (밀림 감지 안 함)
+    measured_linear: Optional[float] = None
 
 
 @dataclass
@@ -431,6 +451,14 @@ class Mission2Logic:
         self._backoff_start = None
         # 잡기에 실패했거나 놓쳐서 LURK·SPIN으로 간 뒤인지 (RETREAT 뒤에도 그리로 돌아간다)
         self.gave_up = False
+        # 밀림 감지: 명령 0으로 서 있기 시작한 시각, 연속으로 밀린 판단 횟수, 미는 상대 (x, y, 언제까지)
+        self._stand_since = None
+        self._push_steps = 0
+        self.push_opponent = None
+        # RETREAT 중 선에서 가장 멀었던 거리와 그 시각, 비켜 가는 쪽 (0 = 곧장 안쪽)
+        self._retreat_best = 0.0
+        self._retreat_best_at = 0.0
+        self._retreat_side = 0.0
 
     def _change_state(self, new_state, obs):
         if new_state == SEARCH and new_state != self.state:
@@ -456,6 +484,7 @@ class Mission2Logic:
         while self._poses and obs.now - self._poses[0][0] > 2.0 * CAMERA_LAG_S:
             self._poses.popleft()
         self._update_target(obs)
+        self._detect_push(obs)
 
         command = self._safety_check(obs)
         if command is None:
@@ -493,6 +522,7 @@ class Mission2Logic:
         if self.state != RETREAT and margin < danger:
             self._state_before_retreat = self.state
             self._retreat_exit_margin = danger + RETREAT_EXIT_EXTRA_M
+            self._retreat_best, self._retreat_best_at, self._retreat_side = margin, obs.now, 0.0
             self._change_state(RETREAT, obs)
 
         if self.state != RETREAT:
@@ -508,12 +538,52 @@ class Mission2Logic:
             self._change_state(resume, obs)
             return None
 
+        if margin > self._retreat_best + RETREAT_STUCK_PROGRESS_M:
+            self._retreat_best, self._retreat_best_at = margin, obs.now
+        elif obs.now - self._retreat_best_at > RETREAT_STUCK_S:
+            # 막혔다 (미는 상대에 맞서 바퀴만 돈다) -> 비스듬히 비켜 간다, 또 막히면 반대쪽
+            self._retreat_side = -self._retreat_side if self._retreat_side else 1.0
+            self._retreat_best_at = obs.now
         if self.holding_cube():
             # 큐브를 잡고 있으면 앞뒤 중 덜 도는 쪽으로 (제자리에서 크게 돌면 큐브가 빠진다).
             # 선에서 곧장 안쪽으로 가고, 상대가 막아도 서지 않는다 (RETREAT_GOAL_EXTRA_M 주석).
-            goal = retreat_goal(obs, self._retreat_exit_margin)
+            goal = self._sidestep(obs, retreat_goal(obs, self._retreat_exit_margin))
             return self._guard_drive(obs, goal, GUARD_SPEED)
-        return self._drive_toward(obs, CENTER_M, APPROACH_FAST_SPEED)
+        return self._drive_toward(obs, self._sidestep(obs, CENTER_M), APPROACH_FAST_SPEED)
+
+    def _sidestep(self, obs, goal):
+        """RETREAT가 막혔으면 goal 방향을 로봇 기준 RETREAT_SIDESTEP_RAD만큼 돌린 점."""
+        if not self._retreat_side:
+            return goal
+        angle = self._retreat_side * RETREAT_SIDESTEP_RAD
+        dx, dy = goal[0] - obs.x, goal[1] - obs.y
+        return (obs.x + dx * math.cos(angle) - dy * math.sin(angle),
+                obs.y + dx * math.sin(angle) + dy * math.cos(angle))
+
+    def _detect_push(self, obs):
+        """GUARD·LURK에서 서 있는데 엔코더가 움직이면 밀린 것: 미는 상대를 push_opponent에 기억한다."""
+        if self.push_opponent is not None and obs.now > self.push_opponent[2]:
+            self.push_opponent = None
+        standing = abs(self._last_linear) < 1e-3 and abs(self._last_angular) < 1e-3
+        if not standing:
+            self._stand_since = None
+        elif self._stand_since is None:
+            self._stand_since = obs.now
+        if (not PUSH_REACT or self.state not in (GUARD, LURK) or obs.measured_linear is None
+                or self._stand_since is None or obs.now - self._stand_since < PUSH_SETTLE_S):
+            self._push_steps = 0
+            return
+        if abs(obs.measured_linear) <= PUSH_SPEED_M_S:
+            self._push_steps = 0
+            return
+        self._push_steps += 1
+        if self._push_steps < PUSH_CONFIRM_STEPS:
+            return
+        # 밀리는 방향 반대쪽에 미는 상대가 있다
+        back = -math.copysign(PUSH_OPPONENT_M, obs.measured_linear)
+        self.push_opponent = (obs.x + back * math.cos(obs.yaw), obs.y + back * math.sin(obs.yaw),
+                              obs.now + PUSH_MEMORY_S)
+        self._push_steps = 0
 
     def _resume_state_after_retreat(self):
         # 실패 뒤 다시 잡았으면(LURK에서 재시도 성공) 잡은 상태가 먼저다
@@ -964,7 +1034,10 @@ class Mission2Logic:
             other = -self._dodge_direction
             if clearance[other] > clearance[self._dodge_direction] + DODGE_SWITCH_M:
                 self._dodge_direction = other
-            if clearance[self._dodge_direction] < DODGE_BLOCKED_M:
+            # 끼임 판단은 LiDAR로 본 상대만 (밀어서 안 상대는 바로 붙어 있어 늘 막혀 보인다. 미는 쪽에서 비켜 가야 한다)
+            seen = tuple(o for o in opponents
+                         if self.push_opponent is None or o != self.push_opponent[:2])
+            if self._dodge_clearance(own_angle, self._dodge_direction, seen) < DODGE_BLOCKED_M:
                 # 양쪽 다 막혔다. 안쪽은 상대가 모이고 바깥은 탈락선이라 서 있는다.
                 return Command()
             self._guard_angle = own_angle + self._dodge_direction * DODGE_ARC_STEP_RAD
@@ -978,11 +1051,15 @@ class Mission2Logic:
         speed = GUARD_ESCAPE_SPEED if self._escaping else GUARD_SPEED
         return self._guard_drive(obs, goal, speed, opponents)
 
-    @staticmethod
-    def _opponents(obs):
+    def _opponents(self, obs):
         if obs.opponents:
-            return tuple(obs.opponents)
-        return () if obs.opponent is None else (obs.opponent,)
+            found = tuple(obs.opponents)
+        else:
+            found = () if obs.opponent is None else (obs.opponent,)
+        if self.push_opponent is not None:
+            # 밀어서 알게 된 상대 (LiDAR에 안 보여도)
+            found = (self.push_opponent[:2],) + found
+        return found
 
     @staticmethod
     def _dodge_clearance(own_angle, direction, opponents):

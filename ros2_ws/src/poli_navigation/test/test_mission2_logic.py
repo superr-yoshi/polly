@@ -957,3 +957,65 @@ def test_guard_dodges_only_when_opponent_comes_then_stands(monkeypatch):
         robot.apply(command)
     assert math.dist((robot.x, robot.y), spot) < 0.1
     assert command.linear == 0.0
+
+
+# ---------------------------------------------------------------
+# 밀림 감지·막힌 RETREAT 비켜 가기 (2026-11-02 21:47 실기: 3초 밀리고 선 앞에서 바퀴만 돌다 밀려 나감)
+# ---------------------------------------------------------------
+
+def test_push_while_standing_starts_dodging_right_away(monkeypatch):
+    logic, robot = guarding_robot(monkeypatch)
+    # 서 있다가 앞에서 밀려 뒤로 밀린다 (엔코더 -0.1 m/s)
+    moved_at = None
+    for k in range(10):
+        obs = robot.observe()
+        obs.measured_linear = -0.1
+        command = logic.step(obs)
+        robot.apply(command)
+        if command.linear != 0.0 or command.angular != 0.0:
+            moved_at = k
+            break
+    assert moved_at is not None and moved_at <= 3  # 0.15 s 안에 움직이기 시작
+    # 미는 상대는 로봇 앞쪽에 있다고 본다
+    px, py, _ = logic.push_opponent
+    ahead = (px - robot.x) * math.cos(robot.yaw) + (py - robot.y) * math.sin(robot.yaw)
+    assert ahead > 0.2
+    # 피하는 동안 선에 가까이 가지 않고, 미는 상대에게서 멀어진다
+    start_gap = math.dist((robot.x, robot.y), (px, py))
+    for _ in range(int(1.5 / DT)):
+        robot.apply(logic.step(robot.observe()))
+        assert distance_to_danger_line(robot.observe()) > 0.3
+    assert math.dist((robot.x, robot.y), (px, py)) > start_gap + 0.2
+
+
+def test_no_push_when_encoder_still_or_just_stopped(monkeypatch):
+    logic, robot = guarding_robot(monkeypatch)
+    for _ in range(20):
+        obs = robot.observe()
+        obs.measured_linear = 0.0
+        assert logic.step(obs) == Command()
+    assert logic.push_opponent is None
+    # 멈춘 직후(PUSH_SETTLE_S 안)에 바퀴가 아직 도는 것은 밀림이 아니다
+    logic._stand_since = None
+    for _ in range(3):
+        obs = robot.observe()
+        obs.measured_linear = 0.2
+        logic.step(obs)
+    assert logic.push_opponent is None
+
+
+def test_retreat_sidesteps_when_blocked_at_line():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    # 선 0.25 m 앞에서 바깥을 보고 서 있는데, 미는 상대에 막혀 안쪽으로 한 발도 못 간다
+    robot.x, robot.y, robot.yaw = 1.8, 2.95, -math.pi / 2
+    angles = []
+    for _ in range(int(2.5 / DT)):
+        command = logic.step(robot.observe())
+        robot.now += DT  # 위치는 그대로 (막힘)
+        angles.append(command.angular)
+    assert logic.state == RETREAT
+    assert logic._retreat_side != 0.0
+    # 곧장 안쪽(-y, 지금 방향)만 고집하지 않고 비스듬히 틀어 비켜 간다
+    assert max(abs(a) for a in angles[int(1.0 / DT):]) > 0.3
