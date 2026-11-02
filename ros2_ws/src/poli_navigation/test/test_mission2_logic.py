@@ -235,8 +235,8 @@ def test_guard_backs_out_to_circle_and_stays(monkeypatch):
     # 크게 돌지 않았다 (큐브가 빠지지 않게)
     assert abs(robot.yaw - grab_yaw) < math.radians(30.0)
 
-    # 처음 빠질 때는 GUARD_SPEED보다 빠르게
-    assert max(-c.linear for c in commands) > GUARD_SPEED + 0.1
+    # 처음 빠질 때는 GUARD_ESCAPE_SPEED까지 낸다 (2026-11-02부터 피하기 GUARD_SPEED도 같은 0.65 m/s)
+    assert max(-c.linear for c in commands) > GUARD_ESCAPE_SPEED - 0.01
 
     # 도착하면 서 있는다.
     assert all(c.linear == 0.0 and c.angular == 0.0 for c in commands[-20:])
@@ -869,8 +869,9 @@ def test_lurk_does_not_chase_cube_held_by_opponent():
     assert seen
 
     # 상대가 큐브를 두고 떠나면 다시 잡으러 간다
+    # (ALIGN은 큐브가 앞에 있으면 같은 판단 안에서 바로 APPROACH로 넘어가 기록에 안 남을 수 있다)
     states = run(logic, robot, max_seconds=robot.now + 10.0, until=PUSH)
-    assert ALIGN in states and logic.state == PUSH
+    assert APPROACH in states and logic.state == PUSH
 
 
 def test_lurk_returns_to_lurk_after_retreat():
