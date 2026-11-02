@@ -914,10 +914,11 @@ def test_cube_inside_gripper_during_lurk_closes_without_opening():
 
 
 # ---------------------------------------------------------------
-# 잡은 자리에서 지키기 (GUARD_ESCAPE_FIRST False, 2026-11-02 팀)
+# 잡은 자리에서 지키기 (GUARD_ESCAPE_FIRST False로 켤 때)
 # ---------------------------------------------------------------
 
-def test_guard_stays_where_it_grabbed_without_opponents():
+def test_guard_stays_where_it_grabbed_without_opponents(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_FIRST', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
@@ -930,7 +931,8 @@ def test_guard_stays_where_it_grabbed_without_opponents():
     assert math.dist((robot.x, robot.y), spot) < 0.02
 
 
-def test_guard_dodges_only_when_opponent_comes_then_stands():
+def test_guard_dodges_only_when_opponent_comes_then_stands(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_FIRST', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
