@@ -41,6 +41,13 @@ GRIPPER_RESEND_PERIOD = 1.0
 
 # 움직이는 동안 이 주기(초)로 속도·카메라·추정 거리를 로그에 남긴다 (실기 분석용)
 MOTION_LOG_PERIOD = 0.2
+# 잡은 뒤(GUARD)·실패 뒤(LURK) 서 있는 동안 밀린 흔적이 보이면 이 주기로 'Push:' 로그를 남긴다
+# (2026-11-02 밀림 감지 기준을 정하려는 실측용). 엔코더 속도·IMU 회전·수평 가속·벽 보정 변화 중 하나라도 넘으면.
+PUSH_LOG_PERIOD = 0.1
+PUSH_LOG_ENC_V = 0.02      # m/s
+PUSH_LOG_IMU_W = 0.1       # rad/s
+PUSH_LOG_ACCEL = 0.8       # m/s^2 (수평, 중력 뺀 값이 아니라 x·y축 그대로)
+PUSH_LOG_WALL_JUMP = 0.01  # m, 직전 로그 뒤 벽 보정 변화
 # 판단 주기가 이보다 벌어지면 경고 (Mega는 0.3 s 명령이 끊기면 멈춘다)
 CONTROL_GAP_WARN_S = 0.15
 # 콜백 하나가 이보다 오래 걸리면 경고 (판단 멈춤 원인 확인용)
@@ -89,6 +96,12 @@ class Mission2Node(Node):
         self.imu_dyaw = 0.0
         self.imu_stamp = None
         self.imu_received_at = None
+        # 밀림 실측 로그용: 마지막 IMU 회전 속도·수평 가속, 엔코더 앞뒤 속도
+        self.imu_w = 0.0
+        self.imu_accel = (0.0, 0.0)
+        self.linear_speed = 0.0
+        self.last_push_log = 0.0
+        self.last_push_offset = None
         self.prev_odom = None
         self.fused = None
         # 외벽까지 거리(LiDAR)로 odom 위치를 보정한다. (wall_localizer.py)
@@ -145,6 +158,8 @@ class Mission2Node(Node):
             self.imu_dyaw += self.imu_yaw_sign * msg.angular_velocity.z * (stamp - self.imu_stamp)
         self.imu_stamp = stamp
         self.imu_received_at = self.now_seconds()
+        self.imu_w = self.imu_yaw_sign * msg.angular_velocity.z
+        self.imu_accel = (msg.linear_acceleration.x, msg.linear_acceleration.y)
 
     def odom_callback(self, msg):
         position = msg.pose.pose.position
@@ -171,6 +186,7 @@ class Mission2Node(Node):
         self.prev_odom = (position.x, position.y, odom_yaw)
         self.odom_pose = odom_to_arena(*self.fused)
         self.angular_speed = msg.twist.twist.angular.z
+        self.linear_speed = msg.twist.twist.linear.x
 
     def scan_callback(self, msg):
         if self.odom_pose is None:
@@ -308,6 +324,32 @@ class Mission2Node(Node):
                 f'cam={observation.detected:d} off={observation.x_offset:+.2f} '
                 f'area={observation.area:.0f} cube_d={cam_d} opp={opp_text} '
                 f'tof={tof_text}')
+
+        self.log_push(now, command, x, y, yaw)
+
+    def log_push(self, now, command, x, y, yaw):
+        """GUARD·LURK에서 서 있는데 밀린 흔적(엔코더·IMU·가속·벽 보정)이 보이면 남긴다 (실측용)."""
+        if self.logic.state not in ('GUARD', 'LURK'):
+            self.last_push_offset = None
+            return
+        if command.linear != 0.0 or command.angular != 0.0:
+            return
+        offset = (self.wall_correction.offset_x, self.wall_correction.offset_y)
+        jump = (0.0 if self.last_push_offset is None
+                else math.dist(offset, self.last_push_offset))
+        accel = math.hypot(*self.imu_accel)
+        pushed = (abs(self.linear_speed) > PUSH_LOG_ENC_V or abs(self.imu_w) > PUSH_LOG_IMU_W
+                  or accel > PUSH_LOG_ACCEL or jump > PUSH_LOG_WALL_JUMP)
+        if not pushed or now - self.last_push_log < PUSH_LOG_PERIOD:
+            return
+        self.last_push_log = now
+        self.last_push_offset = offset
+        raw_x, raw_y, _ = self.odom_pose
+        self.get_logger().info(
+            f'Push: {self.logic.state} pos=({x:.3f},{y:.3f}) yaw={math.degrees(yaw):.1f} '
+            f'raw=({raw_x:.3f},{raw_y:.3f}) wall_off=({offset[0]:+.3f},{offset[1]:+.3f}) '
+            f'enc_v={self.linear_speed:+.3f} enc_w={self.angular_speed:+.2f} '
+            f'imu_w={self.imu_w:+.2f} acc=({self.imu_accel[0]:+.2f},{self.imu_accel[1]:+.2f})')
 
     def send_gripper(self, command):
         self.gripper_command = command
