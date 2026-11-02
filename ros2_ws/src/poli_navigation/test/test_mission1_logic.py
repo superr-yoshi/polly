@@ -1663,16 +1663,15 @@ def test_wall_guard_rests_right_after_arc_turn(monkeypatch):
     assert logic._turn_ended_at == 2.0
 
 
-def test_return_turns_gently():
-    """복귀(큐브를 끔) 중 회전은 탐색보다 느리게 (23:11 실기: 빠른 회전에 큐브가 틀어짐)."""
+def test_return_turns_same_as_explore():
+    """복귀 회전도 탐색과 똑같이 (2026-11-02 팀: 예전 부드러운 복귀 회전은 너무 느림)."""
+    assert mission1_logic.RETURN_TURN_SPEED == mission1_logic.TURN_SPEED
+    assert mission1_logic.RETURN_ANGULAR_ACCEL == mission1_logic.ANGULAR_ACCEL
+    assert mission1_logic.RETURN_TURN_EXIT_RAD == mission1_logic.TURN_EXIT_RAD
     logic = Mission1Logic()
+    logic.phase = RETURN
     obs = Observation(x=1.0, y=1.0, yaw=0.0, now=0.0)
     assert logic._turn_toward(math.pi, obs) == mission1_logic.TURN_SPEED
-    logic.phase = RETURN
-    assert logic._turn_toward(math.pi, obs) == mission1_logic.RETURN_TURN_SPEED
-    logic._limit_accel(Command(), 0.0)
-    command = logic._limit_accel(Command(angular=3.0), 0.05)
-    assert command.angular <= mission1_logic.RETURN_ANGULAR_ACCEL * 0.05 + 1e-9
 
 
 def test_drive_slows_down_when_heading_is_off():

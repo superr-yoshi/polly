@@ -122,9 +122,11 @@ RETURN_LINEAR_DECEL = 2.0  # LINEAR_DECEL과 같게
 # 복귀 회전은 부드럽게 (2026-11-01 23:11 실기: 잡은 큐브가 제자리 회전 직후 화면 면적 35000 -> 16000~23000으로
 # 집게 안에서 틀어지고, 복귀 중 벽에 몇 번 부딪힘). 바닥에 끌리는 큐브가 빠른 회전에 비틀리지 않게
 # 최고 회전 속도·각가속도를 낮추고, 방향을 거의 다 맞춘 뒤 출발한다. TODO_MEASURE: 큐브가 계속 틀어지면 더 낮춘다
-RETURN_TURN_SPEED = 2.0       # rad/s (탐색 TURN_SPEED 3.5)
-RETURN_ANGULAR_ACCEL = 6.0    # rad/s^2 (탐색 ANGULAR_ACCEL 15)
-RETURN_TURN_EXIT_RAD = math.radians(6.0)  # (탐색 TURN_EXIT_RAD 10도)
+# 2026-11-02 팀: 복귀 회전도 요구조자 찾으러 갈 때(탐색)와 똑같이 (2.0 rad/s·6 rad/s^2·6도는 너무 느림).
+# 탐색 값 TURN_SPEED·ANGULAR_ACCEL·TURN_EXIT_RAD와 같게 둔다. 큐브가 다시 틀어지면 예전 값으로 낮춘다.
+RETURN_TURN_SPEED = 3.5       # rad/s (예전 2.0)
+RETURN_ANGULAR_ACCEL = 15.0   # rad/s^2 (예전 6.0)
+RETURN_TURN_EXIT_RAD = math.radians(10.0)  # (예전 6도)
 MIN_DRIVE_SPEED = HW_MIN_WHEEL_SPEED
 # 도착 감속 (m/s^2): 남은 거리 d에서 sqrt(MIN^2 + 2 * DRIVE_DECEL * d)로 일정하게 줄인다.
 # 예전 1.5 * d는 끝에서 너무 오래 기어가고 0.08 m/s에서 뚝 멈췄다 (2026-10-31 실기).
