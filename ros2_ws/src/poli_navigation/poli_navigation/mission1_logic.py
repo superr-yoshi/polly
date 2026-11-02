@@ -301,6 +301,10 @@ GRAB_TOF_CLOSE_M = 0.035
 TOF_NEAR_M = 0.15
 # 적외선에 큐브가 가까이 보이는 동안 접근 중 벽 감시 거리 (집게 끝 앞). 평소는 scan_to_grid.GUARD_AHEAD_M 6 cm
 APPROACH_WALL_GUARD_NEAR_CUBE_M = 0.01
+# 주행 중 적외선만으로 잡기 시작하는 것은 카메라가 이 시간 안에 큐브를 봤을 때만 한다.
+# 2026-11-02 19:32·19:52 실기: 큐브가 없는 (6,2)를 지날 때마다 적외선이 1·33·0 mm를 내 헛 집게질 -> 360도 SEARCH.
+# 그 실행 내내 카메라는 빨간색을 못 봤다. 진행선 위 큐브는 다가가는 동안(약 1.4 m 앞부터) 카메라에 보인다.
+DRIVE_TOF_CAMERA_S = 2.0
 # 적외선 방식으로 밀며 들어가는 최대 거리 (이만큼 밀어도 안 들어오면 닫지 않고 다시 판단)
 GRAB_TOF_PUSH_MAX_M = 0.15
 # 주행 중 카메라에 큐브가 이만큼 크게(약 45 cm 안) 보이면 그 칸으로 밀고 들어가지 않고 진행선으로 바로 접근한다.
@@ -444,6 +448,8 @@ class Mission1Logic:
         # 기억한 큐브 위치 (경기장 m)와 그때 면적 (클수록 가까이서 본 것이라 정확)
         self.cube = None
         self._cube_area = 0.0
+        # 카메라가 마지막으로 대상을 본 시각 (주행 중 적외선 잡기 확인용)
+        self._camera_seen_at = None
         self._scan_at_arrival = False
         # 두 칸을 한 번에 가는 중인지 (두 번째 칸이 미관측일 수 있어 앞을 계속 본다)
         self._chained = False
@@ -524,6 +530,8 @@ class Mission1Logic:
         if self.state_started_at is None:
             self.state_started_at = obs.now
         self._remember_cube(obs)
+        if obs.detected:
+            self._camera_seen_at = obs.now
 
         command = self._check_dropped(obs)
         if command is None:
@@ -1217,7 +1225,9 @@ class Mission1Logic:
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
         # 단 큐브가 바로 앞이면(적외선, 또는 카메라에 크게) 그 칸으로 밀고 들어가지 않고 진행선으로 바로 잡는다.
         if self.phase == EXPLORE and not self.reverse and not self.delivering:
-            if self._tof_cube(obs):
+            camera_saw = (self._camera_seen_at is not None
+                          and obs.now - self._camera_seen_at <= DRIVE_TOF_CAMERA_S)
+            if self._tof_cube(obs) and camera_saw:
                 self._begin_approach(obs, self._drive_heading, self._drive_origin_cell)
                 return self._start_push(obs)
             if (obs.detected and obs.area >= DRIVE_CUBE_AREA

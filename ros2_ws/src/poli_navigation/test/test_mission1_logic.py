@@ -1577,12 +1577,24 @@ def test_big_cube_ahead_while_driving_switches_to_approach():
 
 
 def test_tof_cube_in_gripper_while_driving_grabs():
-    """카메라에 안 보여도 적외선이 집게 안(5 cm) 큐브를 보고 LiDAR에 벽이 없으면 바로 닫는다."""
+    """지금 카메라에 안 보여도(집게 앞으로 사라짐) 조금 전에 봤고 적외선이 집게 안(5 cm) 큐브를 보면 닫는다."""
     logic, x, y = _driving_west_logic()
+    logic._camera_seen_at = 0.0
     scan = simulate_scan(GridMap(use_point_symmetry=False), (x - 0.05, y, math.pi))
     command = logic._drive(Observation(x=x - 0.05, y=y, yaw=math.pi, now=0.5, scan=scan,
                                        gripper_range=0.03))
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
+
+
+def test_tof_alone_while_driving_does_not_grab_without_camera():
+    """카메라가 큐브를 본 적 없으면 적외선 값만으로 닫지 않는다 (2026-11-02 (6,2) 헛 집게질)."""
+    for seen_at in (None, 0.5 - mission1_logic.DRIVE_TOF_CAMERA_S - 0.1):
+        logic, x, y = _driving_west_logic()
+        logic._camera_seen_at = seen_at
+        scan = simulate_scan(GridMap(use_point_symmetry=False), (x - 0.05, y, math.pi))
+        command = logic._drive(Observation(x=x - 0.05, y=y, yaw=math.pi, now=0.5, scan=scan,
+                                           gripper_range=0.033))
+        assert logic.state == DRIVE and command.gripper is None
 
 
 def test_tof_near_wall_is_not_a_cube():
