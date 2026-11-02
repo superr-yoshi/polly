@@ -278,7 +278,9 @@ START_WALL_MIN_M = 0.12
 # 네 칸이 만나는 안쪽 모서리 점을 중심으로 반지름 ARC_RADIUS_M 원호를 ARC_SPEED로 돈다 (회전마다 약 1초 단축).
 # 원호에서 바깥 앞모서리가 원래 방향의 다음 칸 쪽으로 약 19 cm(벽까지 8 mm) 나가므로, 그 칸이 빈칸(FREE)으로
 # 확인됐을 때만 한다. 차체 치수 BODY_* 실측 후 재확인 (TODO_MEASURE)
-ARC_TURNS = True
+# 2026-11-02 팀: 끔. 복귀 때 곡선(드리프트처럼 도는 것)이 불안하다 -> 갈 때처럼 칸 가운데에 서서 제자리 회전.
+# 20:03 실기: 곡선 뒤 방향 오차 -8.7도, 옆 오차 4.2 cm로 곡선 취소 뒤 -19.6도.
+ARC_TURNS = False
 ARC_RADIUS_M = CELL_SIZE_M / 2.0
 ARC_SPEED = 0.4           # m/s -> 회전 2 rad/s. TODO_MEASURE: 바퀴 미끄러짐·큐브 빠짐이 보이면 낮춘다
 RETURN_ARC_SPEED = 0.3    # 복귀 중(큐브를 끌 때) 곡선 속도

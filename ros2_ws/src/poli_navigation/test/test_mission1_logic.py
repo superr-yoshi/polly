@@ -1455,8 +1455,9 @@ def _returning_logic():
     return logic
 
 
-def test_arc_planned_only_when_outer_cell_is_known_free():
+def test_arc_planned_only_when_outer_cell_is_known_free(monkeypatch):
     """꺾는 칸 너머(원래 방향의 다음 칸)가 빈칸으로 확인됐을 때만 곡선으로 꺾는다."""
+    monkeypatch.setattr(mission1_logic, 'ARC_TURNS', True)
     path = [(9, 3), (9, 2), (9, 1), (8, 1), (7, 1)]
     logic = Mission1Logic(point_symmetry=False)
     logic.phase = RETURN
@@ -1473,8 +1474,9 @@ def test_arc_planned_only_when_outer_cell_is_known_free():
     assert logic._arc_plan(path, 1) is None
 
 
-def test_drive_enters_arc_without_stopping_and_continues_straight():
+def test_drive_enters_arc_without_stopping_and_continues_straight(monkeypatch):
     """꺾는 칸 앞 R에서 서지 않고 원호로 들어가고, 나갈 방향이 되면 다음 직선으로 이어 간다."""
+    monkeypatch.setattr(mission1_logic, 'ARC_TURNS', True)
     logic = Mission1Logic(point_symmetry=False)
     logic.phase = RETURN
     logic.grid.mark_free((8, 4))
@@ -1498,8 +1500,9 @@ def test_drive_enters_arc_without_stopping_and_continues_straight():
     assert command.linear > 0.0
 
 
-def test_arc_cancelled_when_entering_off_line():
+def test_arc_cancelled_when_entering_off_line(monkeypatch):
     """원호에 들어갈 때 진행선에서 4 cm 넘게 비켜 있으면 곡선을 포기하고 칸 가운데에서 선다."""
+    monkeypatch.setattr(mission1_logic, 'ARC_TURNS', True)
     logic = Mission1Logic(point_symmetry=False)
     logic.phase = RETURN
     logic.grid.mark_free((8, 4))
@@ -1513,7 +1516,8 @@ def test_arc_cancelled_when_entering_off_line():
     assert logic.state == DRIVE and logic._arc is None
 
 
-def test_full_run_with_arc_turns_stays_out_of_blocked_cells():
+def test_full_run_with_arc_turns_stays_out_of_blocked_cells(monkeypatch):
+    monkeypatch.setattr(mission1_logic, 'ARC_TURNS', True)
     true_grid = example_grid()
     logic = Mission1Logic()
     robot = SimRobot(true_grid)
@@ -1646,8 +1650,9 @@ def test_pushing_cube_with_constant_area_is_not_false_positive():
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
 
 
-def test_wall_guard_rests_right_after_arc_turn():
+def test_wall_guard_rests_right_after_arc_turn(monkeypatch):
     """곡선 꺾기 직후에도 회전 직후처럼 잠깐 앞 벽 감시를 쉰다 (21:30 실기: 곡선 직후 1초 STUCK)."""
+    monkeypatch.setattr(mission1_logic, 'ARC_TURNS', True)
     logic = Mission1Logic(point_symmetry=False)
     logic.phase = RETURN
     logic.grid.mark_free((8, 4))
@@ -1705,3 +1710,11 @@ def test_drive_after_turn_with_heading_error_stays_near_line():
         worst = max(worst, abs(y - start[1]))
         now += 0.05
     assert worst < 0.03  # 예전(45도 안이면 최고 속도, 이득 1.5)은 약 5.5 cm
+
+
+def test_return_turns_in_place_without_arc_by_default():
+    """복귀도 갈 때처럼 칸 가운데에 서서 제자리 회전한다 (ARC_TURNS 끔, 2026-11-02 팀)."""
+    logic = Mission1Logic(point_symmetry=False)
+    logic.phase = RETURN
+    logic.grid.mark_free((8, 4))
+    assert logic._arc_plan([(8, 2), (8, 3), (7, 3)], 1) is None
