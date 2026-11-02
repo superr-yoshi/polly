@@ -74,6 +74,11 @@ tof_node:
     i2c_address: 41            # 0x29
     rate: 30.0                 # Hz (센서 연속 측정 약 33 ms)
     frame: gripper_tof_link    # 위치는 URDF tof_x/tof_y/tof_h (TODO_MEASURE)
-    hold_max_mm: 70            # 2026-11-01 실측: 큐브 잡음 28 mm, 빈 집게 닫힘 108 mm, 열림 범위 밖
+    # 2026-11-01 실측: 큐브 잡음 28 mm(덜 들어가면 32~38), 빈 집게 닫힘 108 mm, 열림 범위 밖.
+    # 2026-11-02 70 -> 50: 19:32 실기에서 빈 집게를 닫았는데 65~73 mm가 나와 잠깐 '잡음'이 됐다
+    hold_max_mm: 50
+    # 이보다 작은 값은 센서 오류로 버린다 (큐브가 끝까지 들어와도 28 mm).
+    # 2026-11-02 19:32 실기: 주행 중 빈 집게에 1 mm가 한 번 찍혀 헛 집게질
+    min_valid_mm: 15
     on_samples: 3              # 가까움이 이만큼 이어지면 holding true (약 0.1 s)
     off_samples: 5             # 멂이 이만큼 이어지면 false (끌고 가다 잠깐 튀는 값 무시)

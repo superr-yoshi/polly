@@ -38,7 +38,8 @@ class TofNode(Node):
         p('i2c_address', vl53l0x.ADDRESS)
         p('rate', 30.0)                 # Hz. 센서 연속 측정 약 33 ms
         p('frame', 'gripper_tof_link')
-        p('hold_max_mm', 70)            # 2026-11-01 실측: 큐브 28 mm, 빈 집게 닫힘 108 mm
+        p('hold_max_mm', 50)            # 큐브 28~38 mm, 빈 집게 닫힘 65~108 mm (hardware.yaml)
+        p('min_valid_mm', 15)           # 이보다 작으면 센서 오류값으로 버린다
         p('on_samples', 3)
         p('off_samples', 5)
         p('min_range_m', 0.03)
@@ -48,6 +49,7 @@ class TofNode(Node):
         self.addr = g('i2c_address').value
         self.frame = g('frame').value
         self.min_range = g('min_range_m').value
+        self.min_valid_mm = g('min_valid_mm').value
         self.max_range = g('max_range_m').value
         self.detector = vl53l0x.HoldDetector(
             g('hold_max_mm').value, g('on_samples').value, g('off_samples').value)
@@ -100,6 +102,11 @@ class TofNode(Node):
         self.failures = 0
         if mm is None:
             return   # 새 측정값 아직 없음
+        if mm < self.min_valid_mm:
+            # 실제로 나올 수 없는 값 (큐브가 끝까지 들어와도 28 mm). 거리·holding 둘 다 보내지 않는다.
+            # 2026-11-02 19:32 실기: 빈 집게에 1 mm가 한 번 찍혀 임무 1이 바로 닫았다
+            self.get_logger().warn(f'VL53L0X 오류값 {mm} mm 버림', throttle_duration_sec=1.0)
+            return
         far = mm >= vl53l0x.OUT_OF_RANGE_MM
         msg = Range()
         msg.header.stamp = self.get_clock().now().to_msg()
