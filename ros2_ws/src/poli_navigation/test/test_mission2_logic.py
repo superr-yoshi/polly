@@ -29,6 +29,7 @@ from poli_navigation.mission2_logic import (
     GUARD_SPEED,
     heading_error_to,
     HOLDING_CONFIRM_S,
+    LURK,
     Mission2Logic,
     Observation,
     PUSH,
@@ -256,6 +257,7 @@ def test_search_when_target_not_visible_after_drive():
 
 
 def test_grasp_failed_backs_off_then_searches(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
@@ -270,6 +272,7 @@ def test_grasp_failed_backs_off_then_searches(monkeypatch):
 
 
 def test_grasp_failure_backs_off_far_enough_to_see_cube(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
@@ -300,6 +303,7 @@ def test_grasp_waits_for_holding_sensor_before_failing():
 
 
 def test_retries_after_failed_grab_and_holds(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
@@ -329,6 +333,7 @@ def test_grasp_ends_as_soon_as_gripper_reports_closed():
 
 
 def test_lost_target_during_guard_backs_off(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
@@ -692,6 +697,7 @@ def test_push_closes_when_tof_sees_cube_inside_gripper():
 
 def test_push_backs_off_without_closing_when_cube_never_enters(monkeypatch):
     """15 cm를 밀어도 적외선에 안 잡히면(옆으로 비켜 감) 닫지 않고 집게를 연 채 물러난다 (헛 집게질 없음)."""
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     monkeypatch.setattr(mission2_logic, 'SPIN_AFTER_FAIL', False)
     logic = _close_approach_logic()
     logic._approach(Observation(x=2.0, y=2.0, yaw=math.radians(90), now=0.1, detected=True,
@@ -710,8 +716,9 @@ def test_tof_inside_during_approach_closes_right_away():
     assert logic.state == GRASP and command.gripper == GRIPPER_GRAB
 
 
-def test_grasp_failed_spins_in_place_forever():
+def test_grasp_failed_spins_in_place_forever(monkeypatch):
     """잡기 실패 뒤에는 쫓아가지 않고 끝까지 제자리에서 돌기만 한다 (2026-11-01 팀)."""
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GRASP)
@@ -731,7 +738,8 @@ def test_grasp_failed_spins_in_place_forever():
     assert len(robot.gripper_log) == gripper_commands  # 집게는 그대로
 
 
-def test_lost_cube_during_guard_spins():
+def test_lost_cube_during_guard_spins(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
@@ -742,7 +750,8 @@ def test_lost_cube_during_guard_spins():
     assert command.gripper is None
 
 
-def test_spin_returns_to_spin_after_retreat():
+def test_spin_returns_to_spin_after_retreat(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GRASP)
@@ -756,8 +765,9 @@ def test_spin_returns_to_spin_after_retreat():
     assert logic.state == SPIN
 
 
-def test_push_fail_spins_without_closing():
+def test_push_fail_spins_without_closing(monkeypatch):
     """밀어도 큐브가 안 들어오면 닫지 않고(헛 집게질 없음) 그 자리에서 돌기만 한다."""
+    monkeypatch.setattr(mission2_logic, 'LURK_AFTER_FAIL', False)
     logic = _close_approach_logic()
     logic._approach(Observation(x=2.0, y=2.0, yaw=math.radians(90), now=0.1, detected=True,
                                 x_offset=0.0, area=36000.0, gripper_range=math.inf))
@@ -766,3 +776,136 @@ def test_push_fail_spins_without_closing():
                                       gripper_range=math.inf))
     assert logic.state == SPIN
     assert command.gripper is None and command.linear == 0.0
+
+
+# ---------------------------------------------------------------
+# 실패·놓침 뒤 LURK: GUARD처럼 피하고, 빨간 대상이 보이면 다시 잡으러 간다 (2026-11-02 팀)
+# ---------------------------------------------------------------
+
+FAR_AWAY = (100.0, 100.0)  # 카메라에 안 보이는 곳 (큐브를 상대가 가져갔다)
+
+
+def lurking_robot(target=FAR_AWAY):
+    """잡기에 실패해 LURK로 간 로봇. 그 뒤 큐브는 target에 있다."""
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    robot.holding = False
+    run(logic, robot, max_seconds=robot.now + GRASP_WAIT_S + 1.0, until=LURK)
+    assert logic.state == LURK
+    robot.target = target
+    return logic, robot
+
+
+def test_grasp_failed_retries_when_cube_is_visible():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    robot.holding = False
+    run(logic, robot, max_seconds=robot.now + GRASP_WAIT_S + 1.0, until=LURK)
+    grabs = robot.gripper_log.count(GRIPPER_GRAB)
+    opens = robot.gripper_log.count(GRIPPER_OPEN)
+
+    # 큐브는 그대로 앞에 있다: 물러나 거리를 번 뒤 집게를 열고 다시 잡아 지킨다.
+    robot.holding = None
+    states = run(logic, robot, max_seconds=robot.now + 10.0, until=GUARD)
+    assert logic.state == GUARD
+    # (ALIGN은 큐브가 이미 앞에 있으면 같은 판단 안에서 바로 APPROACH로 넘어간다)
+    assert states[0] == LURK and APPROACH in states and GRASP in states
+    assert robot.gripper_log.count(GRIPPER_OPEN) == opens + 1
+    assert robot.gripper_log.count(GRIPPER_GRAB) > grabs
+
+
+def test_lurk_keeps_gripper_until_retry():
+    # ToF가 잘못 '놓침'으로 봐도 큐브를 떨어뜨리지 않게, 다시 잡으러 갈 때까지 집게를 열지 않는다.
+    logic, robot = lurking_robot()
+    gripper_commands = len(robot.gripper_log)
+    run(logic, robot, max_seconds=robot.now + 5.0)
+    assert logic.state == LURK
+    assert len(robot.gripper_log) == gripper_commands
+
+
+def test_lurk_backs_out_to_circle_and_spins():
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    assert logic.state == LURK
+    assert abs(math.dist((robot.x, robot.y), CENTER_M) - GUARD_RADIUS_M) < GUARD_ARRIVE_M + 0.03
+    spot = (robot.x, robot.y)
+    for _ in range(int(2.0 / DT)):
+        command = logic.step(robot.observe())
+        robot.apply(command)
+        assert command.linear == 0.0
+    assert command.angular == SPIN_SPEED
+    assert math.dist((robot.x, robot.y), spot) < 0.02
+
+
+def test_lurk_dodges_opponent_along_circle():
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    start_angle = angle_from_center(robot.x, robot.y)
+    opponent = guard_point(start_angle + 0.6)
+    commands = run_guard_with_opponents(logic, robot, [opponent], 5.0)
+    assert any(command.linear != 0.0 for command in commands)
+    turned = angle_from_center(robot.x, robot.y) - start_angle
+    assert turned < -0.05
+    assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M
+
+
+def test_lurk_does_not_chase_cube_held_by_opponent():
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    # 원 위에서 돌다 보면 큐브가 보이지만, 상대 로봇(큐브에서 0.15 m) 집게에 있어 가지 않는다.
+    robot.target = (CENTER_M[0] + 0.2, CENTER_M[1])
+    holder = (CENTER_M[0] + 0.35, CENTER_M[1])
+    seen = False
+    while robot.now < 40.0:
+        obs = robot.observe()
+        obs.opponents = (holder,)
+        seen = seen or obs.detected
+        robot.apply(logic.step(obs))
+        assert logic.state == LURK
+    assert seen
+
+    # 상대가 큐브를 두고 떠나면 다시 잡으러 간다
+    states = run(logic, robot, max_seconds=robot.now + 10.0, until=PUSH)
+    assert ALIGN in states and logic.state == PUSH
+
+
+def test_lurk_returns_to_lurk_after_retreat():
+    logic, robot = lurking_robot()
+    robot.x, robot.y = 0.6, 1.8
+    states = run(logic, robot, max_seconds=robot.now + 5.0)
+    assert RETREAT in states
+    assert logic.state == LURK
+
+
+def test_lost_cube_during_guard_lurks_without_opening():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+
+    robot.holding = False
+    command = logic.step(robot.observe())
+    assert logic.state == LURK
+    assert command.gripper is None
+
+
+def test_regrabbed_cube_is_guarded_after_retreat():
+    # 실패 뒤 다시 잡았으면 RETREAT가 끝나고 LURK가 아니라 GUARD로 돌아간다.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    logic.gave_up = True
+    robot.x, robot.y = 0.6, 1.8
+    states = run(logic, robot, max_seconds=robot.now + 8.0)
+    assert RETREAT in states
+    assert logic.state == GUARD
+
+
+def test_cube_inside_gripper_during_lurk_closes_without_opening():
+    logic, robot = lurking_robot()
+    obs = robot.observe()
+    obs.gripper_range = 0.03
+    command = logic.step(obs)
+    assert logic.state == GRASP
+    assert command.gripper == GRIPPER_GRAB

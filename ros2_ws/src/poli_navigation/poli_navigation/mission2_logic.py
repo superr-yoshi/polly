@@ -8,8 +8,10 @@ ROS2와 무관한 순수 Python 모듈이다.
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
   -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(중앙에서 떨어진 원 위로 빠져서 지키기)
-  못 잡았거나 놓치면(/gripper/holding false) SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀)
-  (SPIN_AFTER_FAIL False면 예전처럼 BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기)
+  못 잡았거나 놓치면(/gripper/holding false) LURK: GUARD처럼 원 위로 빠져 상대를 피하고,
+  빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (LURK_AFTER_FAIL, 2026-11-02 팀)
+  (LURK_AFTER_FAIL False면 SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀),
+   둘 다 False면 예전처럼 BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기)
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
   + 언제나 탈락선 감시 (RETREAT)
 
@@ -185,6 +187,19 @@ BACKOFF_TIMEOUT_S = 1.5
 SPIN_AFTER_FAIL = True
 SPIN_SPEED = 1.5  # rad/s (SEARCH_SPEED와 같게). TODO_MEASURE: 차체가 흔들리면 낮춘다
 
+# 2026-11-02 팀: 실패·놓침 뒤 SPIN 대신 LURK. 잡았을 때(GUARD)와 같이 원 위로 빠지고 상대가 오면 피한다.
+# 원 위에 서면 제자리에서 SPIN_SPEED로 돌며 둘러보고, 피하는 중이 아닐 때 빨간 대상이 보이면
+# 집게를 열고 다시 잡으러 간다. False면 SPIN_AFTER_FAIL대로 (되돌리기용, git 태그 backup/m2-spin-before-lurk).
+# 집게는 다시 잡으러 갈 때까지 그대로 둔다 (ToF가 잘못 '놓침'으로 봐도 큐브를 떨어뜨리지 않는다).
+LURK_AFTER_FAIL = True
+# 큐브가 카메라에서 이보다 가까우면(면적이 크면) 아직 다시 잡으러 가지 않는다. 집게가 닫힌 채
+# 큐브 바로 앞에서 실패했으므로, 원 쪽으로 물러나 집게가 다 열릴 거리를 번 뒤에 간다.
+# 약 25 cm면 0.4 m/s로 다가가도 집게가 다 열리는 0.18 s(약 7 cm) 뒤에 큐브까지 여유가 있다.
+LURK_RETRY_MAX_AREA = APPROACH_STRAIGHT_AREA  # 카메라에서 약 25 cm
+# 큐브 위치가 상대 로봇(LiDAR 중심)에서 이 안이면 상대가 잡은 큐브로 보고 가지 않는다 (차체가 약해
+# 부딪히지 않는 것이 우선). 0이면 언제나 간다. TODO_MEASURE: 상대 집게 길이에 맞춰
+LURK_IGNORE_NEAR_OPPONENT_M = 0.3
+
 # 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False로 했다가 True로 되돌림:
 # 임무를 켜면 Mega가 리셋돼 서보 힘이 빠지고 집게가 조금 닫힌다. 열기를 안 보내면 덜 열린 채로
 # 큐브까지 갔다. (시작 때 "한 번 오므려 보인" 것은 힘 빠진 집게를 열림 90도로 다시 잡는 동작)
@@ -257,6 +272,7 @@ RETREAT = 'RETREAT'
 RECENTER = 'RECENTER'
 BACKOFF = 'BACKOFF'
 SPIN = 'SPIN'
+LURK = 'LURK'
 # 큐브를 잡고 있는 상태
 HOLDING_STATES = (HOLD, GUARD)
 
@@ -374,6 +390,7 @@ class Mission2Logic:
         # 카메라로 계산한 큐브 위치 (경기장 좌표). 카메라 지연 때문에 화면 값으로 바로 돌지 않고
         # 이 점을 향해 엔코더·IMU 위치로 돈다 (위치는 지연이 작다).
         self.target = None
+        self._target_updated_at = None
         self._poses = collections.deque()
         self._vision_stamp = None
         self._search_direction = 1.0
@@ -401,7 +418,7 @@ class Mission2Logic:
         # 집게가 닫혔다고 본 시각 (GRASP), 후진 시작 위치 (BACKOFF)
         self._grasp_closed_at = None
         self._backoff_start = None
-        # 잡기에 실패했거나 놓쳐서 SPIN으로 간 뒤인지 (RETREAT 뒤에도 SPIN으로 돌아간다)
+        # 잡기에 실패했거나 놓쳐서 LURK·SPIN으로 간 뒤인지 (RETREAT 뒤에도 그리로 돌아간다)
         self.gave_up = False
 
     def _change_state(self, new_state, obs):
@@ -472,7 +489,7 @@ class Mission2Logic:
 
         if margin >= self._retreat_exit_margin:
             resume = self._resume_state_after_retreat()
-            if resume == GUARD:
+            if resume in (GUARD, LURK):
                 # 밀려난 자리에서 가까운 원 위 점으로 돌아간다 (처음 빠진 점까지 가로지르지 않는다)
                 self._guard_angle = angle_around_center((obs.x, obs.y))
                 self._dodging = False
@@ -488,15 +505,16 @@ class Mission2Logic:
         return self._drive_toward(obs, CENTER_M, APPROACH_FAST_SPEED)
 
     def _resume_state_after_retreat(self):
-        if self.gave_up:
-            return SPIN
+        # 실패 뒤 다시 잡았으면(LURK에서 재시도 성공) 잡은 상태가 먼저다
         if self._state_before_retreat in HOLDING_STATES:
             return self._state_before_retreat
+        if self.gave_up:
+            return LURK if LURK_AFTER_FAIL else SPIN
         return SEARCH
 
     def wants_opponents(self):
         """상대 위치(LiDAR)가 필요한 상태인지. 출발·접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
-        return self.holding_cube() or self.state == RECENTER
+        return self.holding_cube() or self.state in (RECENTER, LURK)
 
     def holding_cube(self):
         if self.state == RETREAT:
@@ -516,6 +534,7 @@ class Mission2Logic:
             GUARD: self._guard,
             BACKOFF: self._backoff,
             SPIN: self._spin,
+            LURK: self._lurk,
             RECENTER: self._recenter,
         }
         return handlers[self.state](obs)
@@ -572,6 +591,7 @@ class Mission2Logic:
         # 면적 430으로 보여 큐브 위치에 섞였다)
         if not all(ARENA_MARGIN_M < c < ARENA_SIZE_M - ARENA_MARGIN_M for c in point):
             return
+        self._target_updated_at = obs.now
         if self.target is None:
             self.target = point
         else:
@@ -669,10 +689,16 @@ class Mission2Logic:
         speed = max(MIN_TURN_SPEED, min(TURN_SPEED, HEADING_GAIN * abs(error)))
         return math.copysign(speed, error)
 
+    def _search_again(self, obs):
+        """대상을 놓쳤다. 한 번 실패한 뒤(다시 잡으러 가던 중)면 LURK로, 아니면 SEARCH."""
+        if self.gave_up and LURK_AFTER_FAIL:
+            return self._start_lurk(obs)
+        self._change_state(SEARCH, obs)
+        return Command()
+
     def _align(self, obs):
         if self._target_lost(obs) or self.target is None:
-            self._change_state(SEARCH, obs)
-            return Command()
+            return self._search_again(obs)
 
         error = heading_error_to(obs, self.target)
         if abs(error) < ALIGN_DONE_RAD:
@@ -687,8 +713,7 @@ class Mission2Logic:
             if self._area_best >= APPROACH_SLOW_AREA:
                 # 바로 앞까지 왔다가 카메라 아래로 사라졌다 = 집게 앞에 있다. 밀며 잡는다.
                 return self._start_push(obs)
-            self._change_state(SEARCH, obs)
-            return Command()
+            return self._search_again(obs)
 
         if self._area_best_at is None:
             self._area_best_at = (obs.x, obs.y)
@@ -817,6 +842,8 @@ class Mission2Logic:
         return self._start_backoff(obs)
 
     def _start_backoff(self, obs):
+        if LURK_AFTER_FAIL:
+            return self._start_lurk(obs)
         if SPIN_AFTER_FAIL:
             self.gave_up = True
             self._change_state(SPIN, obs)
@@ -839,6 +866,48 @@ class Mission2Logic:
         """잡기 실패·놓침 뒤: 아무것도 쫓지 않고 제자리에서 계속 돈다 (SPIN_AFTER_FAIL)."""
         return Command(angular=SPIN_SPEED)
 
+    def _start_lurk(self, obs):
+        self.gave_up = True
+        # 실패 전에 본 큐브 위치는 버린다 (큐브가 밀렸거나 상대가 가져갔을 수 있다)
+        self.target = None
+        # 지금 자리에서 가까운 원 위 점으로 빠진다 (큐브 쪽을 보고 있으므로 보통 후진)
+        self._guard_angle = angle_around_center((obs.x, obs.y))
+        self._dodging = False
+        self._escaping = True
+        self._change_state(LURK, obs)
+        return self._lurk(obs)
+
+    def _lurk(self, obs):
+        """
+        잡지 못했거나 놓친 뒤 (LURK_AFTER_FAIL): GUARD처럼 원 위에서 상대를 피하며 기다린다.
+
+        원 위에 서 있는 동안은 제자리에서 돌며 카메라로 둘러보고, 피하는 중이 아닐 때 빨간 대상이 보이면
+        집게를 열고 다시 잡으러 간다 (상대가 잡고 있는 큐브로 보이면 가지 않는다).
+        """
+        if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+            # 큐브가 이미 집게 안에 있다 (ToF가 잠깐 '놓침'으로 봤다) -> 열지 않고 다시 닫는다
+            return self._start_push(obs)
+        opponents = self._opponents(obs)
+        command = self._keep_away(obs, opponents)
+        # 큐브 위치는 이번에 새로 계산된 것만 쓴다 (빨리 돌 때는 갱신하지 않아 옛 위치가 남는다)
+        retry = (not self._dodging and self._sees_target(obs) and self.target is not None
+                 and self._target_updated_at == obs.now and obs.area < LURK_RETRY_MAX_AREA
+                 and not self._target_near_opponent(opponents))
+        if retry:
+            self._target_seen_at = obs.now
+            self._change_state(ALIGN, obs)
+            command = self._align(obs)
+            if command.gripper is None:
+                command.gripper = GRIPPER_OPEN
+            return command
+        if command is None:
+            return Command(angular=SPIN_SPEED)
+        return command
+
+    def _target_near_opponent(self, opponents):
+        return any(math.dist(self.target, other) < LURK_IGNORE_NEAR_OPPONENT_M
+                   for other in opponents)
+
     def _hold(self, obs):
         # 규정 3.4.7.3: 끝날 때까지 연속으로 오래 확보한 팀이 유리하다.
         # 잡은 뒤에는 움직이지 않고 계속 유지한다.
@@ -852,8 +921,15 @@ class Mission2Logic:
         lost = self._lost_cube(obs)
         if lost is not None:
             return lost
+        command = self._keep_away(obs, self._opponents(obs))
+        return Command() if command is None else command
 
-        opponents = self._opponents(obs)
+    def _keep_away(self, obs, opponents):
+        """
+        원 위 점으로 가고, 상대가 오면 원을 따라 반대쪽으로 피한다 (GUARD·LURK 공통).
+
+        원 위 점에 도착해 서 있을 때는 None.
+        """
         opponent_distance = min(
             (math.dist((obs.x, obs.y), other) for other in opponents), default=math.inf)
         if opponent_distance < DODGE_START_M:
@@ -880,7 +956,7 @@ class Mission2Logic:
         goal = guard_point(self._guard_angle)
         if not self._dodging and distance_to(obs, goal) < GUARD_ARRIVE_M:
             self._escaping = False
-            return Command()
+            return None
         speed = GUARD_ESCAPE_SPEED if self._escaping else GUARD_SPEED
         return self._guard_drive(obs, goal, speed, opponents)
 
