@@ -7,7 +7,7 @@ ROS2와 무관한 순수 Python 모듈이다.
 
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
-  -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(중앙에서 떨어진 원 위로 빠져서 지키기)
+  -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(잡은 자리에서 지키다가 상대가 오면 피하기)
   못 잡았거나 놓치면(/gripper/holding false) LURK: GUARD처럼 원 위로 빠져 상대를 피하고,
   빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (LURK_AFTER_FAIL, 2026-11-02 팀)
   (LURK_AFTER_FAIL False면 SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀),
@@ -214,6 +214,10 @@ PIVOT_DONE_RAD = math.radians(4.0)   # 남은 각도가 이 안이면 직진 시
 
 # 잡은 뒤 지키기 (GUARD). False면 예전처럼 잡은 자리에 서 있는다 (HOLD).
 GUARD_ENABLED = True
+# True = 잡자마자 후진으로 원 위 우리 출발 쪽 점까지 빠진 뒤 지킨다 (2026-11-01 '잡고 도망').
+# False = 잡은 자리에 서 있다가 상대가 DODGE_START_M 안으로 오면 원을 따라 피하고, 멀어지면 그 자리에 선다
+# (2026-11-02 팀: 잡고 굳이 뒤로 빠지지 말고 바로 장애물 피하기).
+GUARD_ESCAPE_FIRST = False
 # 지키는 원의 반지름 (중앙에서). 대각선(처음 빠지는 점)이면 탈락선까지 0.69 m, 원이 선과 가장 가까운
 # 정면 방향이면 0.4 m 남는다 (RETREAT 0.3 m보다 멀다). 2026-11-01 0.8 -> 1.0 ("너무 조금 후진", 약 0.87 m 후진)
 # TODO_MEASURE: 연습장에서 상대 로봇 접근을 보고 조정 (제출 전에 확정, 경기장 공개 후 수정 금지)
@@ -829,7 +833,7 @@ class Mission2Logic:
         if GUARD_ENABLED:
             self._guard_angle = GUARD_HOME_ANGLE
             self._dodging = False
-            self._escaping = True
+            self._escaping = GUARD_ESCAPE_FIRST
             self._change_state(GUARD, obs)
             return Command()
         self._change_state(HOLD, obs)
@@ -917,18 +921,23 @@ class Mission2Logic:
         return Command()
 
     def _guard(self, obs):
-        """잡은 큐브를 지킨다: 원 위 점으로 가서 서 있고, 상대가 오면 원을 따라 반대쪽으로 피한다."""
+        """
+        잡은 큐브를 지킨다: 상대가 오면 원을 따라 반대쪽으로 피한다.
+
+        GUARD_ESCAPE_FIRST면 먼저 원 위 점으로 빠져 거기 서 있고, 아니면 지금 자리에 서 있는다.
+        """
         lost = self._lost_cube(obs)
         if lost is not None:
             return lost
-        command = self._keep_away(obs, self._opponents(obs))
+        command = self._keep_away(obs, self._opponents(obs), stay=not GUARD_ESCAPE_FIRST)
         return Command() if command is None else command
 
-    def _keep_away(self, obs, opponents):
+    def _keep_away(self, obs, opponents, stay=False):
         """
         원 위 점으로 가고, 상대가 오면 원을 따라 반대쪽으로 피한다 (GUARD·LURK 공통).
 
-        원 위 점에 도착해 서 있을 때는 None.
+        stay면 피할 때만 움직이고 그 밖에는 지금 자리에 서 있는다.
+        서 있을 때(원 위 점에 도착, 또는 stay)는 None.
         """
         opponent_distance = min(
             (math.dist((obs.x, obs.y), other) for other in opponents), default=math.inf)
@@ -953,6 +962,8 @@ class Mission2Logic:
                 return Command()
             self._guard_angle = own_angle + self._dodge_direction * DODGE_ARC_STEP_RAD
 
+        if stay and not self._dodging:
+            return None
         goal = guard_point(self._guard_angle)
         if not self._dodging and distance_to(obs, goal) < GUARD_ARRIVE_M:
             self._escaping = False

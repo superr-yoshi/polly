@@ -213,7 +213,8 @@ def test_never_enters_danger_zone_in_normal_run():
         assert distance_to_danger_line(robot.observe()) > 0.0
 
 
-def test_guard_backs_out_to_circle_and_stays():
+def test_guard_backs_out_to_circle_and_stays(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_FIRST', True)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
@@ -457,8 +458,9 @@ def test_full_run_with_latency_is_fast_and_direct():
 # 잡은 뒤 지키기 (GUARD): 상대가 오면 원을 따라 피하기
 # ---------------------------------------------------------------
 
-def guarding_robot():
-    """원 위 처음 점에 서서 지키는 중인 로봇."""
+def guarding_robot(monkeypatch):
+    """원 위 처음 점에 서서 지키는 중인 로봇 (GUARD_ESCAPE_FIRST, 먼저 빠지는 방식)."""
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_FIRST', True)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
@@ -471,9 +473,9 @@ def angle_from_center(x, y):
     return math.atan2(y - CENTER_M[1], x - CENTER_M[0])
 
 
-def test_guard_dodges_along_circle_away_from_opponent():
+def test_guard_dodges_along_circle_away_from_opponent(monkeypatch):
     for side in (1.0, -1.0):
-        logic, robot = guarding_robot()
+        logic, robot = guarding_robot(monkeypatch)
         # 원 위에서 한쪽(side) 옆으로 0.5 m 떨어진 곳에 상대가 다가와 멈춰 있다.
         opponent = guard_point(GUARD_HOME_ANGLE + side * 0.6)
         start_angle = angle_from_center(robot.x, robot.y)
@@ -519,8 +521,8 @@ def test_guard_does_not_drive_into_opponent():
     assert logic._guard_drive(obs, (2.6, 1.0), GUARD_ESCAPE_SPEED, (obs.opponent,)).linear > 0.0
 
 
-def test_guard_ignores_far_opponent():
-    logic, robot = guarding_robot()
+def test_guard_ignores_far_opponent(monkeypatch):
+    logic, robot = guarding_robot(monkeypatch)
     for _ in range(40):
         obs = robot.observe()
         obs.opponent = (CENTER_M[0] - 1.0, CENTER_M[1] + 1.0)
@@ -542,16 +544,16 @@ def run_guard_with_opponents(logic, robot, opponents, seconds):
     return commands
 
 
-def test_guard_stands_still_when_sandwiched():
-    logic, robot = guarding_robot()
+def test_guard_stands_still_when_sandwiched(monkeypatch):
+    logic, robot = guarding_robot(monkeypatch)
     # 원 위 양쪽에서 상대가 붙어 온다: 어느 쪽으로 피해도 부딪힌다.
     opponents = [guard_point(GUARD_HOME_ANGLE + 0.5), guard_point(GUARD_HOME_ANGLE - 0.5)]
     commands = run_guard_with_opponents(logic, robot, opponents, 3.0)
     assert all(command.linear == 0.0 for command in commands)
 
 
-def test_guard_dodges_toward_open_side_with_two_opponents():
-    logic, robot = guarding_robot()
+def test_guard_dodges_toward_open_side_with_two_opponents(monkeypatch):
+    logic, robot = guarding_robot(monkeypatch)
     start_angle = angle_from_center(robot.x, robot.y)
     # 가까운 상대는 원 안쪽에 비켜 있고(그쪽 길은 지나갈 수 있다), 먼 상대가 반대쪽 원 위를 막고 있다.
     # 예전(가까운 상대 반대쪽으로만)이면 먼 상대 쪽으로 가서 부딪혔다.
@@ -566,8 +568,8 @@ def test_guard_dodges_toward_open_side_with_two_opponents():
     assert math.dist((robot.x, robot.y), far) > 0.5
 
 
-def test_retreat_starts_30cm_from_line_after_start():
-    logic, robot = guarding_robot()
+def test_retreat_starts_30cm_from_line_after_start(monkeypatch):
+    logic, robot = guarding_robot(monkeypatch)
     # 밀려서 노란 선(x = 3.2)에서 0.25 m: 예전(0.15)은 그대로 있었다.
     robot.x, robot.y = 2.95, 1.8
     logic.step(robot.observe())
@@ -580,11 +582,11 @@ def test_retreat_starts_30cm_from_line_after_start():
     assert logic.state == DRIVE
 
 
-def test_retreat_pushes_back_when_opponent_squeezes_toward_line():
+def test_retreat_pushes_back_when_opponent_squeezes_toward_line(monkeypatch):
     # 2026-11-01 실기: 사방에서 조이면 노란 선 밖으로 나갔다. 중앙 쪽 상대가 차체에 붙어(표면 0.2 m)
     # 0.15 m/s로 밀고 온다.
     # 예전에는 중앙으로 가려다 앞의 상대 때문에 서 버려 그대로 밀려 나갔다.
-    logic, robot = guarding_robot()
+    logic, robot = guarding_robot(monkeypatch)
     robot.x, robot.y = 2.95, 1.8
     push = 0.15
     for _ in range(round(4.0 / DT)):
@@ -909,3 +911,46 @@ def test_cube_inside_gripper_during_lurk_closes_without_opening():
     command = logic.step(obs)
     assert logic.state == GRASP
     assert command.gripper == GRIPPER_GRAB
+
+
+# ---------------------------------------------------------------
+# 잡은 자리에서 지키기 (GUARD_ESCAPE_FIRST False, 2026-11-02 팀)
+# ---------------------------------------------------------------
+
+def test_guard_stays_where_it_grabbed_without_opponents():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    spot = (robot.x, robot.y)
+    for _ in range(int(5.0 / DT)):
+        command = logic.step(robot.observe())
+        robot.apply(command)
+        assert command.linear == 0.0
+    assert logic.state == GUARD
+    assert math.dist((robot.x, robot.y), spot) < 0.02
+
+
+def test_guard_dodges_only_when_opponent_comes_then_stands():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    # 상대가 잡은 자리 0.5 m 옆으로 다가와 멈춰 있다 -> 피한다
+    opponent = (robot.x + 0.5, robot.y - 0.1)
+    start = (robot.x, robot.y)
+    moved = False
+    for _ in range(int(6.0 / DT)):
+        obs = robot.observe()
+        obs.opponent = opponent
+        command = logic.step(obs)
+        robot.apply(command)
+        moved = moved or command.linear != 0.0
+        assert distance_to_danger_line(robot.observe()) > 0.3
+    assert moved
+    assert math.dist((robot.x, robot.y), opponent) > math.dist(start, opponent) + 0.2
+    # 상대가 멀어지면 원 위나 처음 자리로 가지 않고 지금 자리에 선다
+    spot = (robot.x, robot.y)
+    for _ in range(int(3.0 / DT)):
+        command = logic.step(robot.observe())
+        robot.apply(command)
+    assert math.dist((robot.x, robot.y), spot) < 0.1
+    assert command.linear == 0.0
