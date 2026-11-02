@@ -186,10 +186,13 @@ DRIVE_SLOW_FOR_WALLS = False
 # 0.15~0.17 m(바퀴와 0~2 cm)인 채 달리다 사선으로 박음. 축에서 SIDE_GUARD_SELF_M 안 점은 우리 부품으로 본다.
 # 2026-11-02 0.18 -> 0.19: 통로 가운데(벽 0.2 m)에서 1 cm만 비켜도 작게 틀기 시작 (감속 없이 일찍 고친다)
 SIDE_GUARD_M = 0.19
-SIDE_GUARD_GAIN = 20.0       # rad/s 당 m (1 cm 들어오면 0.2 rad/s, 3 cm면 0.6 rad/s 더)
+# 2026-11-02 20 -> 12: 22:08 실기에서 주행 방향이 65~116도로 흔들림 (집게 날 오판과 겹침). 3 cm면 0.36 rad/s 더
+SIDE_GUARD_GAIN = 12.0       # rad/s 당 m
 SIDE_GUARD_SPEED = 0.3
 SIDE_GUARD_BACK_M = -0.15
-SIDE_GUARD_FRONT_M = 0.20
+# 2026-11-02 0.20 -> 0.05 (차체 앞 끝): 22:08 실기에서 열린 집게 날(축 앞 +10~17 cm, 옆 약 12 cm)을 좌우 벽 12 cm로 보고
+# 1.4 rad/s씩 틀었다. 차체 옆면(축 16 cm 뒤 ~ 5 cm 앞)만 본다
+SIDE_GUARD_FRONT_M = 0.05
 SIDE_GUARD_SELF_M = 0.12
 
 # TODO_MEASURE: 펄스 한 번 회전량(turn_pulse.PULSE_S)보다 범위(±)가 넓어야 멈출 수 있다

@@ -1778,3 +1778,21 @@ def test_drive_slows_when_far_off_line_only_if_enabled(monkeypatch):
     logic._drive_heading = math.pi / 2
     command = logic._drive(Observation(x=3.47, y=0.6, yaw=math.pi / 2, now=0.0))
     assert command.linear <= mission1_logic.DRIVE_LATERAL_SLOW_SPEED + 1e-9
+
+
+def test_side_guard_ignores_open_gripper_claws(monkeypatch):
+    """열린 집게 날(축 앞 +10~17 cm, 옆 12 cm)은 옆 벽이 아니다 (2026-11-02 22:08 흔들림)."""
+    monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_OFFSET_X_M', -0.08)
+    monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_OFFSET_Y_M', 0.0)
+    monkeypatch.setattr(mission1_logic.scan_to_grid, 'LASER_YAW_RAD', 0.0)
+    count = 720
+    ranges = [math.inf] * count
+    for claw_x in (0.10, 0.13, 0.16):
+        for side in (1.0, -1.0):
+            dx, dy = claw_x + 0.08, 0.12 * side
+            angle = math.atan2(dy, dx)
+            ranges[int(round((angle + math.pi) / (2.0 * math.pi / count))) % count] = math.hypot(dx, dy)
+    scan = types.SimpleNamespace(ranges=ranges, angle_min=-math.pi,
+                                 angle_increment=2.0 * math.pi / count,
+                                 range_min=0.05, range_max=12.0)
+    assert mission1_logic.side_clearance(scan) == (math.inf, math.inf)
