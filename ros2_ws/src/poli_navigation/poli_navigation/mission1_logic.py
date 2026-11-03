@@ -1649,13 +1649,20 @@ class Mission1Logic:
         if (abs(self._last_angular) > GUARD_MAX_TURN_RATE
                 or abs(heading_error) > GUARD_MAX_HEADING_RAD):
             return False
-        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), self._drive_heading,
+        # 스캔을 찍던 순간의 위치로 벽 거리와 목표 거리를 같이 잰다. 지금 위치를 쓰면 스캔이 늦게 온 만큼
+        # (0.6 m/s, 0.15~0.2 s면 9~12 cm) 벽이 멀게 보여, 칸 사이 벽(목표 가운데 0.2 m 앞, 여유 8 cm)을 끝내
+        # 못 잡았다 (2026-11-03 22:12 실기: (9,5)->(6,5) 세 칸 중 (7,5)/(6,5) 사이 벽을 뚫음, 시뮬레이션 재현).
+        sx, sy, _ = self.scan_pose(obs)
+        cos_h, sin_h = math.cos(self._drive_heading), math.sin(self._drive_heading)
+        ahead = nearest_ahead(obs.scan, (sx, sy, obs.yaw), self._drive_heading,
                               CHAIN_GUARD_HALF_WIDTH_M)
-        self._guard_ahead = ahead
+        # _cell_before_wall은 지금 위치 기준 거리를 쓴다
+        moved = (obs.x - sx) * cos_h + (obs.y - sy) * sin_h
+        self._guard_ahead = None if ahead is None else ahead - moved
         if ahead is None or ahead > CHAIN_GUARD_RANGE_M:
             return False
-        dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
-        to_target = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
+        dx, dy = self.target[0] - sx, self.target[1] - sy
+        to_target = dx * cos_h + dy * sin_h
         return ahead < to_target - CHAIN_WALL_MARGIN_M
 
     def _wall_known_beyond(self, target_cell):

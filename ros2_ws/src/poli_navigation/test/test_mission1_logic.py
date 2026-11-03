@@ -615,6 +615,53 @@ def test_reverse_toward_known_wall_trusts_wall_more_and_slows_down():
     assert _reverse_into_dead_end(0.15) > center_x + 0.05
 
 
+def _chain_into_wall_with_scan_lag(lag_s):
+    """(9,5)->(6,5) 세 칸을 0.6 m/s로 묶어 가는데 (6,5)가 막혀 있다. 스캔은 찍힌 지 lag_s 뒤에 온다."""
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((6, 5), (8, 4), (8, 6), (9, 4), (9, 6), (7, 6)):
+        true_grid.mark_blocked(cell)
+    logic = Mission1Logic(point_symmetry=False)
+    logic.gripper_opened = True
+    x, y = cell_center_m((9, 5))
+    yaw = math.pi
+    logic.maze.observe((9, 5), yaw)
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = cell_center_m((6, 5))
+    logic._drive_heading = math.pi
+    logic._chained = True
+    logic.path = [(9, 5), (8, 5), (7, 5), (6, 5)]
+    logic._drive_origin_cell = cell_center_m((9, 5))
+    logic._last_linear = 0.6
+    logic._last_command_at = -DT
+    now, next_scan, history = 0.0, 0.0, []
+    scan = scan_time = None
+    while now < 4.0:
+        history.append((now, x))
+        if now >= next_scan - 1e-9:
+            past = [px for t, px in history if t <= now - lag_s + 1e-9]
+            scan = simulate_scan(true_grid, (past[-1] if past else x, y, yaw))
+            scan_time = now - lag_s
+            next_scan += 0.1
+        obs = Observation(x=x, y=y, yaw=yaw, now=now, scan=scan)
+        obs.scan_time = scan_time
+        command = logic.step(obs)
+        x += command.linear * math.cos(yaw) * DT
+        now += DT
+        if logic.state != DRIVE:
+            break
+    return x
+
+
+def test_chain_front_guard_stops_before_wall_even_with_scan_lag():
+    # 2026-11-03 22:12 실기: 스캔이 0.15~0.2 s 늦게 오면 지금 위치 기준으로 벽이 9~12 cm 멀게 보여
+    # 칸 사이 벽을 끝내 못 잡고 (7,5)/(6,5) 사이 벽을 뚫었다. 스캔 찍은 위치로 재면 지연과 상관없다.
+    wall_x = cell_center_m((6, 5))[0] + 0.2
+    for lag in (0.0, 0.2):
+        stopped = _chain_into_wall_with_scan_lag(lag)
+        assert stopped - mission1_logic.GRIPPER_REACH_M - 0.04 > wall_x, lag
+
+
 def test_does_not_turn_into_unknown_cell_with_wall_on_the_way(monkeypatch):
     # 2026-11-03 15:05 실기: (4,7)에서 서서 봐도 (4,8)이 '?'(콘 광선이 애매)라 그대로 들어가 상자에 닿았다.
     # 진행선 위 칸 앞쪽 절반에 벽 점이 보이면 막힘으로 보고 다른 칸으로 간다.
