@@ -255,6 +255,11 @@ CHAIN_CHECK_CONE_RAD = math.radians(8.0)
 # 통로 옆 상자 면(±0.2 m, 좁은 통로·로봇이 비켜 있으면 더 안쪽)은 빠진다 (2026-10-31 실기: 옆면으로 멈춤)
 CHAIN_GUARD_HALF_WIDTH_M = 0.10
 CHAIN_GUARD_RANGE_M = 0.6
+# 후진으로 칸 가운데에 설 때 목표 칸 너머(차체 뒤) 벽이 LiDAR에 보이면 그 벽까지 거리로도 도착을 본다.
+# 축 ~ 차체 뒤끝 약 0.16 m라 가운데에 서면 뒤 벽까지 4 cm뿐이다. 2026-11-03 14:50 실기: 큐브를 잡고
+# (5,5)->(7,5) 후진 중 엔코더 위치가 3 cm 넘게 덜 간 것으로 나와(벽 보정 상한 +3 cm) (8,5) 상자에 박았다.
+# 벽으로 본 남은 거리가 엔코더로 본 것과 REVERSE_WALL_MATCH_M 넘게 다르면 목표 칸 너머 벽이 아닌 것으로 본다.
+REVERSE_WALL_MATCH_M = 0.10
 # 회전이 덜 끝났을 때는 앞 벽 감시를 하지 않는다: 빨리 도는 동안 찍힌 스캔은 한 바퀴(0.1 s) 동안 20도 가까이
 # 비틀려 옆 상자 모서리가 진행선 위로 온다 (2026-11-01 20:25 실기: (9,2)에서 157도로 아직 돌며 '앞에 벽' 급정지)
 GUARD_MAX_TURN_RATE = 0.8                 # rad/s
@@ -527,6 +532,8 @@ class Mission1Logic:
         self._chained = False
         # 이번 주행에서 진행선 옆으로 가장 많이 벗어난 거리, 옆 벽 감시를 로그로 남겼는지 (로그용)
         self._drive_max_lateral = 0.0
+        # 후진 도착을 뒤 벽 거리로 앞당긴 만큼 (로그용)
+        self._reverse_wall_gap = 0.0
         self._side_guard_noted = False
         # 여러 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
         self._no_chain_from = set()
@@ -1389,8 +1396,13 @@ class Mission1Logic:
             dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
             along = dx * math.cos(axis) + dy * math.sin(axis)
             lateral = -dx * math.sin(axis) + dy * math.cos(axis)  # 진행선이 로봇 왼쪽이면 +
-            endpoint_reached = along <= ARRIVE_TOLERANCE_M
             remaining = along
+            if self.reverse and obs.scan is not None:
+                by_wall = self._reverse_wall_left(obs, along)
+                if by_wall is not None and by_wall < remaining:
+                    self._reverse_wall_gap = along - by_wall
+                    remaining = by_wall
+            endpoint_reached = remaining <= ARRIVE_TOLERANCE_M
             # 목표 바로 앞에서는 작은 옆 오차가 큰 회전각으로 증폭되므로 진행축만 유지한다.
             correction = (0.0 if distance < CELL_CENTER_TOLERANCE_M
                           else clamp(DRIVE_LATERAL_GAIN * lateral, DRIVE_MAX_CORRECTION_RAD))
@@ -1416,6 +1428,10 @@ class Mission1Logic:
                 self._note(f'진행선 옆 오차 최대 {self._drive_max_lateral * 100:.1f} cm '
                            f'({target_cell}까지)')
             self._drive_max_lateral = 0.0
+            if self._reverse_wall_gap > 0.01:
+                self._note(f'후진 도착을 뒤 벽으로 봄: 엔코더보다 {self._reverse_wall_gap * 100:.1f} cm '
+                           f'먼저 섬 ({target_cell})')
+            self._reverse_wall_gap = 0.0
             self._guard_stop_cell = None
             self._guard_stops = 0
             if target_cell == self._guard_off_cell:
@@ -1531,6 +1547,25 @@ class Mission1Logic:
         dx, dy = self.target[0] - obs.x, self.target[1] - obs.y
         to_target = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
         return ahead < to_target - CHAIN_WALL_MARGIN_M
+
+    def _reverse_wall_left(self, obs, along):
+        """
+        후진 중 차체 뒤(진행 방향) 벽까지 거리로 본 목표 가운데까지 남은 거리.
+
+        목표 칸 너머 벽(가운데에서 반 칸 뒤)으로 보이지 않으면 None (지나가는 칸, 옆 상자 등).
+        스캔은 찍힌 뒤 움직인 만큼 빼서 지금 위치 기준으로 바꾼다.
+        """
+        sx, sy, syaw = self.scan_pose(obs)
+        wall = nearest_ahead(obs.scan, (sx, sy, syaw), self._drive_heading,
+                             CHAIN_GUARD_HALF_WIDTH_M)
+        if wall is None:
+            return None
+        cos_a, sin_a = math.cos(self._drive_heading), math.sin(self._drive_heading)
+        moved = (obs.x - sx) * cos_a + (obs.y - sy) * sin_a
+        left = wall - moved - CELL_SIZE_M / 2.0
+        if abs(left - along) > REVERSE_WALL_MATCH_M:
+            return None
+        return left
 
     def _travel_heading_error(self, obs):
         """후진할 때 목표 반대쪽으로 차체 정면을 유지한다."""

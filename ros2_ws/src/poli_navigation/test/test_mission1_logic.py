@@ -601,6 +601,46 @@ def test_return_reverses_instead_of_turning_around():
     assert logic._turn(obs).linear < 0.0
 
 
+def _reverse_into_dead_end(odom_lag_m):
+    """
+    (5,5)에서 (7,5)로 후진, 너머 (8,5)는 상자. 엔코더 위치는 실제보다 odom_lag_m 덜 간 것으로 나온다.
+
+    로봇이 멈춘 순간의 실제 x를 돌려준다.
+    """
+    true_grid = GridMap(use_point_symmetry=False)
+    true_grid.mark_blocked((8, 5))
+    logic = Mission1Logic(point_symmetry=False)
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = cell_center_m((7, 5))
+    logic._drive_heading = 0.0
+    logic.reverse = True
+    x, y = cell_center_m((6, 5))
+    yaw = math.pi
+    now = 0.0
+    while now < 5.0:
+        obs = Observation(x=x - odom_lag_m, y=y, yaw=yaw, now=now,
+                          scan=simulate_scan(true_grid, (x, y, yaw)))
+        command = logic._drive(obs)
+        if logic.state != DRIVE:
+            break
+        x += command.linear * math.cos(yaw) * DT
+        now += DT
+    return x
+
+
+def test_reverse_stops_by_wall_behind_when_odometry_lags():
+    # 2026-11-03 14:50 실기: 큐브를 잡고 (5,5)->(7,5) 후진 중 엔코더가 3 cm 넘게 덜 간 것으로 나와
+    # (8,5) 상자에 박았다. 뒤 벽이 보이면 그 거리로도 도착을 본다.
+    wall_x = cell_center_m((8, 5))[0] - 0.2
+    center_x = cell_center_m((7, 5))[0]
+    stopped = _reverse_into_dead_end(0.05)
+    assert stopped <= center_x + 0.005
+    assert wall_x - stopped > 0.18
+    # 엔코더가 맞을 때는 예전처럼 가운데 근처에 선다
+    assert abs(_reverse_into_dead_end(0.0) - center_x) < 0.035
+
+
 def test_last_cell_into_start_is_forward():
     """출발 격자로 들어가는 칸은 뒤쪽이어도 전진 (큐브를 격자 안에 넣기 위해)."""
     logic = Mission1Logic()
