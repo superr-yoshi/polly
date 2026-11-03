@@ -16,8 +16,10 @@
 # 주의
 # - 실행하면 SSH가 끊긴다. 다시 켜려면 로봇에서 직접 `sudo rfkill unblock all`
 #   (모니터·키보드 연결) 하거나 아래 "복구"를 쓴다.
-# - Ubuntu는 rfkill 상태를 재부팅 후에도 기억할 수 있다 (systemd-rfkill).
-#   경기가 끝나면 반드시 `scripts/comm_off.sh --restore`로 되돌린다.
+# - Ubuntu는 rfkill 상태를 재부팅 후에도 기억한다 (systemd-rfkill, 바꿀 때마다 저장).
+#   2026-11-04 Pi에서 끔: sudo systemctl mask systemd-rfkill.service systemd-rfkill.socket
+#   -> 전원을 껐다 켜면(비상정지 포함) 항상 무선이 켜진 채로 부팅한다. 모니터·키보드 없이
+#   임무 사이에 무선을 되살리는 방법이다. 새 SD 카드에 설치하면 이것도 다시 한다.
 # - 어느 시점에 실행할지(임무 launch에 연결)는 시작 절차 담당이 정한다.
 set -u
 
