@@ -648,11 +648,11 @@ def test_moves_closer_to_center_when_full_turn_finds_nothing():
     logic = Mission2Logic()
     logic.state = SEARCH
     robot = SimRobot(pose=(0.75, 0.75, 0.0), target=(100.0, 100.0))
-    states = run(logic, robot, max_seconds=25.0)
+    states = run(logic, robot, max_seconds=25.0, until=LURK)
 
-    # 한 바퀴 돌고 중앙 쪽으로 다가가 다시 돈다. 탈락선에는 가지 않는다.
-    assert RECENTER in states
-    assert states[-1] == SEARCH
+    # 한 바퀴 돌고 중앙 쪽으로 다가가 다시 돈다. 거기서도 없으면 구석 순찰(LURK)로. 탈락선에는 가지 않는다.
+    assert RECENTER in states and states[-1] == LURK
+    assert states.index(RECENTER) < states.index(LURK)
     assert math.dist((robot.x, robot.y), CENTER_M) < SEARCH_CENTER_M + 0.1
     assert distance_to_danger_line(robot.observe()) > 0.3
 
@@ -857,8 +857,9 @@ def test_grasp_failed_retries_when_cube_is_visible():
     robot.holding = None
     states = run(logic, robot, max_seconds=robot.now + 10.0, until=GUARD)
     assert logic.state == GUARD
-    # (ALIGN은 큐브가 이미 앞에 있으면 같은 판단 안에서 바로 APPROACH로 넘어간다)
-    assert states[0] == LURK and APPROACH in states and GRASP in states
+    # 큐브가 바로 앞이라 서서 집게부터 열고(LURK_OPEN_WAIT_S), 같은 판단 안에서 ALIGN -> APPROACH -> PUSH로
+    # 넘어갈 수 있어 기록에는 PUSH부터 남는다.
+    assert states[0] == LURK and PUSH in states and GRASP in states
     assert robot.gripper_log.count(GRIPPER_OPEN) == opens + 1
     assert robot.gripper_log.count(GRIPPER_GRAB) > grabs
 
@@ -872,7 +873,8 @@ def test_lurk_keeps_gripper_until_retry():
     assert len(robot.gripper_log) == gripper_commands
 
 
-def test_lurk_backs_out_to_circle_and_spins():
+def test_lurk_backs_out_to_circle_and_spins(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_PATROL', False)  # 순찰 전 첫 단계만 본다
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     assert logic.state == LURK
@@ -886,7 +888,15 @@ def test_lurk_backs_out_to_circle_and_spins():
     assert math.dist((robot.x, robot.y), spot) < 0.02
 
 
-def test_lurk_dodges_opponent_along_circle():
+def lurk_old_settings(monkeypatch):
+    """2026-11-03 이전 LURK: 안 잡고 있어도 상대를 피하고, 상대가 잡은 큐브는 무시한다."""
+    monkeypatch.setattr(mission2_logic, 'LURK_DODGE', True)
+    monkeypatch.setattr(mission2_logic, 'LURK_IGNORE_NEAR_OPPONENT_M', 0.3)
+    monkeypatch.setattr(mission2_logic, 'LURK_PATROL', False)
+
+
+def test_lurk_dodges_opponent_along_circle_with_old_settings(monkeypatch):
+    lurk_old_settings(monkeypatch)
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     start_angle = angle_from_center(robot.x, robot.y)
@@ -898,7 +908,8 @@ def test_lurk_dodges_opponent_along_circle():
     assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M
 
 
-def test_lurk_does_not_chase_cube_held_by_opponent():
+def test_lurk_does_not_chase_cube_held_by_opponent_with_old_settings(monkeypatch):
+    lurk_old_settings(monkeypatch)
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     # 원 위에서 돌다 보면 큐브가 보이지만, 상대 로봇(큐브에서 0.15 m) 집게에 있어 가지 않는다.
@@ -919,7 +930,8 @@ def test_lurk_does_not_chase_cube_held_by_opponent():
     assert APPROACH in states and logic.state == PUSH
 
 
-def test_lurk_retry_dodges_opponent_like_guard():
+def test_lurk_retry_dodges_opponent_like_guard_with_old_settings(monkeypatch):
+    lurk_old_settings(monkeypatch)
     # 2026-11-03 실기: 실패 뒤 다시 잡으러 가는 중(ALIGN·APPROACH)에는 상대를 안 봐서 피하지 않았다.
     # 이제는 GUARD·LURK처럼 상대가 DODGE_START_M 안으로 오면 LURK로 돌아가 피한다.
     logic, robot = lurking_robot(target=CENTER_M)
@@ -943,7 +955,8 @@ def test_lurk_retry_dodges_opponent_like_guard():
     assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M
 
 
-def test_lurk_waits_for_opponent_to_clear_before_retry():
+def test_lurk_waits_for_opponent_to_clear_before_retry_with_old_settings(monkeypatch):
+    lurk_old_settings(monkeypatch)
     # 상대가 DODGE_START_M ~ DODGE_CLEAR_M 사이에 있으면 다시 잡으러 가지 않는다 (가다가 바로 피하게 된다)
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
@@ -957,6 +970,287 @@ def test_lurk_waits_for_opponent_to_clear_before_retry():
         robot.apply(logic.step(obs))
         if math.dist((robot.x, robot.y), opponent) <= mission2_logic.DODGE_CLEAR_M:
             assert logic.state == LURK
+
+
+def test_lurk_does_not_dodge_opponent(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_PATROL', False)  # 순찰 이동과 섞이지 않게
+    # 2026-11-03 팀: 큐브를 안 잡고 있으면 피하지 않는다. 원 위에서 상대가 옆에 와도 그 자리에서 돈다.
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    spot = (robot.x, robot.y)
+    opponent = guard_point(angle_from_center(robot.x, robot.y) + 0.6)
+    commands = run_guard_with_opponents(logic, robot, [opponent], 3.0)
+    assert all(command.linear == 0.0 for command in commands)
+    assert math.dist((robot.x, robot.y), spot) < 0.02
+    assert logic.state == LURK
+
+
+def test_lurk_chases_cube_held_by_opponent():
+    # 2026-11-03 팀: 상대가 잡은 큐브도 잡으러 간다 (같이 집으면 재경기, 규정 3.4.7.2)
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    robot.target = (CENTER_M[0] + 0.2, CENTER_M[1])
+    holder = (CENTER_M[0] + 0.35, CENTER_M[1])
+    states = []
+    while robot.now < 40.0 and logic.state != PUSH:
+        obs = robot.observe()
+        obs.opponents = (holder,)
+        robot.apply(logic.step(obs))
+        states.append(logic.state)
+    assert APPROACH in states and logic.state == PUSH
+
+
+def test_lurk_retry_keeps_going_when_opponent_comes_close():
+    # 다시 잡으러 가는 중에 상대가 옆에 와도 LURK로 돌아가지 않고 계속 간다
+    logic, robot = lurking_robot(target=CENTER_M)
+    run(logic, robot, max_seconds=robot.now + 15.0, until=APPROACH)
+    assert logic.state == APPROACH
+    ahead = (robot.x + 0.5 * math.cos(robot.yaw), robot.y + 0.5 * math.sin(robot.yaw))
+    opponent = (ahead[0] - 0.15 * math.sin(robot.yaw), ahead[1] + 0.15 * math.cos(robot.yaw))
+    states = []
+    for _ in range(int(3.0 / DT)):
+        obs = robot.observe()
+        obs.opponents = (opponent,)
+        robot.apply(logic.step(obs))
+        states.append(logic.state)
+        if logic.state == PUSH:
+            break
+    assert LURK not in states
+    assert logic.state == PUSH
+
+
+def test_lurk_opens_gripper_first_when_cube_is_close(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'LURK_PATROL', False)  # 순찰 이동과 섞이지 않게
+    # 원 위에 선 채 상대가 든 큐브가 바로 앞(약 20 cm)에 있다: 물러날 일이 없으니 서서 집게부터 열고 간다
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    robot.yaw = angle_from_center(robot.x, robot.y) + math.pi  # 중앙 쪽을 본다
+    robot.target = (robot.x + 0.3 * math.cos(robot.yaw), robot.y + 0.3 * math.sin(robot.yaw))
+    opens = robot.gripper_log.count(GRIPPER_OPEN)
+    first_open = None
+    while robot.now < 30.0 and logic.state != PUSH:
+        obs = robot.observe()
+        obs.gripper_state = 'closed' if first_open is None else 'open'
+        command = logic.step(obs)
+        robot.apply(command)
+        if command.gripper == GRIPPER_OPEN and first_open is None:
+            first_open = robot.now
+            assert command.linear == 0.0
+        if first_open is not None and robot.now - first_open < mission2_logic.GRIPPER_MIN_WAIT_S:
+            assert command.linear == 0.0
+    assert first_open is not None and logic.state == PUSH
+    assert robot.gripper_log.count(GRIPPER_OPEN) == opens + 1
+
+
+def guard_just_grabbed():
+    """중앙에서 막 잡아 GUARD에 들어간 로봇."""
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    return logic, robot
+
+
+def test_guard_counts_lost_cube():
+    logic, robot = guard_just_grabbed()
+    assert logic.cube_losses == 0
+    robot.holding = False
+    robot.apply(logic.step(robot.observe()))
+    assert logic.state == LURK and logic.cube_losses == 1
+
+
+def test_guard_stays_after_losing_cube():
+    # 2026-11-03 팀: 같이 잡은 상대와 줄다리기에 지면(GUARD_STAY_AFTER_LOSSES번), 그다음 잡을 때는 빠지거나 피하지 않고 버틴다
+    # (처음 STAY_PRELOAD_S 동안은 약하게 앞으로 밀기만 한다)
+    logic, robot = guard_just_grabbed()
+    logic.cube_losses = 3
+    start = (robot.x, robot.y, robot.yaw)
+    commands = []
+    for _ in range(int((mission2_logic.STAY_PRELOAD_S + 2.0) / DT)):
+        obs = robot.observe()
+        obs.opponents = (guard_point(GUARD_HOME_ANGLE),)  # 상대가 와도 피하지 않는다
+        command = logic.step(obs)
+        robot.apply(command)
+        commands.append(command)
+        assert command.angular == 0.0 and command.linear >= 0.0
+    assert logic.state == GUARD and robot.yaw == start[2]
+    assert all(c == Command() for c in commands[-int(1.0 / DT):])
+    pushed = math.dist((robot.x, robot.y), start[:2])
+    assert pushed < mission2_logic.STAY_PRELOAD_SPEED * mission2_logic.STAY_PRELOAD_S + 0.05
+
+def test_guard_still_escapes_before_any_loss():
+    # 한 번도 안 놓쳤으면 잡자마자 원래대로 빠진다 (버티기는 GUARD_STAY_AFTER_LOSSES번 놓친 뒤)
+    logic, robot = guard_just_grabbed()
+    assert logic.cube_losses == 0 and not logic.stays_holding()
+    start = (robot.x, robot.y)
+    run(logic, robot, max_seconds=robot.now + 5.0)
+    assert math.dist((robot.x, robot.y), start) > 0.5
+
+
+def test_guard_stays_after_first_loss():
+    logic, robot = guard_just_grabbed()
+    robot.holding = False
+    robot.apply(logic.step(robot.observe()))
+    assert logic.cube_losses == 1 and logic.stays_holding()
+
+def test_guard_follows_when_opponent_drags_cube_after_losses():
+    # 2026-11-03 팀: 빼앗기에 실패한 뒤 버티는 중, 상대가 끌고 가면 따라간다 (큐브가 빠지지 않게)
+    logic, robot = guard_just_grabbed()
+    logic.cube_losses = 3
+    start = (robot.x, robot.y)
+    # 상대가 큐브를 반대쪽에서 쥐고 1.0 m/s^2로 가속해 0.4 m/s로 끈다 (sim_mission2 상대와 같은 가속).
+    # 우리 집게에서 빠진 만큼(상대가 끈 거리 - 우리가 따라간 거리) 적외선 거리가 커진다.
+    pulled = 0.0
+    pull_speed = 0.0
+    tofs = []
+    for _ in range(int(3.0 / DT)):
+        pull_speed = min(0.4, pull_speed + 1.0 * DT)
+        pulled += pull_speed * DT
+        moved = ((robot.x - start[0]) * math.cos(robot.yaw)
+                 + (robot.y - start[1]) * math.sin(robot.yaw))
+        obs = robot.observe()
+        obs.gripper_range = 0.028 + max(0.0, pulled - moved)
+        tofs.append(obs.gripper_range)
+        robot.apply(logic.step(obs))
+        assert logic.state == GUARD
+    # 끌려간 만큼 따라갔고, 큐브는 놓치는 거리(50 mm) 안에 머물렀다
+    assert math.dist((robot.x, robot.y), start) > 0.6
+    assert max(tofs) < 0.05
+
+
+def test_guard_preloads_then_stays_still_when_not_pulled():
+    # 버티기로 잡으면 처음 STAY_PRELOAD_S 동안 약하게 앞으로 밀고, 끌려 나가지 않으면 그 뒤로는 선다
+    logic, robot = guard_just_grabbed()
+    logic.cube_losses = 3
+    commands = []
+    for k in range(int((mission2_logic.STAY_PRELOAD_S + 2.0) / DT)):
+        obs = robot.observe()
+        obs.gripper_range = 0.022 + 0.012 * (k % 2)  # 22~34 mm 흔들림은 끌림이 아니다
+        command = logic.step(obs)
+        robot.apply(command)
+        commands.append(command)
+    preload = int(1.0 / DT)
+    limit = mission2_logic.STAY_PRELOAD_SPEED + 1e-9
+    assert all(0.0 < c.linear <= limit for c in commands[3:preload])
+    assert all(c == Command() for c in commands[-int(1.0 / DT):])
+
+
+def test_grasp_follows_while_closing_when_staying():
+    # 버티기로 잡는 중에는 집게를 닫는 동안(GRASP)에도 서 있지 않고 앞으로 민다
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    logic.cube_losses = 3
+    obs = robot.observe()
+    obs.gripper_range = 0.045  # 상대가 반대쪽에서 당겨 큐브가 빠져나오는 중
+    for _ in range(4):
+        command = logic.step(obs)
+        obs.now += DT
+    assert logic.state == GRASP and command.linear > mission2_logic.STAY_PRELOAD_SPEED
+
+
+def test_lurk_patrols_four_corner_points():
+    # 큐브가 안 보이면(상대가 가져가 숨음) 경기장 네 구석 점을 돌며 점마다 제자리에서 한 바퀴씩 둘러본다
+    logic, robot = lurking_robot()
+    visited = []
+    while robot.now < 60.0:
+        robot.apply(logic.step(robot.observe()))
+        assert logic.state == LURK
+        for i, point in enumerate(mission2_logic.PATROL_POINTS):
+            if math.dist((robot.x, robot.y), point) < GUARD_ARRIVE_M + 0.03:
+                if not visited or visited[-1] != i:
+                    visited.append(i)
+    # 우리 출발 쪽 구석부터 반시계로 돈다
+    assert len(set(visited)) == 4
+    for a, b in zip(visited, visited[1:]):
+        assert b == (a + 1) % 4
+    assert distance_to_danger_line(robot.observe()) > 0.3
+
+
+def test_lurk_patrol_pushes_in_and_spins_at_corner_taken_by_opponent():
+    # 구석에 상대가 있어도(큐브를 들고 숨었을 수 있다) 밀고 들어가 그 점에서 돈다
+    logic, robot = lurking_robot()
+    taken = mission2_logic.PATROL_POINTS[1]
+    spun_there = 0.0
+    while robot.now < 60.0:
+        obs = robot.observe()
+        obs.opponents = (taken,)
+        command = logic.step(obs)
+        robot.apply(command)
+        if (math.dist((robot.x, robot.y), taken) < GUARD_ARRIVE_M + 0.03
+                and command.angular == SPIN_SPEED):
+            spun_there += DT
+    assert spun_there > 3.0  # 그 점에서 한 바퀴 (1.5 rad/s로 약 4.2 s)
+    assert logic.state == LURK
+
+def test_lurk_patrol_finds_hidden_cube_and_goes_for_it(monkeypatch):
+    # 큐브가 반대편 꼭짓점 쪽(처음 자리에서 테스트 카메라 거리 2 m 밖)에 있다: 순찰하다 보이면 잡으러 간다
+    far_side = GUARD_HOME_ANGLE + math.pi
+    cube = (CENTER_M[0] + 1.3 * math.cos(far_side), CENTER_M[1] + 1.3 * math.sin(far_side))
+    for patrol in (False, True):
+        monkeypatch.setattr(mission2_logic, 'LURK_PATROL', patrol)
+        logic, robot = lurking_robot()
+        # 우리 쪽 원 위로 빠져 제자리에서 돌기 시작할 때까지 (그동안 큐브는 안 보이는 곳)
+        while robot.now < 20.0:
+            command = logic.step(robot.observe())
+            robot.apply(command)
+            if command.linear == 0.0 and command.angular == SPIN_SPEED:
+                break
+        assert math.dist((robot.x, robot.y), cube) > 2.0
+        robot.target = cube
+        run(logic, robot, max_seconds=robot.now + 60.0, until=PUSH)
+        assert (logic.state == PUSH) == patrol
+
+
+def test_search_finds_nothing_then_patrols_corners():
+    # 처음부터 큐브가 안 보인다 (상대가 먼저 잡고 숨음): 중앙 근처를 다 본 뒤 구석 순찰로 간다
+    logic = Mission2Logic()
+    robot = SimRobot(target=FAR_AWAY)
+    states = run(logic, robot, max_seconds=60.0)
+    assert SEARCH in states and LURK in states
+    assert logic._patrol_idx is not None
+
+
+def grab_with_opponent_holding_cube():
+    """상대가 이미 잡고 있는 중앙 큐브에 다가가 같이 잡은 로봇 (상대는 큐브 건너편, 다가가는 동안 LiDAR에 보임)."""
+    logic = Mission2Logic()
+    robot = SimRobot()
+    while robot.now < 20.0 and logic.state != GUARD:
+        obs = robot.observe()
+        away = math.atan2(CENTER_M[1] - robot.y, CENTER_M[0] - robot.x)
+        holder = (CENTER_M[0] + 0.2 * math.cos(away), CENTER_M[1] + 0.2 * math.sin(away))
+        if math.dist((robot.x, robot.y), holder) > 0.45:  # 코앞이면 LiDAR가 못 본다
+            obs.opponents = (holder,)
+        robot.apply(logic.step(obs))
+    assert logic.state == GUARD
+    return logic, robot
+
+
+def test_guard_pushes_when_grabbed_together():
+    # 2026-11-03 팀: 같이 잡았으면 돌아서 빠지지 않고 앞으로 민다
+    logic, robot = grab_with_opponent_holding_cube()
+    assert logic.coholding
+    start_yaw = robot.yaw
+    for _ in range(int(3.0 / DT)):
+        command = logic.step(robot.observe())
+        # 상대에 막혀 앞으로 거의 못 나간다 (돌기만 반영)
+        robot.yaw += command.angular * DT
+        robot.now += DT
+    assert logic.coholding and logic.state == GUARD
+    assert command.linear == mission2_logic.COHOLD_PUSH_SPEED and command.angular == 0.0
+    assert robot.yaw == start_yaw
+
+
+def test_guard_stops_pushing_when_opponent_lets_go():
+    logic, robot = grab_with_opponent_holding_cube()
+    start = (robot.x, robot.y)
+    run(logic, robot, max_seconds=robot.now + 4.0)  # 막힘 없이 나간다 = 상대가 놓았다
+    assert not logic.coholding
+    assert math.dist((robot.x, robot.y), start) > 0.3  # 원래대로 원 위로 빠진다
+
+
+def test_guard_does_not_push_when_grabbed_alone():
+    logic, robot = guard_just_grabbed()
+    assert not logic.coholding
 
 
 def test_lurk_returns_to_lurk_after_retreat():

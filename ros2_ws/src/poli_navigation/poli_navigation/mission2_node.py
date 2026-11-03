@@ -121,6 +121,7 @@ class Mission2Node(Node):
         self.vision = None
         self.vision_received_at = None
         self.last_state = None
+        self.last_cohold = False
         self.last_motion_log = 0.0
         self.last_control_at = None
 
@@ -310,6 +311,11 @@ class Mission2Node(Node):
         if self.logic.state != self.last_state:
             self.get_logger().info(f'State: {self.logic.state}')
             self.last_state = self.logic.state
+        if self.logic.coholding != self.last_cohold:
+            # 같이 잡음(COHOLD_PUSH) 판단 실기 확인용
+            self.get_logger().info(
+                '같이 잡음: 밀기 시작' if self.logic.coholding else '같이 잡음 끝: 평소대로')
+            self.last_cohold = self.logic.coholding
         push = self.logic.push_opponent
         if push is not None and push != self.last_push_opponent:
             self.get_logger().info(

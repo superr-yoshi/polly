@@ -8,9 +8,10 @@ ROS2와 무관한 순수 Python 모듈이다.
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
   -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(180도 돌아 중앙에서 떨어진 원 위로 빠져서 지키기)
-  못 잡았거나 놓치면(/gripper/holding false) LURK: GUARD처럼 원 위로 빠져 상대를 피하고,
+  못 잡았거나 놓치면(/gripper/holding false) LURK: 원 위로 빠지고,
   빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (LURK_AFTER_FAIL, 2026-11-02 팀)
-  다시 잡으러 가는 중(ALIGN·APPROACH)에도 상대가 DODGE_START_M 안으로 오면 LURK로 돌아가 피한다 (2026-11-03)
+  상대를 피하는 것은 큐브를 잡고 있을 때(GUARD)만. 안 잡고 있으면 상대가 가까워도, 상대가 잡은 큐브라도
+  붙어서 잡는다 (LURK_DODGE False, LURK_IGNORE_NEAR_OPPONENT_M 0, 2026-11-03 팀)
   (LURK_AFTER_FAIL False면 SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀),
    둘 다 False면 예전처럼 BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기)
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
@@ -216,9 +217,39 @@ LURK_AFTER_FAIL = True
 # 큐브 바로 앞에서 실패했으므로, 원 쪽으로 물러나 집게가 다 열릴 거리를 번 뒤에 간다.
 # 약 25 cm면 0.4 m/s로 다가가도 집게가 다 열리는 0.18 s(약 7 cm) 뒤에 큐브까지 여유가 있다.
 LURK_RETRY_MAX_AREA = APPROACH_STRAIGHT_AREA  # 카메라에서 약 25 cm
-# 큐브 위치가 상대 로봇(LiDAR 중심)에서 이 안이면 상대가 잡은 큐브로 보고 가지 않는다 (차체가 약해
-# 부딪히지 않는 것이 우선). 0이면 언제나 간다. TODO_MEASURE: 상대 집게 길이에 맞춰
-LURK_IGNORE_NEAR_OPPONENT_M = 0.3
+# 이보다 가까운 큐브가 보이면 물러나기를 기다리지 않고 그 자리에 서서 집게부터 연다. 다 열리면(/gripper/state
+# open, 모르면 이 시간) 잡으러 간다 (2026-11-03 시뮬레이션: 원 위에 선 채 상대가 든 큐브가 23 cm 앞에 있어
+# 물러날 일이 없으니 끝까지 돌기만 했다). TODO_MEASURE: 집게 열림 약 0.18 s
+LURK_OPEN_WAIT_S = 0.3
+# 큐브 위치가 상대 로봇(LiDAR 중심)에서 이 안이면 상대가 잡은 큐브로 보고 가지 않는다. 0이면 언제나 간다.
+# 2026-11-03 팀 0.3 -> 0: 상대가 잡은 큐브도 잡으러 간다. 우리 집게가 상대가 잡은 큐브를 같이 집으면
+# 둘 다 확보로 재경기(규정 3.4.7.2)라 아무것도 안 하는 것보다 낫다.
+LURK_IGNORE_NEAR_OPPONENT_M = 0.0
+# 큐브를 안 잡고 있을 때(LURK, 다시 잡으러 가는 중)도 상대를 피할지. 2026-11-03 팀 True -> False:
+# 피하는 것은 큐브를 잡고 있을 때(GUARD)만. 안 잡고 있으면 상대가 가까워도 피하지 않고 붙어서 잡는다.
+# 시뮬레이션(scripts/sim_mission2.py): 뺏은 상대가 중앙에 서 있으면 원 위 어디서나 DODGE_CLEAR_M 안이라
+# 피하기가 안 끝나 경기 끝까지 원을 후진으로 돌았다 (57 s 동안 40 m). True면 예전처럼
+# (원을 따라 피하고, 상대가 DODGE_CLEAR_M 밖일 때만 다시 잡으러 가고, 가는 중 DODGE_START_M 안이면 LURK로).
+LURK_DODGE = False
+# LURK에서 원 위에 서서 한 바퀴 돌아봐도 큐브가 없으면, 경기장 네 구석(노란 선 안쪽) 점을 반시계로 돌며
+# 점마다 제자리에서 한 바퀴씩 둘러본다 (2026-11-03 팀). 상대가 먼저 잡고 원 위로 빠져 등을 돌리면(우리 GUARD와
+# 같은 방식) 큐브가 바깥을 봐 원 위 어디서도 상대 차체에 가려 안 보였다 (시뮬레이션). 구석에서는 바깥쪽에서 본다.
+# 처음 찾기(SEARCH)에서 중앙 근처 한 바퀴를 다 봐도 없을 때도 LURK로 넘어가 순찰한다 (한 번도 못 잡은 경우).
+LURK_PATROL = True
+# 구석 점: 중앙에서 x, y 모두 이만큼 (노란 선까지 SAFE_ZONE 여유 0.4 m, RETREAT 시작 DANGER_MARGIN_M 0.3 m보다 안쪽)
+# TODO_MEASURE: 밀려 RETREAT에 자주 걸리면 줄인다
+PATROL_CORNER_M = 1.0
+# 우리 출발 쪽 구석부터 반시계
+PATROL_POINTS = tuple((CENTER_M[0] + sx * PATROL_CORNER_M, CENTER_M[1] + sy * PATROL_CORNER_M)
+                      for sx, sy in ((1, -1), (1, 1), (-1, 1), (-1, -1)))
+# 구석에서 다음 구석으로 갈 때는 노란 선을 따라 곧게 가지 않고 원 위 중간 점(두 구석 사이 방향)을 거친다.
+# 선을 따라가면 휘면서 RETREAT 거리(0.3 m) 안으로 들어갔다 (시뮬레이션). 이 안이면 거친 것으로 본다.
+PATROL_VIA_ARRIVE_M = 0.15
+# 구석 점에 상대가 있어도 건너뛰거나 멈추지 않고 밀고 들어가 그 점에서 돈다 (2026-11-03 팀: 큐브를 들고 숨었을
+# 수 있으니 그 자리에서 확인한다. 상대를 구석 쪽으로 밀게 된다, 규정 3.4.6 허용). 못 밀면 PATROL_LEG_TIMEOUT_S 뒤 다음 구석.
+# 한 점(처음 원 위 점, 중간 점, 구석)에 이 시간 안에 못 가면 다음 구석으로 넘어간다. 상대가 그 자리에 서 있는데
+# LiDAR가 코앞이라 못 보면(opponent_detector.BODY_FRONT_M) 끝까지 밀기만 했다 (시뮬레이션). TODO_MEASURE
+PATROL_LEG_TIMEOUT_S = 6.0
 
 # 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False로 했다가 True로 되돌림:
 # 임무를 켜면 Mega가 리셋돼 서보 힘이 빠지고 집게가 조금 닫힌다. 열기를 안 보내면 덜 열린 채로
@@ -245,6 +276,38 @@ GUARD_ESCAPE_TURN_AROUND = True
 # 돌아설 때 목표 점 방향과 이 안으로 맞을 때까지는 제자리에서만 돈다 (곡선으로 크게 휘면 도착했을 때
 # 큐브가 바깥이 아니라 옆을 본다, 시뮬레이션 40도)
 GUARD_TURN_AROUND_DONE_RAD = math.radians(20.0)
+# 잡았다가 놓친 횟수가 이만큼 되면 그다음부터는 잡아도 빠지거나 피하지 않고 그 자리에서 버틴다 (2026-11-03 팀:
+# 처음 3 -> 1. 한 번 놓치면 바로 같이 잡은 채 버틴다).
+# LiDAR는 큐브를 사이에 두고 코앞에 붙은 상대를 우리 차체로 보고 버려(opponent_detector.BODY_FRONT_M)
+# 같이 잡은 것을 알 수 없어 횟수로 판단한다. 같이 확보한 채 끝나면 재경기(규정 3.4.7.2). 탈락선 감시(RETREAT)가 먼저.
+# 0이면 끔.
+GUARD_STAY_AFTER_LOSSES = 1
+# 버티는 중에 상대가 끌고 가면 따라간다: 집게 안 적외선 거리가 FOLLOW_TOF_M보다 커지면(큐브가 끌려 나감)
+# 빠진 거리 x FOLLOW_GAIN 속도로 앞으로 따라가 큐브를 집게 안에 유지한다 (맞당기지 않는다).
+# 실측: 잡은 큐브 22~30 mm, 덜 들어가면 32~38 mm, 50 mm 넘게 이어지면 holding false(놓침).
+# TODO_MEASURE: 사람이 손으로 큐브를 잡고 끌 때 값을 보고 정한다
+FOLLOW_TOF_M = 0.035
+FOLLOW_GAIN = 80.0  # (m/s)/m: 5 mm 빠지면 0.4 m/s (상대 0.4 m/s를 약 40 mm에서 따라간다)
+# 이보다 먼 값(범위 밖 inf 포함)은 이미 빠진 것으로 보고 이 거리로 계산한다 (tof_node hold_max_mm와 같게)
+PULL_LOST_M = 0.05
+# 버티기(GUARD_STAY_AFTER_LOSSES)로 잡을 때는 잡기 시작부터 이 시간 동안 약하게 앞으로 밀고 있는다. 상대가 당기는
+# 순간 이미 같은 쪽으로 움직이는 중이라 모터 지연(0.15 s)과 가속 시간을 줄인다 (2026-11-03 시뮬레이션: 따라가기
+# 명령을 내도 실제로 움직이기 전에 놓쳤다). 집게를 닫는 중(GRASP)에도 따라간다. 혼자 잡았으면 약 0.3 m 앞으로 간다
+# (탈락선은 RETREAT가 먼저). TODO_MEASURE: 상대를 밀어 큐브가 빠지지 않는지
+STAY_PRELOAD_SPEED = 0.1
+STAY_PRELOAD_S = 3.0
+# 같이 잡으면 민다 (2026-11-03 팀: 같이 잡았으면 밀고, 혼자 잡았으면 안 민다). 큐브에 다가가는 동안(아직 멀어 LiDAR에
+# 보일 때) 큐브 추정 위치 COHOLD_NEAR_M 안에 상대가 있었으면(상대가 이미 잡고 있음) 잡은 뒤 돌아서 빠지지 않고
+# COHOLD_PUSH_SPEED로 앞으로 민다. 코앞에 붙으면 LiDAR가 상대를 우리 차체로 보고 버리므로(opponent_detector.BODY_FRONT_M)
+# 다가가며 본 것을 COHOLD_MEMORY_S 동안 기억해 쓴다. 미는데 COHOLD_FREE_S 동안 명령한 거리의 COHOLD_FREE_RATIO 넘게
+# 나가면(상대가 놓고 떨어짐) 원래대로 빠진다. 탈락선 감시(RETREAT)가 먼저.
+# TODO_MEASURE: 상대 LiDAR 중심 ~ 큐브 거리, 막혔을 때 엔코더·벽 보정 위치가 실제로 안 움직이는지
+COHOLD_PUSH = True
+COHOLD_NEAR_M = 0.45
+COHOLD_MEMORY_S = 1.5
+COHOLD_PUSH_SPEED = 0.15
+COHOLD_FREE_S = 1.0
+COHOLD_FREE_RATIO = 0.8
 # 지키는 원의 반지름 (중앙에서). 0.85 m면 대각선(처음 빠지는 점)에서 탈락선까지 0.80 m, 원이 선과 가장 가까운
 # 정면 방향이면 0.55 m 남는다 (RETREAT 0.3 m보다 멀다). 2026-11-01 0.8 -> 1.0 ("너무 조금 후진", 약 0.87 m 후진)
 # TODO_MEASURE: 연습장에서 상대 로봇 접근을 보고 조정 (제출 전에 확정, 경기장 공개 후 수정 금지)
@@ -470,6 +533,21 @@ class Mission2Logic:
         self._backoff_start = None
         # 잡기에 실패했거나 놓쳐서 LURK·SPIN으로 간 뒤인지 (RETREAT 뒤에도 그리로 돌아간다)
         self.gave_up = False
+        # LURK에서 다시 잡으러 가려고 집게 열기를 보낸 시각 (가까운 큐브, LURK_OPEN_WAIT_S)
+        self._lurk_open_sent_at = None
+        # LURK 순찰: 지금 가는 구석 점 번호(처음 한 바퀴 전에는 None), 원 위 중간 점을 거치는 중인지, 돈 각도
+        self._patrol_idx = None
+        self._patrol_via = False
+        self._patrol_turned = 0.0
+        self._patrol_last_yaw = None
+        self._patrol_leg_at = None
+        # GUARD에서 잡은 큐브를 놓친 횟수 (GUARD_STAY_AFTER_LOSSES), 버티기로 잡기 시작한 시각 (STAY_PRELOAD_S)
+        self.cube_losses = 0
+        self._stay_grab_at = None
+        # 같이 잡음 (COHOLD_PUSH): 큐브 옆에 상대를 마지막으로 본 시각, 같이 잡고 미는 중인지, 미는 거리 재기 시작점
+        self._cohold_seen_at = None
+        self.coholding = False
+        self._cohold_window = None
         # 밀림 감지: 명령 0으로 서 있기 시작한 시각, 연속으로 밀린 판단 횟수, 미는 상대 (x, y, 언제까지)
         self._stand_since = None
         self._push_steps = 0
@@ -503,6 +581,7 @@ class Mission2Logic:
         while self._poses and obs.now - self._poses[0][0] > 2.0 * CAMERA_LAG_S:
             self._poses.popleft()
         self._update_target(obs)
+        self._note_cohold(obs)
         self._detect_push(obs)
 
         command = self._safety_check(obs)
@@ -613,16 +692,28 @@ class Mission2Logic:
         return SEARCH
 
     def wants_opponents(self):
-        """상대 위치(LiDAR)가 필요한 상태인지. 출발·첫 접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
-        return self.holding_cube() or self.state in (RECENTER, LURK) or self._retrying()
+        """
+        상대 위치(LiDAR)가 필요한 상태인지. 출발 중(DRIVE)에는 판단을 늦추지 않게 계산하지 않는다.
+
+        큐브에 다가가는 중(ALIGN·APPROACH·PUSH·GRASP)에는 같이 잡음(COHOLD_PUSH)을 알려고 계산한다.
+        """
+        return (self.holding_cube() or self.state in (RECENTER, LURK) or self._retrying()
+                or (COHOLD_PUSH and self.state in (ALIGN, APPROACH, PUSH, GRASP)))
+
+    def _note_cohold(self, obs):
+        """다가가는 동안 큐브 추정 위치 옆(COHOLD_NEAR_M)에 상대가 보이면 그 시각을 남긴다."""
+        if self.state not in (ALIGN, APPROACH, PUSH, GRASP) or self.target is None:
+            return
+        if any(math.dist(self.target, other) < COHOLD_NEAR_M for other in self._opponents(obs)):
+            self._cohold_seen_at = obs.now
 
     def _retrying(self):
         """실패 뒤 LURK에서 다시 잡으러 가는 중인지 (이때도 GUARD·LURK처럼 상대를 피한다)."""
         return self.gave_up and LURK_AFTER_FAIL and self.state in (ALIGN, APPROACH)
 
     def _opponent_too_close(self, obs):
-        """다시 잡으러 가는 중에 상대가 DODGE_START_M 안으로 왔는지 -> LURK로 돌아가 피한다."""
-        return self._retrying() and any(
+        """다시 잡으러 가는 중에 상대가 DODGE_START_M 안으로 왔는지 -> LURK로 돌아가 피한다 (LURK_DODGE)."""
+        return LURK_DODGE and self._retrying() and any(
             math.dist((obs.x, obs.y), other) < DODGE_START_M for other in self._opponents(obs))
 
     def holding_cube(self):
@@ -770,10 +861,13 @@ class Mission2Logic:
                 return Command(angular=math.copysign(SEARCH_SPEED, error))
         self._search_turned += abs(normalize_angle(obs.yaw - self._search_last_yaw))
         self._search_last_yaw = obs.yaw
-        if (self._search_turned >= 2.0 * math.pi
-                and distance_to(obs, CENTER_M) > SEARCH_CENTER_M + GUARD_ARRIVE_M):
-            self._change_state(RECENTER, obs)
-            return self._recenter(obs)
+        if self._search_turned >= 2.0 * math.pi:
+            if distance_to(obs, CENTER_M) > SEARCH_CENTER_M + GUARD_ARRIVE_M:
+                self._change_state(RECENTER, obs)
+                return self._recenter(obs)
+            if LURK_PATROL and LURK_AFTER_FAIL:
+                # 중앙 근처에서 한 바퀴를 다 봐도 없다 (상대가 먼저 잡고 숨음) -> 원 위로 빠져 구석 순찰
+                return self._start_lurk(obs)
         return Command(angular=self._search_direction * SEARCH_SPEED)
 
     def _recenter_goal(self, obs):
@@ -927,15 +1021,18 @@ class Mission2Logic:
         return obs.now - self._gripper_reached_at >= GRIPPER_SETTLE_S
 
     def _grasp(self, obs):
+        # 버티기로 잡는 중이면 서서 기다리지 않고 앞으로 밀며 따라간다 (상대가 같이 쥐고 당길 수 있다)
+        wait = self._follow_pull(obs) if self.stays_holding() else Command()
         if self._grasp_closed_at is None:
             if not self._gripper_closed(obs):
-                return Command()
+                return wait
             self._grasp_closed_at = obs.now
             self._grab_sent_at = None
 
         if obs.holding is False:
             if obs.now - self._grasp_closed_at < HOLDING_CONFIRM_S:
-                return Command()
+                return wait
+            self._stay_grab_at = None
             return self._start_backoff(obs)
 
         # TODO: 집게 상태를 알 수 없으면(None) 잡았다고 가정한다.
@@ -943,6 +1040,11 @@ class Mission2Logic:
             self._guard_angle = GUARD_HOME_ANGLE
             self._dodging = False
             self._escaping = GUARD_ESCAPE_FIRST
+            # 다가가며 큐브 옆에 상대를 봤으면 같이 잡은 것: 빠지지 않고 민다
+            self.coholding = (COHOLD_PUSH and self._cohold_seen_at is not None
+                              and obs.now - self._cohold_seen_at < COHOLD_MEMORY_S)
+            self._cohold_window = (obs.now, obs.x, obs.y)
+            self._cohold_seen_at = None
             self._change_state(GUARD, obs)
             return Command()
         self._change_state(HOLD, obs)
@@ -952,6 +1054,9 @@ class Mission2Logic:
         """큐브를 놓쳤으면 집게를 열고 물러나 다시 찾는다. 놓치지 않았으면 None."""
         if obs.holding is not False:
             return None
+        self.cube_losses += 1
+        self._stay_grab_at = None
+        self.coholding = False
         return self._start_backoff(obs)
 
     def _start_backoff(self, obs):
@@ -981,6 +1086,12 @@ class Mission2Logic:
 
     def _start_lurk(self, obs):
         self.gave_up = True
+        self._lurk_open_sent_at = None
+        self._patrol_idx = None
+        self._patrol_via = False
+        self._patrol_turned = 0.0
+        self._patrol_last_yaw = None
+        self._patrol_leg_at = obs.now
         # 실패 전에 본 큐브 위치는 버린다 (큐브가 밀렸거나 상대가 가져갔을 수 있다)
         self.target = None
         # 지금 자리에서 가까운 원 위 점으로 빠진다 (큐브 쪽을 보고 있으므로 보통 후진)
@@ -992,32 +1103,93 @@ class Mission2Logic:
 
     def _lurk(self, obs):
         """
-        잡지 못했거나 놓친 뒤 (LURK_AFTER_FAIL): GUARD처럼 원 위에서 상대를 피하며 기다린다.
+        잡지 못했거나 놓친 뒤 (LURK_AFTER_FAIL): 원 위로 물러나 기다린다.
 
-        원 위에 서 있는 동안은 제자리에서 돌며 카메라로 둘러보고, 피하는 중이 아니고 상대가 DODGE_CLEAR_M 밖일 때
-        빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (상대가 잡고 있는 큐브로 보이면 가지 않는다).
+        원 위에 서 있는 동안은 제자리에서 돌며 카메라로 둘러보고, 빨간 대상이 보이면 집게를 열고 다시 잡으러 간다
+        (원으로 물러나는 중에도 보이면 바로 간다). 큐브가 LURK_RETRY_MAX_AREA보다 가까우면 서서 집게부터 열고 간다.
+        LURK_DODGE면 GUARD처럼 상대를 피하고, 피하는 중이 아니고 상대가 DODGE_CLEAR_M 밖일 때만 간다.
         """
         if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
             # 큐브가 이미 집게 안에 있다 (ToF가 잠깐 '놓침'으로 봤다) -> 열지 않고 다시 닫는다
             return self._start_push(obs)
-        opponents = self._opponents(obs)
-        command = self._keep_away(obs, opponents)
+        opponents = self._opponents(obs) if LURK_DODGE else ()
+        if self._patrol_idx is not None and not self._dodging:
+            command = self._patrol_drive(obs)
+        else:
+            command = self._keep_away(obs, opponents)
         # 큐브 위치는 이번에 새로 계산된 것만 쓴다 (빨리 돌 때는 갱신하지 않아 옛 위치가 남는다)
-        # 상대가 DODGE_CLEAR_M 밖일 때만 간다 (그 안이면 가다가 바로 다시 피하게 된다)
+        # LURK_DODGE면 상대가 DODGE_CLEAR_M 밖일 때만 간다 (그 안이면 가다가 바로 다시 피하게 된다)
         clear = all(math.dist((obs.x, obs.y), other) > DODGE_CLEAR_M for other in opponents)
         retry = (not self._dodging and clear and self._sees_target(obs) and self.target is not None
-                 and self._target_updated_at == obs.now and obs.area < LURK_RETRY_MAX_AREA
-                 and not self._target_near_opponent(opponents))
+                 and self._target_updated_at == obs.now
+                 and not self._target_near_opponent(self._opponents(obs)))
+        if retry and obs.area >= LURK_RETRY_MAX_AREA:
+            # 가깝다: 닫힌 집게로 다가가면 다 열리기 전에 큐브를 친다 -> 서서 집게부터 연다
+            if self._lurk_open_sent_at is None:
+                self._lurk_open_sent_at = obs.now
+                return Command(gripper=GRIPPER_OPEN)
+            waited = obs.now - self._lurk_open_sent_at
+            opened = waited >= GRIPPER_MIN_WAIT_S and obs.gripper_state == GRIPPER_OPEN
+            if not opened and waited < LURK_OPEN_WAIT_S:
+                return Command()
         if retry:
             self._target_seen_at = obs.now
             self._change_state(ALIGN, obs)
             command = self._align(obs)
-            if command.gripper is None:
+            if command.gripper is None and self._lurk_open_sent_at is None:
                 command.gripper = GRIPPER_OPEN
             return command
         if command is None:
+            self._patrol_spin(obs)
             return Command(angular=SPIN_SPEED)
+        self._patrol_turned = 0.0
+        self._patrol_last_yaw = None
+        if (LURK_PATROL and self._patrol_leg_at is not None
+                and obs.now - self._patrol_leg_at > PATROL_LEG_TIMEOUT_S):
+            # 못 가고 있다 (보이지 않는 상대에 막힘) -> 다음 구석으로
+            self._next_patrol(obs)
         return command
+
+    def _patrol_drive(self, obs):
+        """지금 순찰 구석 점으로 (먼저 원 위 중간 점을 거쳐) 간다. 도착했으면 None (그 자리에서 돈다)."""
+        goal = PATROL_POINTS[self._patrol_idx]
+        if self._patrol_via:
+            # 이 구석 바로 앞(시계 방향 45도) 원 위 점 = 앞 구석과의 사이
+            via = guard_point(angle_around_center(goal) - math.pi / 4.0)
+            if distance_to(obs, via) < PATROL_VIA_ARRIVE_M:
+                self._patrol_via = False
+            else:
+                return self._guard_drive(obs, via, GUARD_SPEED, forward_only=True)
+        if distance_to(obs, goal) < GUARD_ARRIVE_M:
+            return None
+        # 전진으로만 간다: 후진하면 카메라가 뒤를 봐서 가는 길의 큐브를 못 본다
+        return self._guard_drive(obs, goal, GUARD_SPEED, forward_only=True)
+
+    def _patrol_spin(self, obs):
+        """제자리로 돈 각도를 센다. 한 바퀴를 다 봤으면 다음 구석 점으로 (LURK_PATROL)."""
+        if self._patrol_last_yaw is not None:
+            self._patrol_turned += abs(normalize_angle(obs.yaw - self._patrol_last_yaw))
+        self._patrol_last_yaw = obs.yaw
+        if not LURK_PATROL or self._patrol_turned < 2.0 * math.pi:
+            return
+        self._patrol_turned = 0.0
+        self._patrol_last_yaw = None
+        self._next_patrol(obs)
+
+    def _next_patrol(self, obs):
+        """다음 구석 점으로. 처음이면 지금 자리에서 반시계로 가장 가까운 구석 (이미 그 점이면 그다음)."""
+        first = self._patrol_idx is None
+        if first:
+            own = angle_around_center((obs.x, obs.y))
+            ahead = [(normalize_angle(angle_around_center(p) - own) % (2.0 * math.pi), i)
+                     for i, p in enumerate(PATROL_POINTS)]
+            self._patrol_idx = min((d, i) for d, i in ahead if d > math.radians(10.0))[1]
+        else:
+            self._patrol_idx = (self._patrol_idx + 1) % len(PATROL_POINTS)
+        # 구석에서 다음 구석으로 갈 때만 원 위 중간 점을 거친다 (처음은 원 위에서 바로)
+        self._patrol_via = not first
+        self._patrol_turned = 0.0
+        self._patrol_leg_at = obs.now
 
     def _target_near_opponent(self, opponents):
         return any(math.dist(self.target, other) < LURK_IGNORE_NEAR_OPPONENT_M
@@ -1036,12 +1208,51 @@ class Mission2Logic:
         잡은 큐브를 지킨다: 상대가 오면 원을 따라 반대쪽으로 피한다.
 
         GUARD_ESCAPE_FIRST면 먼저 원 위 점으로 빠져 거기 서 있고, 아니면 지금 자리에 서 있는다.
+        놓친 횟수가 GUARD_STAY_AFTER_LOSSES가 되면 그 자리에서 버티고, 상대가 끌고 가면 따라간다.
         """
         lost = self._lost_cube(obs)
         if lost is not None:
             return lost
+        if self.coholding:
+            command = self._cohold_push(obs)
+            if command is not None:
+                return command
+        if self.stays_holding():
+            return self._follow_pull(obs)
         command = self._keep_away(obs, self._opponents(obs), stay=not GUARD_ESCAPE_FIRST)
         return Command() if command is None else command
+
+    def _cohold_push(self, obs):
+        """같이 잡고 앞으로 민다. COHOLD_FREE_S 동안 막힘 없이 나가면(상대가 놓음) 그만 밀고 None."""
+        start, x0, y0 = self._cohold_window
+        if obs.now - start >= COHOLD_FREE_S:
+            moved = math.dist((obs.x, obs.y), (x0, y0))
+            expected = COHOLD_PUSH_SPEED * (COHOLD_FREE_S - MOTOR_LAG_S)
+            if moved > COHOLD_FREE_RATIO * expected:
+                self.coholding = False
+                return None
+            self._cohold_window = (obs.now, obs.x, obs.y)
+        return Command(linear=COHOLD_PUSH_SPEED)
+
+    def stays_holding(self):
+        """놓치기를 GUARD_STAY_AFTER_LOSSES번 되풀이해서, 잡으면 그 자리에서 버티는 중인지."""
+        return 0 < GUARD_STAY_AFTER_LOSSES <= self.cube_losses
+
+    def _follow_pull(self, obs):
+        """
+        버티는 중: 큐브가 끌려 나가면(적외선 거리가 FOLLOW_TOF_M보다 큼) 그만큼 앞으로 따라간다.
+
+        잡기 시작부터 STAY_PRELOAD_S 동안은 끌려 나가지 않아도 STAY_PRELOAD_SPEED로 앞으로 밀고 있는다.
+        """
+        if self._stay_grab_at is None:
+            self._stay_grab_at = obs.now
+        speed = 0.0
+        if obs.now - self._stay_grab_at < STAY_PRELOAD_S:
+            speed = STAY_PRELOAD_SPEED
+        if obs.gripper_range is not None and obs.gripper_range > FOLLOW_TOF_M:
+            slipped = min(obs.gripper_range, PULL_LOST_M) - FOLLOW_TOF_M
+            speed = max(speed, min(GUARD_SPEED, FOLLOW_GAIN * slipped))
+        return Command(linear=speed)
 
     def _keep_away(self, obs, opponents, stay=False):
         """
