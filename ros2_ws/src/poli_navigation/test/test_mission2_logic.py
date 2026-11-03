@@ -1169,6 +1169,27 @@ def test_single_wall_offset_jump_is_not_a_push(monkeypatch):
     assert logic.push_opponent is None
 
 
+def test_retreat_is_full_power_even_holding_cube():
+    # 2026-11-03 팀: 선 밖은 즉시 탈락이라 RETREAT는 무슨 상황에서든 최대 출력.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    # 큐브를 잡은 채 선 0.2 m 앞에서 바깥(-y)을 비스듬히(60도) 보고 0.5 m/s로 나가는 중
+    robot.x, robot.y, robot.yaw = 1.8, 0.6, -math.pi / 2 + math.radians(60.0)
+    logic._last_linear = 0.5
+    logic._last_command_at = robot.now - DT
+    commands, states = [], set()
+    for _ in range(int(1.0 / DT)):
+        obs = robot.observe()
+        command = logic.step(obs)
+        robot.apply(command)
+        commands.append(command)
+        states.add(logic.state)
+    assert RETREAT in states
+    assert max(abs(c.linear) for c in commands) >= mission2_logic.RETREAT_SPEED - 0.01
+    assert distance_to_danger_line(robot.observe()) > 0.3
+
+
 def test_retreat_sidesteps_when_blocked_at_line():
     logic = Mission2Logic()
     robot = SimRobot()

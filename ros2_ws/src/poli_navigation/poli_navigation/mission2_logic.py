@@ -65,6 +65,12 @@ RETREAT_GOAL_EXTRA_M = 0.1
 RETREAT_STUCK_S = 0.8
 RETREAT_STUCK_PROGRESS_M = 0.03
 RETREAT_SIDESTEP_RAD = math.radians(50.0)
+# RETREAT는 최대 출력 (2026-11-03 팀: 선 밖은 즉시 탈락이라 무슨 상황에서든 최우선). 방향이 RETREAT_FULL_SPEED_RAD
+# 안이면 바로 RETREAT_SPEED(hardware.yaml max_linear)로, 앞뒤 중 덜 도는 쪽으로, 목표 앞에서 감속하지 않는다.
+# 예전에는 방향 오차만큼 속도를 줄이고(60도면 절반) 회전 2.6 rad/s, 목표 앞 감속.
+RETREAT_SPEED = 0.8
+RETREAT_MAX_ANGULAR = 3.5  # hardware.yaml max_angular 3.6 안
+RETREAT_FULL_SPEED_RAD = math.radians(80.0)
 
 # 밀림 감지 (2026-11-02 팀: 외력으로 밀리면 바로 빠져나오기). GUARD·LURK에서 서 있는데(명령 0인 지 PUSH_SETTLE_S)
 # 엔코더 속도가 PUSH_SPEED_M_S를 PUSH_CONFIRM_STEPS번 연속 넘으면 밀린 것. 21:47 실기: 서 있을 때 엔코더는 0.000,
@@ -536,8 +542,9 @@ class Mission2Logic:
             self._last_linear = self._last_angular = 0.0
             dt = ACCEL_RESET_S / 2.0
         accel, decel = LINEAR_ACCEL, LINEAR_DECEL
-        if self.holding_cube():
-            # 큐브를 잡고 있으면 급출발·급제동하지 않는다 (큐브가 빠진다)
+        if self.holding_cube() and self.state != RETREAT:
+            # 큐브를 잡고 있으면 급출발·급제동하지 않는다 (큐브가 빠진다).
+            # RETREAT는 예외: 선 밖은 즉시 탈락이라 최대 감속으로 꺾는다.
             accel = decel = GUARD_ACCEL
         command.linear = ramp(command.linear, self._last_linear, accel, decel, dt)
         command.angular = ramp(
@@ -576,12 +583,23 @@ class Mission2Logic:
             # 막혔다 (미는 상대에 맞서 바퀴만 돈다) -> 비스듬히 비켜 간다, 또 막히면 반대쪽
             self._retreat_side = -self._retreat_side if self._retreat_side else 1.0
             self._retreat_best_at = obs.now
-        if self.holding_cube():
-            # 큐브를 잡고 있으면 앞뒤 중 덜 도는 쪽으로 (제자리에서 크게 돌면 큐브가 빠진다).
-            # 선에서 곧장 안쪽으로 가고, 상대가 막아도 서지 않는다 (RETREAT_GOAL_EXTRA_M 주석).
-            goal = self._sidestep(obs, retreat_goal(obs, self._retreat_exit_margin))
-            return self._guard_drive(obs, goal, GUARD_SPEED)
-        return self._drive_toward(obs, self._sidestep(obs, CENTER_M), APPROACH_FAST_SPEED)
+        # 큐브를 잡았든 아니든 선에서 곧장 안쪽으로, 앞뒤 중 덜 도는 쪽으로 최대 출력.
+        # 상대가 막아도 서지 않는다 (RETREAT_GOAL_EXTRA_M 주석).
+        goal = self._sidestep(obs, retreat_goal(obs, self._retreat_exit_margin))
+        return self._retreat_drive(obs, goal)
+
+    def _retreat_drive(self, obs, goal):
+        """RETREAT: goal 쪽으로 앞뒤 중 덜 도는 방향, RETREAT_FULL_SPEED_RAD 안이면 바로 최대 속도."""
+        error = heading_error_to(obs, goal)
+        if self._guard_reverse:
+            self._guard_reverse = abs(error) > math.pi / 2 - GUARD_REVERSE_HYSTERESIS_RAD
+        else:
+            self._guard_reverse = abs(error) > math.pi / 2 + GUARD_REVERSE_HYSTERESIS_RAD
+        if self._guard_reverse:
+            error = normalize_angle(error + math.pi)
+        linear = RETREAT_SPEED if abs(error) < RETREAT_FULL_SPEED_RAD else 0.0
+        angular = clamp(GUARD_HEADING_GAIN * error, RETREAT_MAX_ANGULAR)
+        return Command(linear=-linear if self._guard_reverse else linear, angular=angular)
 
     def _sidestep(self, obs, goal):
         """RETREAT가 막혔으면 goal 방향을 로봇 기준 RETREAT_SIDESTEP_RAD만큼 돌린 점."""
