@@ -9,6 +9,7 @@ from poli_navigation.mission2_logic import (
     APPROACH,
     BACKOFF,
     BACKOFF_M,
+    BLOCKED_ESCAPE_LINE_M,
     CAMERA_AHEAD_M,
     CENTER_M,
     Command,
@@ -572,9 +573,25 @@ def run_guard_with_opponents(logic, robot, opponents, seconds):
     return commands
 
 
-def test_guard_stands_still_when_sandwiched(monkeypatch):
+def test_guard_backs_outward_when_sandwiched(monkeypatch):
     logic, robot = guarding_robot(monkeypatch)
-    # 원 위 양쪽에서 상대가 붙어 온다: 어느 쪽으로 피해도 부딪힌다.
+    start = (robot.x, robot.y)
+    # 원 위 양쪽에서 상대가 붙어 온다: 원을 따라 어느 쪽으로 피해도 부딪힌다.
+    opponents = [guard_point(GUARD_HOME_ANGLE + 0.5), guard_point(GUARD_HOME_ANGLE - 0.5)]
+    commands = run_guard_with_opponents(logic, robot, opponents, 3.0)
+    # 서 있지 않고 중앙 반대쪽(바깥)으로 물러나되, 탈락선에서 BLOCKED_ESCAPE_LINE_M 안으로는 안 간다
+    assert any(command.linear != 0.0 for command in commands)
+    assert math.dist((robot.x, robot.y), CENTER_M) > math.dist(start, CENTER_M) + 0.2
+    assert distance_to_danger_line(robot.observe()) > BLOCKED_ESCAPE_LINE_M - 0.03
+    nearest = min(math.dist((robot.x, robot.y), other) for other in opponents)
+    assert nearest > math.dist(start, opponents[0])
+    # 더 갈 데가 없으면 선다
+    assert commands[-1].linear == 0.0
+
+
+def test_guard_stands_still_when_sandwiched_without_escape(monkeypatch):
+    monkeypatch.setattr(mission2_logic, 'BLOCKED_ESCAPE', False)
+    logic, robot = guarding_robot(monkeypatch)
     opponents = [guard_point(GUARD_HOME_ANGLE + 0.5), guard_point(GUARD_HOME_ANGLE - 0.5)]
     commands = run_guard_with_opponents(logic, robot, opponents, 3.0)
     assert all(command.linear == 0.0 for command in commands)

@@ -21,6 +21,7 @@ GUARD (2026-11-01 팀 결정 "빠르게 잡고 도망"):
   거기서 서 있다가 LiDAR에 상대가 가까워지면 원을 따라 상대 반대쪽으로 피한다.
   차체가 약해 부딪히지 않는 것이 우선이고, 큐브가 빠지지 않게 느리게·부드럽게 움직인다.
   원은 탈락선에서 충분히 떨어져 있고, 원을 따라 움직이므로 바깥(탈락선) 쪽으로 피하지 않는다.
+  단, 원 위 양쪽이 다 막혀 끼이면 서 있지 않고 바깥으로 물러난다 (BLOCKED_ESCAPE, 2026-11-03).
 
 좌표:
 - 경기장 좌표(m), 왼쪽 아래 모서리가 (0, 0)
@@ -284,8 +285,18 @@ DODGE_LOOKAHEAD_RAD = math.radians(90.0)
 DODGE_PATH_STEP_RAD = math.radians(15.0)
 # 반대쪽이 이만큼 더 넓어야 피하던 방향을 바꾼다 (왔다 갔다 방지)
 DODGE_SWITCH_M = 0.1
-# 양쪽 길 모두 상대와 이보다 가까우면(끼였다) 들이받지 않게 그 자리에 선다 (로봇 중심 ~ 상대 표면)
+# 양쪽 길 모두 상대와 이보다 가까우면(끼였다) 원을 따라 피하지 않는다 (로봇 중심 ~ 상대 표면)
 DODGE_BLOCKED_M = 0.35
+# 끼였을 때: True = 중앙 반대쪽(바깥)으로 물러난다, False = 예전처럼 그 자리에 선다.
+# 2026-11-03 시뮬레이션(scripts/sim_mission2.py, 로봇 4대, 상대 0.4 m/s): 서 있으니 상대 둘에게 밀려
+# 탈락선까지 0.62 -> 0.36 m, 큐브를 뺏겼다. 바깥으로 물러나니 끝까지 지켰고 몸이 닿은 시간 4.9 -> 1.9 s
+# (상대는 큐브가 있는 중앙 쪽에서 몰려온다). 가장 가까운 상대 반대쪽으로 물러나기는 다른 상대에 부딪혀 9.6 s.
+BLOCKED_ESCAPE = True
+# 한 번에 이만큼 바깥 점을 향해 간다 (매 판단마다 다시 정한다)
+BLOCKED_ESCAPE_STEP_M = 0.3
+# 탈락선에서 이 안으로는 물러나지 않는다 (RETREAT 시작 DANGER_MARGIN_M보다 조금 안쪽에서 선다).
+# TODO_MEASURE: 밀릴 때 여유가 모자라면 늘린다 (제출 전에 확정)
+BLOCKED_ESCAPE_LINE_M = DANGER_MARGIN_M + 0.05
 # 가는 방향 ±GUARD_BLOCK_RAD 안, 이 거리 + 지금 속도로 서는 거리 안에 상대가 있으면
 # 전진·후진을 멈춘다 (들이받지 않기). 서 있으면 0.3 m, 0.3 m/s면 약 0.42 m, 0.5 m/s면 약 0.58 m.
 # (로봇 중심 ~ 상대 로봇 표면. 우리 차체 앞뒤 끝이 중심에서 약 0.15~0.22 m)
@@ -1061,8 +1072,8 @@ class Mission2Logic:
             seen = tuple(o for o in opponents
                          if self.push_opponent is None or o != self.push_opponent[:2])
             if self._dodge_clearance(own_angle, self._dodge_direction, seen) < DODGE_BLOCKED_M:
-                # 양쪽 다 막혔다. 안쪽은 상대가 모이고 바깥은 탈락선이라 서 있는다.
-                return Command()
+                # 원 위 양쪽이 다 막혔다. 안쪽은 상대가 모이므로 바깥으로 물러난다 (BLOCKED_ESCAPE).
+                return self._blocked_escape(obs, opponents)
             self._guard_angle = own_angle + self._dodge_direction * DODGE_ARC_STEP_RAD
 
         if stay and not self._dodging:
@@ -1074,6 +1085,19 @@ class Mission2Logic:
         speed = GUARD_ESCAPE_SPEED if self._escaping else GUARD_SPEED
         forward_only = self._escaping and self.holding_cube() and GUARD_ESCAPE_TURN_AROUND
         return self._guard_drive(obs, goal, speed, opponents, forward_only)
+
+    def _blocked_escape(self, obs, opponents):
+        """끼였을 때 중앙 반대쪽 BLOCKED_ESCAPE_STEP_M 앞 점으로 물러난다. 탈락선 쪽 여유가 없으면 선다."""
+        if not BLOCKED_ESCAPE:
+            return Command()
+        angle = angle_around_center((obs.x, obs.y))
+        low = SAFE_ZONE_MIN_M + BLOCKED_ESCAPE_LINE_M
+        high = SAFE_ZONE_MAX_M - BLOCKED_ESCAPE_LINE_M
+        goal = (clamp_range(obs.x + BLOCKED_ESCAPE_STEP_M * math.cos(angle), low, high),
+                clamp_range(obs.y + BLOCKED_ESCAPE_STEP_M * math.sin(angle), low, high))
+        if distance_to(obs, goal) < GUARD_ARRIVE_M / 2.0:
+            return Command()
+        return self._guard_drive(obs, goal, GUARD_SPEED, opponents)
 
     def _opponents(self, obs):
         if obs.opponents:
