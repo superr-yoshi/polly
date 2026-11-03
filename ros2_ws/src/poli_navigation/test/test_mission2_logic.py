@@ -765,10 +765,16 @@ def test_no_retreat_when_cube_seen_right_after_start():
     logic.state = APPROACH
     logic.step(robot.observe())
     assert logic.state != RETREAT
-    # 선에서 한 번 멀어진 뒤에는 다시 0.3 m 기준
-    robot.x, robot.y = robot.x - 0.3, robot.y + 0.3
+    # 2026-11-03 23:37 실기: 선에서 0.39 m까지 갔다가 위치가 튀어 0.3 m 안이 되어도 아직 출발 기준
+    robot.x, robot.y = START_POSE[0] - 0.19, START_POSE[1] + 0.29
     logic.step(robot.observe())
-    robot.x, robot.y = robot.x + 0.25, robot.y - 0.25
+    robot.x += 0.12
+    logic.step(robot.observe())
+    assert logic.state != RETREAT
+    # 선에서 한 번 멀어진 뒤에는 다시 0.3 m 기준
+    robot.x, robot.y = START_POSE[0] - 0.3, START_POSE[1] + 0.3
+    logic.step(robot.observe())
+    robot.x, robot.y = START_POSE[0] - 0.05, START_POSE[1] + 0.05
     logic.step(robot.observe())
     assert logic.state == RETREAT
 
