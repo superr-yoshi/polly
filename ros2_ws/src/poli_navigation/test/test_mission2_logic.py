@@ -1190,6 +1190,20 @@ def test_retreat_is_full_power_even_holding_cube():
     assert distance_to_danger_line(robot.observe()) > 0.3
 
 
+def test_stands_still_when_pose_is_outside_arena():
+    # 2026-11-03 20:20 실기: 위치가 (0.17, 9.91)로 계산돼 RETREAT가 엉뚱한 쪽으로 후진해 선 밖으로 나갔다.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    robot.x, robot.y = 0.17, 9.91
+    for _ in range(10):
+        command = logic.step(robot.observe())
+        robot.now += DT
+    assert logic.pose_lost
+    assert command.linear == 0.0 and command.angular == 0.0
+    assert logic.state != RETREAT
+
+
 def test_retreat_sidesteps_when_blocked_at_line():
     logic = Mission2Logic()
     robot = SimRobot()

@@ -42,6 +42,11 @@ ARENA_MARGIN_M = 0.05
 START_POSE = (7.5 * CELL_SIZE_M, 1.5 * CELL_SIZE_M, math.pi / 2)
 CENTER_M = (4.5 * CELL_SIZE_M, 4.5 * CELL_SIZE_M)
 
+# 추정 위치가 외벽보다 이만큼 넘게 밖이면 위치를 잃은 것: RETREAT를 포함해 움직이지 않는다.
+# 2026-11-03 20:20 실기: /odom_raw가 둘이라 위치가 (0.17, 9.91)처럼 경기장 밖으로 계산됐고, RETREAT가 그 위치로
+# '안쪽'을 정해 실제로는 선 밖으로 최대 출력 후진했다.
+POSE_LOST_MARGIN_M = 0.15
+
 # 탈락 영역: 바깥 테두리 한 줄 (노란 선 바깥)
 SAFE_ZONE_MIN_M = CELL_SIZE_M
 SAFE_ZONE_MAX_M = ARENA_SIZE_M - CELL_SIZE_M
@@ -486,6 +491,8 @@ class Mission2Logic:
         self.push_opponent = None
         # 마지막 밀림 감지 근거 (로그용)
         self.push_reason = ''
+        # 추정 위치가 경기장 밖이라 서 있는 중인지 (POSE_LOST_MARGIN_M)
+        self.pose_lost = False
         # 서 있는 동안의 벽 보정값 기록 [(시각, (x, y))] (미끄러짐 감지)
         self._slide_history = []
         # LURK: 지금 자리에서 제자리로 돈 각도 (한 바퀴 돌면 원을 따라 옮긴다)
@@ -518,6 +525,10 @@ class Mission2Logic:
     def step(self, obs):
         if self.state_started_at is None:
             self.state_started_at = obs.now
+        self.pose_lost = not all(-POSE_LOST_MARGIN_M <= v <= ARENA_SIZE_M + POSE_LOST_MARGIN_M
+                                 for v in (obs.x, obs.y))
+        if self.pose_lost:
+            return self._limit_accel(Command(), obs.now)
         self._poses.append((obs.now, obs.x, obs.y, obs.yaw))
         while self._poses and obs.now - self._poses[0][0] > 2.0 * CAMERA_LAG_S:
             self._poses.popleft()

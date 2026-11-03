@@ -22,6 +22,12 @@ from sensor_msgs.msg import Imu, LaserScan, Range
 from std_msgs.msg import Bool, String
 
 
+# /odom_raw가 한 번에 이만큼 넘게 바뀌면 버린다 (25 Hz, 최대 0.8 m/s면 한 번에 약 3 cm).
+# 2026-11-03 20:20 실기: 이전 실행의 하드웨어 노드가 남아 /odom_raw를 둘이 내보내 위치가 1~2 m씩 튀고
+# 가짜 RETREAT가 계속 걸렸다 (Mega 포트 'multiple access' 오류).
+ODOM_JUMP_M = 0.15
+ODOM_JUMP_RAD = 0.5
+
 # 판단 주기 (초)
 CONTROL_PERIOD = 0.05
 
@@ -181,6 +187,18 @@ class Mission2Node(Node):
             # 엔코더가 잰 앞뒤 이동 거리 (후진이면 음수)
             ds = ((position.x - prev_x) * math.cos(prev_yaw)
                   + (position.y - prev_y) * math.sin(prev_yaw))
+            jump = math.hypot(position.x - prev_x, position.y - prev_y)
+            if (jump > ODOM_JUMP_M
+                    or abs(math.atan2(math.sin(odom_yaw - prev_yaw),
+                                      math.cos(odom_yaw - prev_yaw))) > ODOM_JUMP_RAD):
+                # odom 한 번에 말이 안 되게 크게 바뀌었다 -> 이번 변화는 버린다
+                self.get_logger().warn(
+                    f'/odom_raw가 한 번에 {jump:.2f} m 튐 -> 무시 '
+                    '(하드웨어 노드가 둘 떠 있는지 확인: stop_mission.sh)',
+                    throttle_duration_sec=1.0)
+                self.prev_odom = (position.x, position.y, odom_yaw)
+                self.imu_dyaw = 0.0
+                return
             imu_ok = (self.use_imu_yaw and self.imu_received_at is not None
                       and now - self.imu_received_at < 0.3)
             if imu_ok:
@@ -322,6 +340,10 @@ class Mission2Node(Node):
         if self.logic.state != self.last_state:
             self.get_logger().info(f'State: {self.logic.state}')
             self.last_state = self.logic.state
+        if self.logic.pose_lost:
+            self.get_logger().error(
+                f'추정 위치 ({x:.2f},{y:.2f})가 경기장 밖 -> 위치를 믿을 수 없어 서 있음',
+                throttle_duration_sec=1.0)
         push = self.logic.push_opponent
         if push is not None and push != self.last_push_opponent:
             self.get_logger().info(
