@@ -557,6 +557,8 @@ class Mission1Logic:
         self._drive_max_lateral = 0.0
         # 후진 도착을 뒤 벽 거리로 앞당긴 만큼 (로그용)
         self._reverse_wall_gap = 0.0
+        # 스캔에서 벽이 보인 칸 사이 연결 (frozenset 쌍). 복귀·되돌아가기는 이 연결로 지나가지 않는다.
+        self._wall_edges = set()
         self._side_guard_noted = False
         # 여러 칸 주행 중 앞 벽으로 멈춘 칸 (그 칸에서는 다시 묶지 않는다)
         self._no_chain_from = set()
@@ -787,9 +789,15 @@ class Mission1Logic:
         옆에 가서 직접 본다. 시뮬레이션 규정 예시 63.4 s -> 63.5 s로 시간 차이 없음.
         """
         visits = self.maze.state.visits
+        origin = point_to_cell(*(center if center is not None else pose[:2]))
         for cell, state in neighbor_states(scan, pose, center).items():
             if not self.grid.in_bounds(cell):
                 continue
+            # 칸 사이에 벽이 보였는지 연결마다 기억한다 (두 칸 다 가 봤어도 그 사이로 지나가지 않게)
+            if state == BLOCKED:
+                self._wall_edges.add(frozenset((origin, cell)))
+            else:
+                self._wall_edges.discard(frozenset((origin, cell)))
             if state == BLOCKED:
                 # 로봇이 실제로 지나온 칸은 벽일 수 없다 (2026-11-01 실기: 출발 칸 (9,1)이 막힘으로 찍혀
                 # 닫힌 영역이 됨). 상대 로봇이 서 있는 경우는 주행 중 앞 벽 감시가 막는다.
@@ -1195,6 +1203,7 @@ class Mission1Logic:
         if self._new_neighbors(current):
             return None
         visits = self.maze.state.visits
+        traversed = self.maze.traversed_edges()
         came_from = {current: None}
         depth = {current: 0}
         queue = deque([current])
@@ -1212,7 +1221,7 @@ class Mission1Logic:
             # 지나온 칸은 지도에 막힘으로 바뀌어 있어도 지나갈 수 있다고 본다 (_shortest_path와 같음)
             for n in ((cell[0] + 1, cell[1]), (cell[0] - 1, cell[1]),
                       (cell[0], cell[1] + 1), (cell[0], cell[1] - 1)):
-                if n in visits and n not in came_from:
+                if n in visits and n not in came_from and self._edge_ok(cell, n, traversed):
                     came_from[n] = cell
                     depth[n] = depth[cell] + 1
                     queue.append(n)
@@ -1225,7 +1234,39 @@ class Mission1Logic:
         self._note(f'막다른 길 -> 서지 않고 되돌아감: {path[0]} -> {path[-1]}')
         return path
 
+    def _edge_ok(self, a, b, traversed):
+        """
+        가 본 두 이웃 칸 a, b 사이로 지나가도 되는지: 실제로 지나간 연결이거나, 그 사이에 벽이 보인 적이 없을 때.
+
+        2026-11-03 17:02 실기: (6,5)와 (7,5)를 둘 다 가 봤지만 그 사이는 얇은 판이었다. 칸 지도는 칸 사이 벽을
+        나타내지 못해 복귀가 (6,5)->(7,5)로 판을 뚫고 후진했다. (대회 장애물은 칸 크기 상자라 이런 벽은 없지만
+        이웃 칸 오판에도 안전하다.)
+        """
+        edge = frozenset((a, b))
+        return edge in traversed or edge not in self._wall_edges
+
     def _shortest_path(self, current, goals):
+        visited = self.maze.visited_cells()
+        traversed = self.maze.traversed_edges()
+        came_from = {current: None}
+        queue = deque([current])
+        while queue:
+            cell = queue.popleft()
+            if cell in goals:
+                path = [cell]
+                while came_from[path[-1]] is not None:
+                    path.append(came_from[path[-1]])
+                return path[::-1]
+            for n in ((cell[0] + 1, cell[1]), (cell[0] - 1, cell[1]),
+                      (cell[0], cell[1] + 1), (cell[0], cell[1] - 1)):
+                if n in visited and n not in came_from and self._edge_ok(cell, n, traversed):
+                    came_from[n] = cell
+                    queue.append(n)
+        # 벽 연결을 빼면 길이 없다 (기억이 틀렸을 수 있다) -> 예전처럼 가 본 칸끼리 잇는다
+        self._note('복귀: 지나간 길로 이어지지 않아 가 본 칸끼리 잇는다')
+        return self._visited_shortest_path(current, goals)
+
+    def _visited_shortest_path(self, current, goals):
         return_grid = GridMap(use_point_symmetry=False)
         visited = self.maze.visited_cells()
         # 실제로 지나온 칸은 지도에 막힘으로 바뀌어 있어도 지나갈 수 있다고 본다.

@@ -59,3 +59,9 @@ class Mission1Maze:
     def visited_cells(self):
         """복귀 경로에 사용할 실제 방문 칸을 반환한다."""
         return self.state.visited_cells()
+
+    def traversed_edges(self):
+        """실제로 이 칸에서 저 칸으로 지나간 연결들 (frozenset 쌍)."""
+        path = self.state.path
+        return {frozenset((a, b)) for a, b in zip(path, path[1:])
+                if abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1}

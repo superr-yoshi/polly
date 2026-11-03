@@ -698,6 +698,35 @@ def test_reverse_stops_by_wall_behind_when_odometry_lags():
     assert abs(_reverse_into_dead_end(0.0) - center_x) < 0.035
 
 
+def _looped_logic():
+    """(9,1)->(8,1)->(7,1)->(7,2)->(8,2)로 돌아 (8,2)에 선 로봇. (8,2)와 (8,1)은 이웃이지만 그 사이로 간 적 없다."""
+    logic = Mission1Logic(point_symmetry=False)
+    for cell in ((8, 1), (7, 1), (7, 2), (8, 2)):
+        logic.maze.observe(cell, math.pi / 2)
+    return logic
+
+
+def test_return_does_not_cut_through_wall_seen_between_visited_cells():
+    # 2026-11-03 17:02 실기: (6,5)와 (7,5)는 둘 다 가 봤지만 그 사이 얇은 판을 뚫고 후진했다.
+    logic = _looped_logic()
+    logic._wall_edges.add(frozenset(((8, 2), (8, 1))))
+    assert logic._shortest_path((8, 2), [MISSION1_START]) == [
+        (8, 2), (7, 2), (7, 1), (8, 1), (9, 1)]
+    # 벽을 본 적이 없으면 가 본 칸끼리 지름길로 (대회 경기장은 칸 크기 상자뿐)
+    logic = _looped_logic()
+    assert logic._shortest_path((8, 2), [MISSION1_START]) == [(8, 2), (8, 1), (9, 1)]
+
+
+def test_wall_edge_is_remembered_from_neighbor_scan():
+    true_grid = GridMap(use_point_symmetry=False)
+    true_grid.mark_blocked((8, 2))
+    logic = Mission1Logic(point_symmetry=False)
+    x, y = cell_center_m((8, 1))
+    logic._map_scan(simulate_scan(true_grid, (x, y, math.pi)), (x, y, math.pi))
+    assert frozenset(((8, 1), (8, 2))) in logic._wall_edges
+    assert frozenset(((8, 1), (9, 1))) not in logic._wall_edges
+
+
 def test_last_cell_into_start_is_forward():
     """출발 격자로 들어가는 칸은 뒤쪽이어도 전진 (큐브를 격자 안에 넣기 위해)."""
     logic = Mission1Logic()
