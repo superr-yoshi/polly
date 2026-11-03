@@ -89,21 +89,14 @@ LOG="$LOG_DIR/mission${MISSION}_$(date +%Y%m%d_%H%M%S).log"
 # 백그라운드(&)로 띄우면 bash가 SIGINT를 무시 상태로 넘겨서 stop_mission.sh(Ctrl+C와 같은 SIGINT)로
 # 멈추지 않는다 (2026-10-07 Pi에서 확인). env --default-signal로 SIGINT를 되살린다 (coreutils 8.31+).
 # --test(연습)에서는 노트북 Foxglove 확인용 브리지·카메라 영상도 켠다 (대회에서는 끔, 규정 1.3).
-# 연습 경기장은 장애물이 점대칭이 아니라서 임무 1의 점대칭 지도도 끈다 (대회 실행은 켬).
-DEBUG_VIEW=false
-EXTRA=""
-if [ "$MODE" = "--test" ]; then
-  DEBUG_VIEW=true
-  [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false rolling_decision:=true"
-fi
 # --test-noview: 연습이지만 Foxglove·카메라 영상을 켜지 않는다 (대회와 같은 부하로 시간 재기).
-# 2026-11-01: 시작 2~3초 뒤 Pi 전체가 0.3 s 멈춤 -> Foxglove 재연결 때문인지 확인용
-if [ "$MODE" = "--test-noview" ]; then
-  [ "$MISSION" = "1" ] && EXTRA="point_symmetry:=false rolling_decision:=true"
-fi
+# 2026-11-03: 임무 1 점대칭 지도는 대회에서도 끈다 (launch 기본값). --test-noview와 대회 모드의 차이는
+# 이제 무선 차단 하나뿐이다.
+DEBUG_VIEW=false
+[ "$MODE" = "--test" ] && DEBUG_VIEW=true
 rm -f "$START_FILE" "$PREPARED_MODE_FILE"
 setsid nohup env --default-signal=INT ros2 launch poli_navigation "mission${MISSION}.launch.py" \
-  use_fake_hardware:=false debug_view:=$DEBUG_VIEW wait_for_start:=$PREPARE $EXTRA \
+  use_fake_hardware:=false debug_view:=$DEBUG_VIEW wait_for_start:=$PREPARE \
   > "$LOG" 2>&1 < /dev/null &
 if [ "$PREPARE" = true ]; then
   echo "$MODE" > "$PREPARED_MODE_FILE"

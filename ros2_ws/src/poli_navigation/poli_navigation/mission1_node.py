@@ -96,10 +96,10 @@ class Mission1Node(Node):
     def __init__(self):
         super().__init__('mission1')
 
-        # 대회 경기장은 장애물이 점대칭(규정)이라 기본 True. 대칭이 아닌 연습 경기장에서만 false.
+        # point_symmetry: 점대칭 지도. 2026-11-03부터 대회 모드도 끔 (mission1.launch.py 참고)
         # rolling_decision: 칸마다 서지 않고 주행 중 판단 (2026-11-01 저녁부터 기본 켬, 대회 모드도)
         self.logic = Mission1Logic(
-            point_symmetry=self.declare_parameter('point_symmetry', True).value,
+            point_symmetry=self.declare_parameter('point_symmetry', False).value,
             rolling_decision=self.declare_parameter('rolling_decision', True).value)
         # 시작 신호 대기 (mission2_node.py DEFAULT_START_FILE 참고)
         self.wait_for_start = self.declare_parameter('wait_for_start', False).value

@@ -36,9 +36,10 @@ def generate_launch_description():
         DeclareLaunchArgument('debug_view', default_value='false'),
         # true: 임무 노드를 미리 켜 두고 시작 신호(start_mission.sh go)를 기다린다
         DeclareLaunchArgument('wait_for_start', default_value='false'),
-        # 대회 경기장은 점대칭(규정) -> true. 대칭이 아닌 연습 경기장에서만 false (start_mission.sh --test).
-        DeclareLaunchArgument('point_symmetry', default_value='true'),
-        # 칸마다 서지 않는 주행 중 판단. 대회 실행은 검증될 때까지 false, 연습 --test에서 true
+        # 점대칭 지도 (한 칸을 보면 반대편 칸도 같은 값). 2026-11-03 대회 모드도 끔: 연습은 늘 끄고 했고,
+        # 상대 로봇·잘못 본 벽 하나가 반대편 칸까지 막아 복귀 경로를 끊을 수 있다. 우리는 거의 우리 쪽 절반만 다닌다.
+        DeclareLaunchArgument('point_symmetry', default_value='false'),
+        # 칸마다 서지 않는 주행 중 판단 (2026-11-01 저녁부터 대회·연습 모두 켬)
         DeclareLaunchArgument('rolling_decision', default_value='true'),
         # TODO_MEASURE: udev 규칙(docs/udev_template.md) 적용 후 이름 확인
         DeclareLaunchArgument('lidar_port', default_value='/dev/robot_lidar'),

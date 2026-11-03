@@ -4,6 +4,7 @@
 #   bash scripts/laptop/go.sh            # 임무 2, 연습 (무선 유지, Foxglove 끔 = 대회와 같은 부하)
 #   bash scripts/laptop/go.sh 1          # 임무 1
 #   bash scripts/laptop/go.sh 2 --test   # Foxglove·카메라 영상까지 켬
+#   bash scripts/laptop/go.sh 1 --race   # 대회 (리허설도 이것). 시작 2초 뒤 Pi 무선 차단, 노트북은 시작 신호 후 바로 끝
 #   PI=10.175.8.69 bash scripts/laptop/go.sh   # Pi IP를 직접 줄 때
 #   BAG=1 bash scripts/laptop/go.sh 1    # rosbag도 기록 (Pi ~/poli_bags/, scripts/record_bag.sh)
 #   NO_UPDATE=1 bash scripts/laptop/go.sh 2   # Pi 코드 업데이트를 묻지 않음 (옛 커밋으로 비교 시험할 때)
@@ -16,7 +17,18 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/_common.sh"
 MISSION=${1:-2}
 MODE=${2:---test-noview}
+# --race: 대회 모드. 규정 1.3(시작 후 외부 통신 금지) -> start_mission.sh를 옵션 없이 (go 2초 뒤 무선 차단),
+# 시작 신호 뒤 로그를 보지 않고 연결도 닫는다. 규정 1.5(경기장 공개 후 코드 수정 금지)·대회장 인터넷 없음
+# -> Pi 코드 업데이트 확인도 하지 않는다. 연습(--test-noview)과 로봇 동작 차이는 무선 차단뿐이다.
+RACE=false
+if [ "$MODE" = "--race" ]; then
+  RACE=true
+  MODE=""
+  NO_UPDATE=1
+fi
 find_pi "${PI:-}"
+[ "$RACE" = true ] && echo "대회 모드: 시작 2초 뒤 Pi Wi-Fi·Bluetooth가 꺼진다. 정지는 물리 비상정지뿐, \
+되돌리기는 로봇에 모니터·키보드를 꽂고 ~/polly/scripts/comm_off.sh --restore"
 
 stop_now() {
   trap - INT TERM
@@ -51,7 +63,10 @@ fi
 pi 'pkill -INT -f "^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 (launch sllidar|run foxglove_bridge)" && sleep 2
     pgrep -x sllidar_node | xargs -r kill -9; pgrep -x foxglove_bridge | xargs -r kill -9; true'
 [ "${BAG:-0}" = 1 ] && pi '~/polly/scripts/record_bag.sh start'
-pi "~/polly/scripts/start_mission.sh $MISSION prepare $MODE" | grep -E "준비|오류|이미|rfkill" || stop_now
+# 준비 실패(rfkill 미설정 등)를 놓치면 지난 로그의 'Ready'를 보고 넘어간다 -> '임무 N 준비'가 나와야 계속
+PREP=$(pi "~/polly/scripts/start_mission.sh $MISSION prepare $MODE" 2>&1)
+echo "$PREP" | grep -E "준비|오류|이미|rfkill"
+echo "$PREP" | grep -q "임무 $MISSION 준비" || stop_now
 echo "준비 중 (노드 켜는 중)..."
 if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
          timeout 30 tail -n +1 -F "$f" | grep -m1 -q "Ready"'; then
@@ -75,6 +90,13 @@ pi '~/polly/scripts/start_mission.sh go' | grep -v "^$"
 GO_MS=$(( ($(date +%s%N) - T0) / 1000000 ))
 echo "시작 신호까지 ${GO_MS} ms"
 [ "$GO_MS" -gt 500 ] && echo "⚠️  시작 신호가 ${GO_MS} ms 걸렸다 (Wi-Fi가 약하거나 끊겼다 다시 연결됨)"
+if [ "$RACE" = true ]; then
+  # 시작 뒤에는 Pi와 통신하지 않는다. 연결이 끊겨도 stop_mission.sh를 보내지 않는다 (stop_now 안 씀).
+  trap - INT TERM
+  ssh -o ControlPath=/tmp/poli-ssh-%C -O exit poli@"$PI" 2> /dev/null
+  echo "대회 모드: 노트북 연결을 닫았다 (로그아웃). 로그는 끝난 뒤 Pi ~/poli_logs/"
+  exit 0
+fi
 echo "진행 보기 (Ctrl+C = 정지)"
 pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1); tail -n +1 -F "$f"' \
   | grep --line-buffered -E "Start signal|State:|Phase:|Gripper:|fault|ERROR|지연|timeout|출발 자세|막힘 표시|막다른|감시|칸 한 번에" \
