@@ -32,6 +32,7 @@ from poli_navigation.mission2_logic import (
     heading_error_to,
     HOLDING_CONFIRM_S,
     LURK,
+    LURK_RADIUS_M,
     Mission2Logic,
     Observation,
     PUSH,
@@ -993,7 +994,7 @@ def test_lurk_backs_out_to_circle_and_spins():
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     assert logic.state == LURK
-    assert abs(math.dist((robot.x, robot.y), CENTER_M) - GUARD_RADIUS_M) < GUARD_ARRIVE_M + 0.03
+    assert abs(math.dist((robot.x, robot.y), CENTER_M) - LURK_RADIUS_M) < GUARD_ARRIVE_M + 0.03
     spot = (robot.x, robot.y)
     for _ in range(int(2.0 / DT)):
         command = logic.step(robot.observe())
@@ -1007,7 +1008,7 @@ def test_lurk_dodges_opponent_along_circle():
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     start_angle = angle_from_center(robot.x, robot.y)
-    opponent = guard_point(start_angle + 0.6)
+    opponent = guard_point(start_angle + 0.6, LURK_RADIUS_M)
     commands = run_guard_with_opponents(logic, robot, [opponent], 5.0)
     assert any(command.linear != 0.0 for command in commands)
     turned = angle_from_center(robot.x, robot.y) - start_angle
@@ -1091,14 +1092,14 @@ def test_lurk_moves_along_circle_after_full_turn_without_cube():
     moved = angle_from_center(robot.x, robot.y) - first_angle
     moved = math.atan2(math.sin(moved), math.cos(moved))
     assert abs(moved) > math.radians(40.0)
-    assert abs(math.dist((robot.x, robot.y), CENTER_M) - GUARD_RADIUS_M) < 0.15
+    assert abs(math.dist((robot.x, robot.y), CENTER_M) - LURK_RADIUS_M) < 0.15
 
 
 def test_lurk_finds_far_cube_after_moving():
     # 첫 자리에서는 너무 멀어(약 1.35 m 넘게) 안 보이던 큐브를 옮긴 자리에서 보고 잡으러 간다.
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 4.0)
-    # 원 위 첫 자리에서 약 1.9 m (안 보임), LURK_MOVE_RAD 옮긴 자리에서 약 1.1 m
+    # 원 위 첫 자리에서 약 1.76 m (안 보임), LURK_MOVE_RAD 옮긴 자리에서 약 1.13 m
     away = angle_from_center(robot.x, robot.y) + 2 * mission2_logic.LURK_MOVE_RAD
     robot.target = (CENTER_M[0] + 1.3 * math.cos(away), CENTER_M[1] + 1.3 * math.sin(away))
     states = run(logic, robot, max_seconds=robot.now + 25.0, until=APPROACH)

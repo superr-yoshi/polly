@@ -268,6 +268,10 @@ LURK_IGNORE_NEAR_OPPONENT_M = 0.3
 # 부딪힘·탈락선 0.2 m 안 0번. (원을 돌며 중앙만 보는 방식은 253, 평균이 더 느렸다). TODO_MEASURE
 LURK_TURN_BEFORE_MOVE_RAD = 2 * math.pi
 LURK_MOVE_RAD = math.radians(60.0)
+# 잡기 실패 뒤 빠져서 둘러보는 원의 반지름 (중앙에서). 잡은 뒤 지키는 원(GUARD_RADIUS_M)과 따로 둔다.
+# 2026-11-03 팀: 0.85 m(GUARD_RADIUS_M과 같았음)는 너무 바깥에서 돈다 -> 0.7 m. 원 위 어디서든 맞은편 원까지
+# 1.4 m라 중앙 둘레가 거의 다 보이고, 탈락선까지는 가장 가까운 정면 방향에서도 0.7 m 남는다. TODO_MEASURE
+LURK_RADIUS_M = 0.7
 # 상대가 잡은 큐브(상대에서 LURK_IGNORE_NEAR_OPPONENT_M 안)를 보면 그 상대를 가장 가까운 노란 선 쪽으로 민다
 # (2026-11-03 팀: 연습에서 조금만 더 밀면 선 밖으로 밀 수 있었다. 상대 밀기 허용 3.4.6, 탈락한 팀의 큐브는 중앙으로).
 # 상대 뒤편(선 반대쪽) ATTACK_STANDOFF_M 지점으로 가서(우리가 상대와 선 사이면 옆으로 돌아서) 선 쪽을 보고
@@ -454,10 +458,10 @@ def clamp_range(value, low, high):
     return min(max(value, low), high)
 
 
-def guard_point(angle):
-    """중앙에서 GUARD_RADIUS_M 떨어진 원 위의 점."""
-    return (CENTER_M[0] + GUARD_RADIUS_M * math.cos(angle),
-            CENTER_M[1] + GUARD_RADIUS_M * math.sin(angle))
+def guard_point(angle, radius=GUARD_RADIUS_M):
+    """중앙에서 radius(기본 GUARD_RADIUS_M) 떨어진 원 위의 점."""
+    return (CENTER_M[0] + radius * math.cos(angle),
+            CENTER_M[1] + radius * math.sin(angle))
 
 
 def angle_around_center(point):
@@ -1313,6 +1317,8 @@ class Mission2Logic:
         stay면 피할 때만 움직이고 그 밖에는 지금 자리에 서 있는다.
         서 있을 때(원 위 점에 도착, 또는 stay)는 None.
         """
+        # LURK는 GUARD보다 안쪽 원 (LURK_RADIUS_M)
+        radius = LURK_RADIUS_M if self.state == LURK else GUARD_RADIUS_M
         opponent_distance = min(
             (math.dist((obs.x, obs.y), other) for other in opponents), default=math.inf)
         if opponent_distance < DODGE_START_M:
@@ -1326,7 +1332,7 @@ class Mission2Logic:
         if self._dodging:
             self._escaping = False
             own_angle = angle_around_center((obs.x, obs.y))
-            clearance = {direction: self._dodge_clearance(own_angle, direction, opponents)
+            clearance = {direction: self._dodge_clearance(own_angle, direction, opponents, radius)
                          for direction in (1.0, -1.0)}
             other = -self._dodge_direction
             if clearance[other] > clearance[self._dodge_direction] + DODGE_SWITCH_M:
@@ -1342,7 +1348,8 @@ class Mission2Logic:
                                   math.cos(angle_around_center(nearest) - own_angle))
                 if side != 0.0:
                     self._dodge_direction = -math.copysign(1.0, side)
-            if (self._dodge_clearance(own_angle, self._dodge_direction, seen) < DODGE_BLOCKED_M
+            if (self._dodge_clearance(own_angle, self._dodge_direction, seen, radius)
+                    < DODGE_BLOCKED_M
                     and not pinned):
                 # 양쪽 다 막혔다. 안쪽은 상대가 모이고 바깥은 탈락선이라 서 있는다.
                 # 단 상대가 이미 붙어 있으면(pinned) 서 있으면 그대로 밀려 나가므로 덜 막힌 쪽으로 빠진다
@@ -1353,7 +1360,7 @@ class Mission2Logic:
 
         if stay and not self._dodging:
             return None
-        goal = guard_point(self._guard_angle)
+        goal = guard_point(self._guard_angle, radius)
         if not self._dodging and distance_to(obs, goal) < GUARD_ARRIVE_M:
             self._escaping = False
             return None
@@ -1372,10 +1379,10 @@ class Mission2Logic:
         return found
 
     @staticmethod
-    def _dodge_clearance(own_angle, direction, opponents):
+    def _dodge_clearance(own_angle, direction, opponents, radius=GUARD_RADIUS_M):
         """원을 따라 direction 쪽으로 갈 길에서 상대와 가장 가까워지는 거리."""
         steps = round(DODGE_LOOKAHEAD_RAD / DODGE_PATH_STEP_RAD)
-        path = [guard_point(own_angle + direction * k * DODGE_PATH_STEP_RAD)
+        path = [guard_point(own_angle + direction * k * DODGE_PATH_STEP_RAD, radius)
                 for k in range(1, steps + 1)]
         return min((math.dist(point, other) for point in path for other in opponents),
                    default=math.inf)
