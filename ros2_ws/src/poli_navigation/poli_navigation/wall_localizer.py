@@ -182,13 +182,13 @@ class WallCorrection:
         x, y, yaw = odom_pose
         return x + self.offset_x, y + self.offset_y, yaw
 
-    def update(self, scan, odom_pose, angular_speed):
+    def update(self, scan, odom_pose, angular_speed, max_angular=MAX_ANGULAR_SPEED_FOR_SCAN):
         """
         스캔으로 보정값을 갱신한다. 한 축이라도 갱신했으면 True.
 
-        빨리 도는 중에 찍힌 스캔은 벽이 휘어 보이므로 쓰지 않는다.
+        빨리(max_angular 넘게) 도는 중에 찍힌 스캔은 벽이 휘어 보이므로 쓰지 않는다.
         """
-        if abs(angular_speed) > MAX_ANGULAR_SPEED_FOR_SCAN:
+        if abs(angular_speed) > max_angular:
             return False
 
         odom_x, odom_y, _ = odom_pose

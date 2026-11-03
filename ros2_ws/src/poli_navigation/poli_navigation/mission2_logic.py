@@ -77,6 +77,13 @@ PUSH_CONFIRM_STEPS = 2
 PUSH_SETTLE_S = 0.3
 PUSH_OPPONENT_M = 0.3
 PUSH_MEMORY_S = 1.5
+# 바퀴가 안 돌고 미끄러지며 밀릴 때 (엔코더 0): 서 있는 동안 LiDAR 벽 보정 위치(wall_offset)가 PUSH_SLIDE_WINDOW_S 안에
+# PUSH_SLIDE_M 넘게 한쪽으로 움직이면 밀린 것. 갱신이 PUSH_SLIDE_MIN_UPDATES번 이상 있고 마지막 갱신도 같은 쪽이어야
+# 한다 (빨리 돈 뒤 첫 스캔에서 한 번에 따라잡는 보정을 밀림으로 보지 않게).
+# 2026-11-03 17:33 실기: 엔코더 0.000인 채로 벽 보정이 -0.02 -> -0.16 m로 바뀌며 밀렸다. TODO_MEASURE
+PUSH_SLIDE_M = 0.04
+PUSH_SLIDE_WINDOW_S = 0.5
+PUSH_SLIDE_MIN_UPDATES = 3
 
 # 이 거리(중앙까지)에 오면 카메라로 넘긴다 (그 전에라도 보이면 바로 넘긴다).
 VISION_HANDOFF_M = 0.6
@@ -330,6 +337,8 @@ class Observation:
     gripper_state: Optional[str] = None
     # 카메라 결과를 받은 시각. 같은 결과를 두 번 쓰지 않는다. None이면 매번 새 결과로 본다.
     vision_stamp: Optional[float] = None
+    # LiDAR 벽 보정값 (odom 위치에 더하는 x, y). 서 있는데 바뀌면 미끄러지며 밀리는 중. 모르면 None
+    wall_offset: Optional[tuple] = None
     # LiDAR로 찾은 가장 가까운 상대 로봇 (경기장 좌표). 없거나 모르면 None (opponent_detector.py)
     opponent: Optional[tuple] = None
     # 찾은 상대 로봇 전부 (가까운 순). 비어 있으면 opponent만 쓴다.
@@ -463,6 +472,10 @@ class Mission2Logic:
         self._stand_since = None
         self._push_steps = 0
         self.push_opponent = None
+        # 마지막 밀림 감지 근거 (로그용)
+        self.push_reason = ''
+        # 서 있는 동안의 벽 보정값 기록 [(시각, (x, y))] (미끄러짐 감지)
+        self._slide_history = []
         # RETREAT 중 선에서 가장 멀었던 거리와 그 시각, 비켜 가는 쪽 (0 = 곧장 안쪽)
         self._retreat_best = 0.0
         self._retreat_best_at = 0.0
@@ -577,8 +590,12 @@ class Mission2Logic:
             self._stand_since = None
         elif self._stand_since is None:
             self._stand_since = obs.now
-        if (not PUSH_REACT or self.state not in (GUARD, LURK) or obs.measured_linear is None
+        if (not PUSH_REACT or self.state not in (GUARD, LURK)
                 or self._stand_since is None or obs.now - self._stand_since < PUSH_SETTLE_S):
+            self._push_steps = 0
+            self._slide_history = []
+            return
+        if self._detect_slide(obs) or obs.measured_linear is None:
             self._push_steps = 0
             return
         if abs(obs.measured_linear) <= PUSH_SPEED_M_S:
@@ -591,7 +608,35 @@ class Mission2Logic:
         back = -math.copysign(PUSH_OPPONENT_M, obs.measured_linear)
         self.push_opponent = (obs.x + back * math.cos(obs.yaw), obs.y + back * math.sin(obs.yaw),
                               obs.now + PUSH_MEMORY_S)
+        self.push_reason = f'엔코더 {obs.measured_linear:+.2f} m/s'
         self._push_steps = 0
+
+    def _detect_slide(self, obs):
+        """서 있는데 벽 보정 위치가 한쪽으로 계속 움직이면(바퀴가 안 돌고 미끄러짐) 미는 상대를 기억한다."""
+        if obs.wall_offset is None:
+            return False
+        history = self._slide_history
+        if not history or history[-1][1] != obs.wall_offset:
+            history.append((obs.now, obs.wall_offset))
+        while history and obs.now - history[0][0] > PUSH_SLIDE_WINDOW_S:
+            history.pop(0)
+        if len(history) < PUSH_SLIDE_MIN_UPDATES:
+            return False
+        dx = history[-1][1][0] - history[0][1][0]
+        dy = history[-1][1][1] - history[0][1][1]
+        moved = math.hypot(dx, dy)
+        if moved <= PUSH_SLIDE_M:
+            return False
+        last_dx = history[-1][1][0] - history[-2][1][0]
+        last_dy = history[-1][1][1] - history[-2][1][1]
+        if last_dx * dx + last_dy * dy <= 0.0:
+            return False
+        # 밀려 간 쪽의 반대쪽에 미는 상대가 있다
+        self.push_opponent = (obs.x - PUSH_OPPONENT_M * dx / moved,
+                              obs.y - PUSH_OPPONENT_M * dy / moved, obs.now + PUSH_MEMORY_S)
+        self.push_reason = f'LiDAR 미끄러짐 {moved * 100:.0f} cm'
+        self._slide_history = []
+        return True
 
     def _resume_state_after_retreat(self):
         # 실패 뒤 다시 잡았으면(LURK에서 재시도 성공) 잡은 상태가 먼저다

@@ -8,12 +8,13 @@ from nav_msgs.msg import Odometry
 from poli_interfaces.msg import TargetDetection
 from poli_navigation.laser_tf import LaserMountFromTf, yaw_from_quaternion
 from poli_navigation.mission2_logic import (
+    distance_to_danger_line,
     Mission2Logic,
     Observation,
     START_POSE,
 )
 from poli_navigation.opponent_detector import find_opponents
-from poli_navigation.wall_localizer import WallCorrection
+from poli_navigation.wall_localizer import MAX_ANGULAR_SPEED_FOR_SCAN, WallCorrection
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
@@ -30,6 +31,12 @@ CONTROL_PERIOD = 0.05
 VISION_TIMEOUT = 0.5
 # s, /gripper/holding(tof_node 약 30 Hz)이 이만큼 끊기면 모름(None)으로 본다 (2026-11-01)
 HOLDING_TIMEOUT = 0.5
+
+# 탈락선에서 이 거리 안이면 이 각속도까지 돌면서 찍은 스캔으로도 위치를 고친다 (평소 0.3 rad/s).
+# 피하며 빨리 도는 동안 위치 보정이 멈춰 한때 26 cm 어긋났다 (2026-11-03 17:33 실기, 밀려서 미끄러짐).
+# 시뮬레이션(한 바퀴 0.1 s 동안 회전): 벽 가까이에서는 1.0 rad/s에 1 cm, 2.0 rad/s에 2 cm 안. TODO_MEASURE
+NEAR_LINE_FIX_M = 0.5
+NEAR_LINE_MAX_ANGULAR = 1.5
 
 # 상대 로봇 위치(LiDAR)가 이 시간(초) 넘게 갱신되지 않으면 모른다고 본다.
 OPPONENT_TIMEOUT = 0.5
@@ -196,9 +203,12 @@ class Mission2Node(Node):
             return
         started = time.monotonic()
 
+        x, y, yaw = self.wall_correction.apply(self.odom_pose)
+        margin = distance_to_danger_line(Observation(x=x, y=y, yaw=yaw, now=0.0))
+        near_line = margin < NEAR_LINE_FIX_M
         corrected = self.wall_correction.update(
-            msg, self.odom_pose, self.angular_speed
-        )
+            msg, self.odom_pose, self.angular_speed,
+            NEAR_LINE_MAX_ANGULAR if near_line else MAX_ANGULAR_SPEED_FOR_SCAN)
         if corrected and not self.wall_corrected:
             self.get_logger().info('Wall correction active')
             self.wall_corrected = True
@@ -282,6 +292,8 @@ class Mission2Node(Node):
             # 엔코더 앞뒤 속도 (밀림 감지). odom이 끊기면 모름
             measured_linear=(self.linear_speed if self.odom_received_at is not None
                              and now - self.odom_received_at <= HOLDING_TIMEOUT else None),
+            wall_offset=((self.wall_correction.offset_x, self.wall_correction.offset_y)
+                         if self.wall_corrected else None),
         )
         if (self.opponent_received_at is not None
                 and now - self.opponent_received_at <= OPPONENT_TIMEOUT):
@@ -313,7 +325,7 @@ class Mission2Node(Node):
         push = self.logic.push_opponent
         if push is not None and push != self.last_push_opponent:
             self.get_logger().info(
-                f'밀림 감지: 엔코더 {observation.measured_linear:+.2f} m/s -> '
+                f'밀림 감지: {self.logic.push_reason} -> '
                 f'미는 상대 ({push[0]:.2f},{push[1]:.2f})로 보고 피함')
         self.last_push_opponent = push
 

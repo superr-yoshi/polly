@@ -1086,6 +1086,42 @@ def test_no_push_when_encoder_still_or_just_stopped(monkeypatch):
     assert logic.push_opponent is None
 
 
+def test_slide_push_without_encoder_starts_dodging(monkeypatch):
+    # 2026-11-03 17:33 실기: 바퀴가 안 돌고(엔코더 0) 미끄러지며 밀려 밀림 감지가 안 됐다.
+    # 서 있는 동안 LiDAR 벽 보정 위치가 한쪽으로 계속 움직이면 밀린 것으로 본다.
+    logic, robot = guarding_robot(monkeypatch)
+    offset = [0.0, 0.0]
+    moved_at = None
+    for k in range(20):
+        if k >= 2:
+            # +x 쪽으로 스캔마다 1.5 cm씩 밀린다 (엔코더는 0)
+            robot.x += 0.015
+            offset[0] += 0.015
+        obs = robot.observe()
+        obs.measured_linear = 0.0
+        obs.wall_offset = tuple(offset)
+        command = logic.step(obs)
+        robot.apply(command)
+        if command.linear != 0.0 or command.angular != 0.0:
+            moved_at = k
+            break
+    assert moved_at is not None
+    assert 'LiDAR' in logic.push_reason
+    # 미는 상대는 밀려 간 쪽(+x)의 반대쪽에 있다
+    assert logic.push_opponent[0] < robot.x - 0.2
+
+
+def test_single_wall_offset_jump_is_not_a_push(monkeypatch):
+    # 빨리 돈 뒤 첫 스캔에서 한 번에 따라잡는 보정은 밀림이 아니다
+    logic, robot = guarding_robot(monkeypatch)
+    for k in range(20):
+        obs = robot.observe()
+        obs.measured_linear = 0.0
+        obs.wall_offset = (0.06, 0.0) if k >= 5 else (0.0, 0.0)
+        assert logic.step(obs) == Command()
+    assert logic.push_opponent is None
+
+
 def test_retreat_sidesteps_when_blocked_at_line():
     logic = Mission2Logic()
     robot = SimRobot()
