@@ -14,7 +14,11 @@ from poli_navigation.mission2_logic import (
     START_POSE,
 )
 from poli_navigation.opponent_detector import find_opponents
-from poli_navigation.wall_localizer import MAX_ANGULAR_SPEED_FOR_SCAN, WallCorrection
+from poli_navigation.wall_localizer import (
+    estimate_position,
+    MAX_ANGULAR_SPEED_FOR_SCAN,
+    WallCorrection,
+)
 import rclpy
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
@@ -37,6 +41,13 @@ CONTROL_PERIOD = 0.05
 VISION_TIMEOUT = 0.5
 # s, /gripper/holding(tof_node 약 30 Hz)이 이만큼 끊기면 모름(None)으로 본다 (2026-11-01)
 HOLDING_TIMEOUT = 0.5
+
+# 출발 회전·주행(TURN, DRIVE) 중에는 벽 보정을 하지 않는다 (출발 칸 가운데에서 출발했다고 보고 엔코더·IMU로만 간다).
+# 2026-11-03: 오늘 거의 모든 실행에서 출발 0.05~0.1 s 뒤 첫 벽 보정이 위치를 뒤 벽 쪽으로 7~14 cm 옮겨 선까지
+# 15 cm 기준에 걸려 출발하자마자 RETREAT가 됐다. 출발 주행은 안쪽(중앙)으로만 가므로 그동안 몇 cm 틀려도 안전하고,
+# DRIVE가 끝나면(선에서 0.3 m 넘게) 다시 보정한다. 대신 첫 스캔으로 놓은 위치를 재서 로그로 남긴다.
+START_NO_WALL_FIX_STATES = ('TURN', 'DRIVE')
+START_OFFSET_WARN_M = 0.05
 
 # 탈락선에서 이 거리 안이면 이 각속도까지 돌면서 찍은 스캔으로도 위치를 고친다 (평소 0.3 rad/s).
 # 피하며 빨리 도는 동안 위치 보정이 멈춰 한때 26 cm 어긋났다 (2026-11-03 17:33 실기, 밀려서 미끄러짐).
@@ -97,6 +108,7 @@ class Mission2Node(Node):
         self.wait_for_start = self.declare_parameter('wait_for_start', False).value
         self.start_file = self.declare_parameter('start_file', DEFAULT_START_FILE).value
         self.started = not self.wait_for_start
+        self.start_offset_logged = False
         self.ready_logged = False
         # odom으로 계산한 위치와 회전 속도. 밀리면 실제 위치와 달라진다.
         self.odom_pose = None
@@ -222,11 +234,16 @@ class Mission2Node(Node):
         started = time.monotonic()
 
         x, y, yaw = self.wall_correction.apply(self.odom_pose)
-        margin = distance_to_danger_line(Observation(x=x, y=y, yaw=yaw, now=0.0))
-        near_line = margin < NEAR_LINE_FIX_M
-        corrected = self.wall_correction.update(
-            msg, self.odom_pose, self.angular_speed,
-            NEAR_LINE_MAX_ANGULAR if near_line else MAX_ANGULAR_SPEED_FOR_SCAN)
+        if self.started and self.logic.state in START_NO_WALL_FIX_STATES:
+            if not self.start_offset_logged:
+                self.log_start_offset(msg, (x, y, yaw))
+            corrected = False
+        else:
+            margin = distance_to_danger_line(Observation(x=x, y=y, yaw=yaw, now=0.0))
+            near_line = margin < NEAR_LINE_FIX_M
+            corrected = self.wall_correction.update(
+                msg, self.odom_pose, self.angular_speed,
+                NEAR_LINE_MAX_ANGULAR if near_line else MAX_ANGULAR_SPEED_FOR_SCAN)
         if corrected and not self.wall_corrected:
             self.get_logger().info('Wall correction active')
             self.wall_corrected = True
@@ -235,6 +252,22 @@ class Mission2Node(Node):
             self.opponents = find_opponents(msg, self.wall_correction.apply(self.odom_pose))
             self.opponent_received_at = self.now_seconds()
         self.warn_if_slow('scan', started)
+
+    def log_start_offset(self, scan, pose):
+        """출발 직후 한 번: 벽으로 잰 위치가 출발 칸 가운데(START_POSE)와 얼마나 다른지 남긴다."""
+        self.start_offset_logged = True
+        wall_x, wall_y = estimate_position(scan, pose)
+        dx = None if wall_x is None else wall_x - pose[0]
+        dy = None if wall_y is None else wall_y - pose[1]
+        text = ' '.join(f'{name} {"?" if d is None else f"{d:+.2f}"} m'
+                        for name, d in (('x', dx), ('y', dy)))
+        if any(d is not None and abs(d) > START_OFFSET_WARN_M for d in (dx, dy)):
+            self.get_logger().warn(
+                f'출발 위치 확인: 벽으로 잰 위치가 출발 칸 가운데와 {text} 다름 '
+                '(바퀴 축을 칸 가운데, 뒤·옆 외벽에서 0.6 m에 놓았는지 확인). '
+                '출발 주행 중에는 보정 안 함')
+        else:
+            self.get_logger().info(f'출발 위치 확인 OK: 칸 가운데와 {text}')
 
     def warn_if_slow(self, name, started):
         took = time.monotonic() - started
@@ -282,6 +315,7 @@ class Mission2Node(Node):
             self.odom_pose = odom_to_arena(*self.fused)
         self.wall_correction = WallCorrection()
         self.started = True
+        self.start_offset_logged = False
         self.get_logger().info('Start signal')
         return True
 
