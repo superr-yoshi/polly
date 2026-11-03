@@ -217,7 +217,9 @@ HOLDING_CONFIRM_S = 0.3
 # - 잡고 있는 동안(GUARD·HOLD) HELD_CUBE_LOST_S 동안 안 보이면 같다
 # - ToF가 집게 안을 보고 바로 닫는 지름길(APPROACH·PUSH·LURK)도 큰 빨강이 보일 때만
 # 카메라 결과가 끊겼으면(vision_stamp None) 예전처럼 ToF만 믿는다 (카메라 고장으로 큐브를 놓지 않게). TODO_MEASURE
-HELD_CUBE_MIN_AREA = 20000.0
+# 2026-11-03 20000 -> 10000: 잡고 있던 1260번 모두 34071 이상이었지만 대회장 조명이 어두우면 줄 수 있어 여유를 둔다
+# (진짜 큐브를 놓는 쪽이 더 큰 사고). 다른 것을 잡으면 빨강이 거의 0이라(상대 빨간 부품 금지, 문의 6) 그래도 구분된다.
+HELD_CUBE_MIN_AREA = 10000.0
 HELD_CUBE_CONFIRM_S = 0.5
 HELD_CUBE_LOST_S = 1.0
 
