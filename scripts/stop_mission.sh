@@ -30,15 +30,19 @@ if [ -n "$NODE_PIDS" ]; then
 fi
 
 # 2) 나머지(하드웨어·LiDAR·카메라 노드)는 SIGINT로 정리한다.
+HERE="$(cd "$(dirname "$0")" && pwd)"
 PIDS="$(pgrep -f "$PATTERN")"
 if [ -z "$PIDS" ]; then
   echo "실행 중인 임무가 없다."
+  # launch 없이 노드만 남아 있을 수 있다 (2026-11-03 20:20)
+  "$HERE/cleanup_nodes.sh"
   exit 0
 fi
 
 kill -INT $PIDS
 if wait_exit; then
   echo "멈춤."
+  "$HERE/cleanup_nodes.sh"
   exit 0
 fi
 
@@ -46,7 +50,9 @@ echo "SIGINT로 안 멈춰서 SIGTERM을 보낸다." >&2
 kill -TERM $(pgrep -f "$PATTERN") 2> /dev/null
 if wait_exit; then
   echo "멈춤 (SIGTERM)."
+  "$HERE/cleanup_nodes.sh"
   exit 0
 fi
 echo "아직 안 멈췄다. 바퀴를 확인하고 필요하면 물리 비상정지를 누른다." >&2
+"$HERE/cleanup_nodes.sh"
 exit 1

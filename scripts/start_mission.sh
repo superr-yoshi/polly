@@ -66,6 +66,8 @@ if pgrep -f "[p]oli_navigation mission[12].launch.py" > /dev/null; then
   echo "이미 임무가 실행 중이다. 먼저 $HERE/stop_mission.sh" >&2
   exit 1
 fi
+# launch 없이 남은 노드가 있으면 정리한다 (Mega 포트를 둘이 열면 연결이 끊기고 위치가 튐, 2026-11-03 20:20)
+"$HERE/cleanup_nodes.sh" || exit 1
 
 # ROS 환경 (setup.bash는 set -u에서 정의 안 된 변수를 읽으므로 잠시 끈다)
 set +u
