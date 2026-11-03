@@ -268,6 +268,12 @@ REVERSE_WALL_MATCH_M = 0.10
 REVERSE_WALL_MATCH_KNOWN_M = 0.25
 REVERSE_WALL_SLOW_ZONE_M = 0.25
 REVERSE_WALL_SLOW_SPEED = 0.2  # TODO_MEASURE: 이 속도에서 서는 거리(지연 + 감속)가 뒤 여유 4 cm 안인지
+# 후진으로 칸 가운데에 설 때는 가운데 ARRIVE_TOLERANCE_M(3 cm) 앞이 아니라 이 안까지 가서 선다.
+# 2026-11-03 22:46·22:48 실기: (5,5)->(5,6), (6,1)->(7,1) 후진이 3~4 cm 덜 돼(뒤 벽 앞에서는 느려서 관성으로
+# 더 밀리지 않음) 돌고 나서 새 통로 한쪽으로 치우쳐 입구 모서리에 걸렸다 (통로 여유 한쪽 4.7 cm).
+# 뒤가 벽이면 그 거리로 위치를 알고 느리게 들어가므로 뒤 벽(가운데에서 4 cm 여유)에 닿지 않고, 뒤가 비었으면
+# 박을 것이 없다. 전진은 앞 벽과 집게 끝 사이가 3 cm뿐이라 ARRIVE_TOLERANCE_M 그대로.
+REVERSE_ARRIVE_M = 0.01
 # 꺾어 들어갈 옆 칸이 '모름'이면(콘 광선 중 가까운 점이 70%가 안 되고 빈칸도 아님) 그 칸 앞쪽 절반
 # (칸 경계 - UNKNOWN_WALL_BEFORE_M ~ 경계 + UNKNOWN_WALL_DEPTH_M, 칸 가운데 선 ±CHAIN_GUARD_HALF_WIDTH_M)에
 # 돌아온 벽 점이 GUARD_MIN_POINTS개 이상 있는지 본다. 있으면 막힘으로 보고 다시 계획한다.
@@ -1508,7 +1514,8 @@ class Mission1Logic:
                 if by_wall is not None and by_wall < remaining:
                     self._reverse_wall_gap = along - by_wall
                     remaining = by_wall
-            endpoint_reached = remaining <= ARRIVE_TOLERANCE_M
+            endpoint_reached = remaining <= (REVERSE_ARRIVE_M if self.reverse
+                                             else ARRIVE_TOLERANCE_M)
             # 목표 바로 앞에서는 작은 옆 오차가 큰 회전각으로 증폭되므로 진행축만 유지한다.
             correction = (0.0 if distance < CELL_CENTER_TOLERANCE_M
                           else clamp(DRIVE_LATERAL_GAIN * lateral, DRIVE_MAX_CORRECTION_RAD))
@@ -1529,7 +1536,8 @@ class Mission1Logic:
 
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
-        if distance < ARRIVE_TOLERANCE_M or passed or endpoint_reached:
+        arrive = REVERSE_ARRIVE_M if self.reverse else ARRIVE_TOLERANCE_M
+        if distance < arrive or passed or endpoint_reached:
             if self._drive_max_lateral > DRIVE_LATERAL_LOG_M:
                 self._note(f'진행선 옆 오차 최대 {self._drive_max_lateral * 100:.1f} cm '
                            f'({target_cell}까지)')
