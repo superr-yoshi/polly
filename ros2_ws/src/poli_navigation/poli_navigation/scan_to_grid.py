@@ -558,6 +558,40 @@ def nearest_ahead(scan, robot_pose, axis=None, half_width=BODY_HALF_WIDTH_M + GU
     return alongs[GUARD_MIN_POINTS - 1]
 
 
+def count_points_in_rect(scan, robot_pose, origin, axis, along_min, along_max, half_width):
+    """
+    스캔 점 중 origin에서 axis 방향으로 along_min~along_max, 옆으로 half_width 안에 있는 점의 수.
+
+    반사가 안 돌아온 광선은 세지 않는다 (콘 광선 비율 판단과 달리 검은 벽처럼 반사가 약해도 점이 있으면 센다).
+    로봇 자기 부품(축에서 CONE_SKIP_M 안)은 뺀다.
+    """
+    robot_x, robot_y, robot_yaw = robot_pose
+    cos_r = math.cos(robot_yaw)
+    sin_r = math.sin(robot_yaw)
+    laser_x = robot_x + LASER_OFFSET_X_M * cos_r - LASER_OFFSET_Y_M * sin_r
+    laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
+    cos_a = math.cos(axis)
+    sin_a = math.sin(axis)
+    count = 0
+    for i, distance in enumerate(scan.ranges):
+        if not math.isfinite(distance):
+            continue
+        if not scan.range_min <= distance <= scan.range_max:
+            continue
+        angle = robot_yaw + LASER_YAW_RAD + scan.angle_min + i * scan.angle_increment
+        hit_x = laser_x + distance * math.cos(angle)
+        hit_y = laser_y + distance * math.sin(angle)
+        if math.hypot(hit_x - robot_x, hit_y - robot_y) < CONE_SKIP_M:
+            continue
+        rel_x = hit_x - origin[0]
+        rel_y = hit_y - origin[1]
+        along = rel_x * cos_a + rel_y * sin_a
+        lateral = -rel_x * sin_a + rel_y * cos_a
+        if along_min <= along <= along_max and abs(lateral) <= half_width:
+            count += 1
+    return count
+
+
 def obstacle_ahead(scan, robot_pose, ahead=GUARD_AHEAD_M):
     """집게 끝 바로 앞(ahead, 차체 폭 + GUARD_SIDE_M)에 장애물 점이 있는지."""
     robot_x, robot_y, robot_yaw = robot_pose

@@ -758,6 +758,26 @@ def test_rolling_decision_stops_to_scan_when_turn_cell_is_unknown(monkeypatch):
     assert logic.state == SCAN
 
 
+def test_rolling_decision_marks_unknown_turn_cell_with_wall_points_without_stopping(monkeypatch):
+    """콘 비율로는 '모름'이어도 그 칸 앞쪽 절반에 벽 점이 있으면 막힘으로 보고 서지 않는다 (2026-11-03)."""
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
+    true_grid = GridMap()
+    true_grid.mark_blocked((9, 3))
+    true_grid.mark_blocked((8, 2))
+    original = mission1_logic.neighbor_states
+
+    def without_side(scan, pose, center=None):
+        states = original(scan, pose, center)
+        states.pop((8, 2), None)
+        return states
+
+    monkeypatch.setattr(mission1_logic, 'neighbor_states', without_side)
+    logic, obs = _rolling_logic(true_grid, 0.06)
+    logic.step(obs)
+    assert logic.grid.get((8, 2)) == BLOCKED
+    assert '못 봐서' not in (logic.event or '')
+
+
 def test_rolling_scan_rejected_right_after_speed_change_or_far_from_center(monkeypatch):
     monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
     logic, obs = _rolling_logic(GridMap(), 0.06)

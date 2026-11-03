@@ -47,7 +47,9 @@ from poli_navigation.mission2_logic import (
     ramp,
 )
 from poli_navigation.scan_to_grid import (
+    count_points_in_rect,
     GUARD_AHEAD_M,
+    GUARD_MIN_POINTS,
     nearest_ahead,
     neighbor_states,
     obstacle_ahead,
@@ -260,10 +262,14 @@ CHAIN_GUARD_RANGE_M = 0.6
 # (5,5)->(7,5) 후진 중 엔코더 위치가 3 cm 넘게 덜 간 것으로 나와(벽 보정 상한 +3 cm) (8,5) 상자에 박았다.
 # 벽으로 본 남은 거리가 엔코더로 본 것과 REVERSE_WALL_MATCH_M 넘게 다르면 목표 칸 너머 벽이 아닌 것으로 본다.
 REVERSE_WALL_MATCH_M = 0.10
-# 서서 찍은 스캔에도 다음 칸이 '모름'(콘 광선이 애매)이면, 그 방향 진행선 ±CHAIN_GUARD_HALF_WIDTH_M 안에서
-# 다음 칸 앞쪽 절반(칸 경계 + 이 거리)까지 벽 점이 있는지 본다. 있으면 막힘으로 보고 다시 계획한다.
-# 2026-11-03 15:05 실기: (4,7)에서 서서 봐도 (4,8)이 '?'라 그대로 돌아 들어갔고, 회전 직후 0.3 s는
-# 앞 벽 감시를 쉬어(GUARD_AFTER_TURN_S) 상자 앞면에 닿은 뒤 멈췄다.
+# 꺾어 들어갈 옆 칸이 '모름'이면(콘 광선 중 가까운 점이 70%가 안 되고 빈칸도 아님) 그 칸 앞쪽 절반
+# (칸 경계 - UNKNOWN_WALL_BEFORE_M ~ 경계 + UNKNOWN_WALL_DEPTH_M, 칸 가운데 선 ±CHAIN_GUARD_HALF_WIDTH_M)에
+# 돌아온 벽 점이 GUARD_MIN_POINTS개 이상 있는지 본다. 있으면 막힘으로 보고 다시 계획한다.
+# 콘 비율은 반사가 안 돌아온 광선도 분모에 넣어, 검은 판처럼 반사가 약한 벽은 '모름'이 된다.
+# 2026-11-03 15:05·15:23 실기: (4,7)에서 (4,8), (9,4)에서 (9,3)이 서서 봐도 '?'라 그대로 돌아 들어갔고,
+# 회전 직후 0.3 s는 앞 벽 감시를 쉬어(GUARD_AFTER_TURN_S) 상자 앞면에 닿은 뒤 멈췄다.
+# 달리면서 판단할 때도 같은 검사로 막힘을 알면 서서 다시 보지 않는다 (오후 실행마다 4~5번 서던 것).
+UNKNOWN_WALL_BEFORE_M = 0.03
 UNKNOWN_WALL_DEPTH_M = CELL_SIZE_M / 2.0
 # 회전이 덜 끝났을 때는 앞 벽 감시를 하지 않는다: 빨리 도는 동안 찍힌 스캔은 한 바퀴(0.1 s) 동안 20도 가까이
 # 비틀려 옆 상자 모서리가 진행선 위로 온다 (2026-11-01 20:25 실기: (9,2)에서 157도로 아직 돌며 '앞에 벽' 급정지)
@@ -845,6 +851,14 @@ class Mission1Logic:
          self.state, self.state_started_at, self.stop_reason) = saved
         self._decided_for = self.target
         if (next_cell is not None and self.grid.get(next_cell) != FREE
+                and next_cell not in self.maze.state.visits
+                and self._wall_into_unknown(obs.scan, (x, y, yaw), point_to_cell(*self.target),
+                                            next_cell)):
+            # '모름'이지만 그 칸 앞쪽 절반에 벽 점이 있다 -> 막힘으로 보고 서지 않고 다시 판단
+            self.grid.mark_blocked(next_cell)
+            self._note(f'주행 중 {next_cell}은 모름이지만 벽 점이 보여 막힘으로 봄')
+            return self._rolling_decision(obs)
+        if (next_cell is not None and self.grid.get(next_cell) != FREE
                 and next_cell not in self.maze.state.visits):
             # 꺾어 들어갈 옆 칸을 빈칸으로 못 봤다 (애매해서 '모름'). 미로는 모름을 지나갈 수 있다고 보지만
             # 옆 칸 벽은 집게 끝에서 몇 cm라 돌고 나서는 앞 벽 감시로 못 막는다 -> 서서 다시 본다.
@@ -902,7 +916,8 @@ class Mission1Logic:
             self._change_state(STUCK, obs)
             return Command()
 
-        if self._wall_into_unknown(obs, current, path[1]):
+        if obs.scan is not None and self._wall_into_unknown(
+                obs.scan, (obs.x, obs.y, obs.yaw), current, path[1]):
             self.grid.mark_blocked(path[1])
             self._note(f'{path[1]}은 모름이지만 그쪽 진행선에 벽 -> 막힘으로 보고 다시 계획')
             return self._plan(obs)
@@ -952,20 +967,18 @@ class Mission1Logic:
         self._change_state(TURN, obs)
         return Command()
 
-    def _wall_into_unknown(self, obs, current, nxt):
-        """서서 본 스캔으로, 아직 '모름'인 이웃 칸 nxt 쪽 진행선 위 칸 앞쪽 절반 안에 벽이 보이는지."""
-        if (self.phase != EXPLORE or obs.scan is None or self.grid.get(nxt) == FREE
+    def _wall_into_unknown(self, scan, pose, current, nxt):
+        """아직 '모름'인 이웃 칸 nxt의 앞쪽 절반에 돌아온 벽 점이 GUARD_MIN_POINTS개 이상 보이는지."""
+        if (self.phase != EXPLORE or self.grid.get(nxt) == FREE
                 or nxt in self.maze.state.visits
                 or abs(nxt[0] - current[0]) + abs(nxt[1] - current[1]) != 1):
             return False
         heading = math.atan2(nxt[1] - current[1], nxt[0] - current[0])
-        cos_h, sin_h = math.cos(heading), math.sin(heading)
-        center = cell_center_m(current)
-        # 칸 경계까지 거리 (로봇이 가운데에서 그 방향으로 비켜 있으면 그만큼 가깝다)
-        to_edge = CELL_SIZE_M / 2.0 - ((obs.x - center[0]) * cos_h + (obs.y - center[1]) * sin_h)
-        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), heading,
-                              CHAIN_GUARD_HALF_WIDTH_M)
-        return ahead is not None and ahead < to_edge + UNKNOWN_WALL_DEPTH_M
+        half = CELL_SIZE_M / 2.0
+        points = count_points_in_rect(
+            scan, pose, cell_center_m(current), heading, half - UNKNOWN_WALL_BEFORE_M,
+            half + UNKNOWN_WALL_DEPTH_M, CHAIN_GUARD_HALF_WIDTH_M)
+        return points >= GUARD_MIN_POINTS
 
     def _arc_plan(self, path, end):
         """
