@@ -1201,6 +1201,38 @@ def test_return_scans_at_corner_and_recenters_before_turning():
     assert logic.target == cell_center_m((9, 2))
 
 
+def test_return_recenter_by_rear_wall_does_not_loop():
+    """
+    후진 도착을 뒤 벽으로 본 칸에서 엔코더로는 옆으로 비켜 있어도 가운데 옮기기를 끝없이 되풀이하지 않는다.
+
+    2026-11-03 23:24·23:31 실기: (8,1)·(9,9)에서 '가운데로 옮기기 -> 뒤 벽 보고 바로 도착 -> 엔코더로는 아직
+    2 cm 넘게 비킴 -> 또 옮기기'가 0.05 s마다 돌아 멈춤. 주행 중 판단이 옮기기 횟수까지 지워 RECENTER_MAX도 안 먹었다.
+    """
+    logic = Mission1Logic(point_symmetry=False, rolling_decision=True)
+    logic.gripper_opened = True
+    logic.phase = RETURN
+    for row in range(1, 10):
+        logic.maze.observe((9, row), math.pi / 2)
+    cx, cy = cell_center_m((9, 9))
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = (cx, cy)
+    logic._drive_heading = 0.0
+    logic.reverse = True
+    logic._last_linear = 0.1
+    logic._last_command_at = 0.0
+    # 실제로는 가운데에 섰는데 엔코더는 뒤(+x)로 2.7 cm 덜 왔다고 본다
+    scan = simulate_scan(GridMap(use_point_symmetry=False), (cx, cy, math.pi))
+    for i in range(1, 41):
+        now = i * 0.05
+        logic.step(Observation(x=cx - 0.027, y=cy, yaw=math.pi, now=now, holding=True,
+                               scan=scan, scan_time=now))
+        if logic.target[1] < cy - 0.2:
+            break
+    # 가운데 옮기기를 끝내고 (9,8) 쪽(-y)으로 출발했다
+    assert logic.target[1] < cy - 0.2 and not logic.reverse
+
+
 def test_chain_after_90_degree_turn_even_with_small_heading_error():
     """90도 옆 칸으로 두 칸 갈 때 로봇 방향이 1도 틀어져 있어도 묶는다 (2026-10-31 실기)."""
     logic = Mission1Logic()

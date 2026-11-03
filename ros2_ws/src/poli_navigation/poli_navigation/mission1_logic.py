@@ -835,6 +835,8 @@ class Mission1Logic:
         """이 스캔으로 주행 중 판단을 할 수 있는지 (노드도 같은 스캔으로 벽 보정을 한다)."""
         if not self.rolling or self.state != DRIVE or self.delivering or self.target is None:
             return False
+        if self._recentering:
+            return False  # 가운데로 옮기는 중: 도착하면 _plan이 다음 칸을 정한다
         if obs.scan is None or obs.scan_time is None or self._decided_for == self.target:
             return False
         if abs(self._last_linear) > ROLL_SPEED + 0.01:
@@ -867,6 +869,8 @@ class Mission1Logic:
             return False
         saved = (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
                  self.state, self.state_started_at, self.stop_reason)
+        # 미리 해 보는 _plan이 가운데 옮기기 횟수를 지우면 RECENTER_MAX가 안 먹는다 (2026-11-03 23:31 실기)
+        saved_recenter = (self._recenter_cell, self._recenters, self._recentering)
         old_reverse = self.reverse
         # 가운데에 도착했다고 보고 계획한다 (미로 탐색은 이미 이 칸에 들어온 것으로 셌다).
         center = Observation(x=self.target[0], y=self.target[1], yaw=obs.yaw, now=obs.now)
@@ -885,6 +889,7 @@ class Mission1Logic:
         next_cell = self.path[1] if self.state == TURN and self.path else None
         (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
          self.state, self.state_started_at, self.stop_reason) = saved
+        self._recenter_cell, self._recenters, self._recentering = saved_recenter
         self._decided_for = self.target
         judged = (None if next_cell is None else self._judge_unknown(
             obs.scan, (x, y, yaw), point_to_cell(*self.target), next_cell))
@@ -908,7 +913,7 @@ class Mission1Logic:
         self.event = '주행 중 판단: 가운데에 서서 회전 (판단 대기 없음)'
         return False
 
-    def _plan(self, obs):
+    def _plan(self, obs, after_recenter=False):
         current = point_to_cell(obs.x, obs.y)
         self.stop_reason = None
         self.reverse = False
@@ -967,8 +972,10 @@ class Mission1Logic:
         self._drive_origin_cell = center
 
         recenter = distance_to(obs, center) > CELL_CENTER_TOLERANCE_M
-        if RETURN_SAFE_TURNS and self.phase == RETURN and not recenter:
-            # 새로 갈 방향 기준 옆으로 비켜 있으면 그 통로 입구 모서리에 걸린다 -> 먼저 가운데로
+        if RETURN_SAFE_TURNS and self.phase == RETURN and not recenter and not after_recenter:
+            # 새로 갈 방향 기준 옆으로 비켜 있으면 그 통로 입구 모서리에 걸린다 -> 먼저 가운데로.
+            # 방금 가운데로 옮겼으면 다시 재지 않는다: 뒤 벽으로 도착을 봤으면 엔코더는 몇 cm 어긋나 있어
+            # 옮기기를 끝없이 되풀이했다 (2026-11-03 23:24 (8,1), 23:31 (9,9) 실기에서 멈춤).
             step_x, step_y = path[1][0] - path[0][0], path[1][1] - path[0][1]
             lateral = abs(-(obs.x - center[0]) * step_y + (obs.y - center[1]) * step_x)
             recenter = lateral > RETURN_RECENTER_M
@@ -1577,7 +1584,7 @@ class Mission1Logic:
                     return Command()
                 # 가운데로 옮긴 뒤(또는 RETURN_SAFE_TURNS 끔): 새로 볼 것이 없으니 바로 다음 구간으로
                 # (2026-10-31 팀 요청: 왔던 길은 계산 없이 빠르게).
-                return self._plan(obs)
+                return self._plan(obs, after_recenter=self._recentering)
             if self._backtrack is not None and target_cell != self._backtrack[-1]:
                 # 막다른 길에서 되돌아가는 중 꺾는 칸: 지나온 칸이라 복귀처럼 서지 않는다.
                 return self._plan(obs)
