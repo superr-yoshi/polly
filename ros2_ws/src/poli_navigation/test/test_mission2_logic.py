@@ -269,7 +269,8 @@ def test_guard_turns_around_and_drives_forward_to_circle(monkeypatch):
     away = math.atan2(robot.y - CENTER_M[1], robot.x - CENTER_M[0])
     assert abs(math.atan2(math.sin(robot.yaw - away), math.cos(robot.yaw - away))) \
         < math.radians(30.0)
-    assert max(c.linear for c in commands) > GUARD_ESCAPE_SPEED - 0.01
+    # (GUARD_MAX_ANGULAR가 낮아 목표 방향을 맞추는 동안 cos(오차)만큼 덜 낸다)
+    assert max(c.linear for c in commands) > GUARD_ESCAPE_SPEED - 0.03
     assert all(c.linear == 0.0 and c.angular == 0.0 for c in commands[-20:])
 
 
@@ -390,11 +391,11 @@ def test_retreat_when_pushed_near_elimination_zone():
     assert logic.state == RETREAT
     assert command.linear != 0.0 or command.angular != 0.0
 
-    # 큐브를 잡고 있으므로 천천히 돌아온다.
+    # 선 밖은 즉시 탈락이라 큐브를 잡고 있어도 최대 출력(RETREAT_SPEED)까지 (2026-11-03)
     while robot.now < 60.0 and logic.state == RETREAT:
         command = logic.step(robot.observe())
         robot.apply(command)
-        assert abs(command.linear) <= GUARD_SPEED + 1e-9
+        assert abs(command.linear) <= mission2_logic.RETREAT_SPEED + 1e-9
     assert logic.state == GUARD
     assert distance_to_danger_line(robot.observe()) > 0.15
 
