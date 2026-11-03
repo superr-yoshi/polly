@@ -7,6 +7,7 @@ from poli_navigation import mission2_logic
 from poli_navigation.mission2_logic import (
     ALIGN,
     APPROACH,
+    ATTACK,
     BACKOFF,
     BACKOFF_M,
     CAMERA_AHEAD_M,
@@ -35,6 +36,7 @@ from poli_navigation.mission2_logic import (
     PUSH,
     RECENTER,
     RETREAT,
+    SAFE_ZONE_MAX_M,
     SEARCH,
     SEARCH_CENTER_M,
     SPIN,
@@ -918,6 +920,8 @@ def test_lurk_dodges_opponent_along_circle():
 def test_lurk_does_not_chase_cube_held_by_opponent(monkeypatch):
     # 가짜 카메라는 지연이 없다: 로직이 실제 지연(CAMERA_LAG_S)을 빼면 도는 동안 큐브 위치가 15 cm 틀어진다
     monkeypatch.setattr(mission2_logic, 'CAMERA_LAG_S', 0.0)
+    # 공격(ATTACK_HELD_CUBE)을 끄면 예전처럼 상대가 잡은 큐브에는 가지 않는다
+    monkeypatch.setattr(mission2_logic, 'ATTACK_HELD_CUBE', False)
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     # 원 위에서 돌다 보면 큐브가 보이지만, 상대 로봇(큐브에서 0.15 m) 집게에 있어 가지 않는다.
@@ -1001,6 +1005,55 @@ def test_lurk_finds_far_cube_after_moving():
     robot.target = (CENTER_M[0] + 1.3 * math.cos(away), CENTER_M[1] + 1.3 * math.sin(away))
     states = run(logic, robot, max_seconds=robot.now + 25.0, until=APPROACH)
     assert logic.state == APPROACH, states
+
+
+class PushableSimRobot(SimRobot):
+    """닿으면 상대(victim)가 우리가 미는 만큼 같이 밀려나는 가짜 로봇 (테스트 전용)."""
+
+    victim = None
+    contact_m = 0.32  # 로봇 중심 ~ 상대 중심
+
+    def apply(self, command):
+        before = (self.x, self.y)
+        super().apply(command)
+        if self.victim is None:
+            return
+        gap = math.dist((self.x, self.y), self.victim)
+        if gap < self.contact_m:
+            # 겹친 만큼 상대를 우리 진행 방향 쪽으로 밀어낸다
+            ux, uy = self.victim[0] - self.x, self.victim[1] - self.y
+            push = self.contact_m - gap
+            self.victim = (self.victim[0] + ux / gap * push, self.victim[1] + uy / gap * push)
+            moved = math.dist(before, (self.x, self.y))
+            assert moved >= 0.0
+        # 상대가 잡은 큐브도 같이 끌려간다
+        self.target = (self.victim[0] - 0.15, self.victim[1])
+
+
+def test_attack_pushes_opponent_holding_cube_to_line(monkeypatch):
+    # 2026-11-03 팀: 상대가 잡은 큐브를 보면 그 상대를 가장 가까운 노란 선 쪽으로 민다.
+    monkeypatch.setattr(mission2_logic, 'CAMERA_LAG_S', 0.0)
+    logic, robot = lurking_robot()
+    pushable = PushableSimRobot(pose=(robot.x, robot.y, robot.yaw), target=robot.target)
+    pushable.now = robot.now
+    pushable.holding = False
+    run(logic, pushable, max_seconds=pushable.now + 4.0)
+    # 상대가 큐브를 물고 중앙 오른쪽에 서 있다 (가장 가까운 선은 +x 쪽)
+    pushable.victim = (2.6, 1.8)
+    pushable.target = (2.45, 1.8)
+    states = set()
+    lowest = math.inf
+    while pushable.now < 40.0 and pushable.victim[0] < SAFE_ZONE_MAX_M + 0.05:
+        obs = pushable.observe()
+        obs.opponents = (pushable.victim,)
+        pushable.apply(logic.step(obs))
+        states.add(logic.state)
+        lowest = min(lowest, distance_to_danger_line(pushable.observe()))
+    assert ATTACK in states
+    assert logic.attack_dir == (1.0, 0.0)
+    # 상대 중심이 노란 선(+x 쪽)까지 밀렸고, 우리는 선 앞에서 RETREAT로 멈췄다
+    assert pushable.victim[0] > SAFE_ZONE_MAX_M - 0.05
+    assert lowest > 0.15
 
 
 def test_lurk_returns_to_lurk_after_retreat():

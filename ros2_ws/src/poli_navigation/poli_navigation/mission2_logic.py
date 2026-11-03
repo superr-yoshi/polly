@@ -242,6 +242,22 @@ LURK_IGNORE_NEAR_OPPONENT_M = 0.3
 # 부딪힘·탈락선 0.2 m 안 0번. (원을 돌며 중앙만 보는 방식은 253, 평균이 더 느렸다). TODO_MEASURE
 LURK_TURN_BEFORE_MOVE_RAD = 2 * math.pi
 LURK_MOVE_RAD = math.radians(60.0)
+# 상대가 잡은 큐브(상대에서 LURK_IGNORE_NEAR_OPPONENT_M 안)를 보면 그 상대를 가장 가까운 노란 선 쪽으로 민다
+# (2026-11-03 팀: 연습에서 조금만 더 밀면 선 밖으로 밀 수 있었다. 상대 밀기 허용 3.4.6, 탈락한 팀의 큐브는 중앙으로).
+# 상대 뒤편(선 반대쪽) ATTACK_STANDOFF_M 지점으로 가서(우리가 상대와 선 사이면 옆으로 돌아서) 선 쪽을 보고
+# ATTACK_SPEED로 들이민다. 우리가 선 DANGER_MARGIN_M 앞에 오면 RETREAT가 끊는다 (최우선).
+# 상대가 선을 ATTACK_DONE_MARGIN_M 넘었거나, ATTACK_LOST_S 동안 못 봤거나, ATTACK_TIMEOUT_S가 지나면 LURK로.
+ATTACK_HELD_CUBE = True
+ATTACK_STANDOFF_M = 0.45
+ATTACK_START_M = 0.1     # 자리 잡기 점에서 이 안이면 밀기 시작
+ATTACK_DETOUR_M = 0.5    # 상대 옆으로 돌아갈 때 상대 중심에서 옆으로
+ATTACK_AIM_AHEAD_M = 0.3  # 밀 때 겨누는 점: 상대 중심에서 선 쪽으로
+ATTACK_RAM_RAD = math.radians(25.0)  # 방향이 이 안이면 밀고, 밖이면 제자리에서 먼저 돈다
+ATTACK_SPEED = 0.8       # hardware.yaml max_linear
+ATTACK_TRACK_M = 0.5     # 상대 위치를 이어서 찾는 거리
+ATTACK_LOST_S = 1.0
+ATTACK_TIMEOUT_S = 8.0
+ATTACK_DONE_MARGIN_M = -0.05
 
 # 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False로 했다가 True로 되돌림:
 # 임무를 켜면 Mega가 리셋돼 서보 힘이 빠지고 집게가 조금 닫힌다. 열기를 안 보내면 덜 열린 채로
@@ -334,6 +350,7 @@ RECENTER = 'RECENTER'
 BACKOFF = 'BACKOFF'
 SPIN = 'SPIN'
 LURK = 'LURK'
+ATTACK = 'ATTACK'  # 상대가 잡은 큐브를 보면 그 상대를 선 쪽으로 밀기
 # 큐브를 잡고 있는 상태
 HOLDING_STATES = (HOLD, GUARD)
 
@@ -493,6 +510,11 @@ class Mission2Logic:
         self.push_reason = ''
         # 추정 위치가 경기장 밖이라 서 있는 중인지 (POSE_LOST_MARGIN_M)
         self.pose_lost = False
+        # ATTACK: 미는 상대 위치, 미는 방향(단위 벡터), 들이미는 중인지
+        self.attack_victim = None
+        self.attack_dir = None
+        self._attack_seen_at = None
+        self._attack_ramming = False
         # 서 있는 동안의 벽 보정값 기록 [(시각, (x, y))] (미끄러짐 감지)
         self._slide_history = []
         # LURK: 지금 자리에서 제자리로 돈 각도 (한 바퀴 돌면 원을 따라 옮긴다)
@@ -688,7 +710,7 @@ class Mission2Logic:
 
     def wants_opponents(self):
         """상대 위치(LiDAR)가 필요한 상태인지. 출발·첫 접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
-        return self.holding_cube() or self.state in (RECENTER, LURK) or self._retrying()
+        return self.holding_cube() or self.state in (RECENTER, LURK, ATTACK) or self._retrying()
 
     def _retrying(self):
         """실패 뒤 LURK에서 다시 잡으러 가는 중인지 (이때도 GUARD·LURK처럼 상대를 피한다)."""
@@ -718,6 +740,7 @@ class Mission2Logic:
             BACKOFF: self._backoff,
             SPIN: self._spin,
             LURK: self._lurk,
+            ATTACK: self._attack,
             RECENTER: self._recenter,
         }
         return handlers[self.state](obs)
@@ -1099,6 +1122,11 @@ class Mission2Logic:
             if command.gripper is None:
                 command.gripper = GRIPPER_OPEN
             return command
+        if (ATTACK_HELD_CUBE and command is None and self._sees_target(obs)
+                and self.target is not None and self._target_updated_at == obs.now
+                and self._target_near_opponent(opponents)):
+            victim = min(opponents, key=lambda other: math.dist(self.target, other))
+            return self._start_attack(obs, victim)
         if command is None:
             return self._lurk_look_around(obs)
         # 원 위 점으로 가거나 피하는 중: 새 자리에서 다시 한 바퀴를 센다
@@ -1117,6 +1145,56 @@ class Mission2Logic:
             self._guard_angle += LURK_MOVE_RAD
             return Command()
         return Command(angular=SPIN_SPEED)
+
+    def _start_attack(self, obs, victim):
+        """상대 victim을 가장 가까운 노란 선 쪽으로 밀기 시작한다."""
+        x, y = victim
+        sides = ((x - SAFE_ZONE_MIN_M, (-1.0, 0.0)), (SAFE_ZONE_MAX_M - x, (1.0, 0.0)),
+                 (y - SAFE_ZONE_MIN_M, (0.0, -1.0)), (SAFE_ZONE_MAX_M - y, (0.0, 1.0)))
+        self.attack_dir = min(sides)[1]
+        self.attack_victim = victim
+        self._attack_seen_at = obs.now
+        self._attack_ramming = False
+        self._change_state(ATTACK, obs)
+        return self._attack(obs)
+
+    def _attack(self, obs):
+        """자리 잡기(상대 뒤편) -> 선 쪽으로 들이밀기. 선 앞에서는 RETREAT가 먼저 끊는다."""
+        opponents = self._opponents(obs)
+        near = [other for other in opponents
+                if math.dist(other, self.attack_victim) < ATTACK_TRACK_M]
+        if near:
+            self.attack_victim = min(near, key=lambda other: math.dist(other, self.attack_victim))
+            self._attack_seen_at = obs.now
+        vx, vy = self.attack_victim
+        victim_margin = min(vx - SAFE_ZONE_MIN_M, SAFE_ZONE_MAX_M - vx,
+                            vy - SAFE_ZONE_MIN_M, SAFE_ZONE_MAX_M - vy)
+        if (obs.now - self._attack_seen_at > ATTACK_LOST_S
+                or obs.now - self.state_started_at > ATTACK_TIMEOUT_S
+                or victim_margin < ATTACK_DONE_MARGIN_M):
+            return self._start_lurk(obs)
+        dx, dy = self.attack_dir
+        others = tuple(other for other in opponents if other != self.attack_victim)
+        if not self._attack_ramming:
+            staging = (vx - dx * ATTACK_STANDOFF_M, vy - dy * ATTACK_STANDOFF_M)
+            if math.dist((obs.x, obs.y), staging) < ATTACK_START_M:
+                self._attack_ramming = True
+            else:
+                # 우리가 상대 옆이나 선 쪽에 있으면 상대를 옆으로 돌아서 뒤편으로 간다
+                rel_x, rel_y = obs.x - vx, obs.y - vy
+                along = rel_x * dx + rel_y * dy
+                lateral = -rel_x * dy + rel_y * dx
+                goal = staging
+                if along > -ATTACK_STANDOFF_M / 2 and abs(lateral) < ATTACK_DETOUR_M:
+                    side = 1.0 if lateral >= 0.0 else -1.0
+                    goal = (vx - dy * side * ATTACK_DETOUR_M - dx * ATTACK_STANDOFF_M / 2,
+                            vy + dx * side * ATTACK_DETOUR_M - dy * ATTACK_STANDOFF_M / 2)
+                return self._guard_drive(obs, goal, ATTACK_SPEED, others)
+        aim = (vx + dx * ATTACK_AIM_AHEAD_M, vy + dy * ATTACK_AIM_AHEAD_M)
+        error = heading_error_to(obs, aim)
+        linear = ATTACK_SPEED if abs(error) < ATTACK_RAM_RAD else 0.0
+        angular = clamp(GUARD_HEADING_GAIN * error, RETREAT_MAX_ANGULAR)
+        return Command(linear=linear, angular=angular)
 
     def _target_near_opponent(self, opponents):
         return any(math.dist(self.target, other) < LURK_IGNORE_NEAR_OPPONENT_M

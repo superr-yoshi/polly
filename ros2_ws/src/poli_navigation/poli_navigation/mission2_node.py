@@ -72,7 +72,7 @@ CALLBACK_WARN_S = 0.05
 DEFAULT_START_FILE = '/tmp/poli_mission_start'
 MOTION_LOG_STATES = (
     'TURN', 'DRIVE', 'SEARCH', 'ALIGN', 'APPROACH', 'PUSH', 'RETREAT', 'GUARD', 'BACKOFF',
-    'RECENTER', 'SPIN', 'LURK')
+    'RECENTER', 'SPIN', 'LURK', 'ATTACK')
 
 
 def odom_to_arena(odom_x, odom_y, odom_yaw):
@@ -339,6 +339,11 @@ class Mission2Node(Node):
 
         if self.logic.state != self.last_state:
             self.get_logger().info(f'State: {self.logic.state}')
+            if self.logic.state == 'ATTACK':
+                vx, vy = self.logic.attack_victim
+                self.get_logger().info(
+                    f'공격: 큐브를 잡은 상대 ({vx:.2f},{vy:.2f})를 '
+                    f'{self.logic.attack_dir} 쪽 노란 선으로 민다')
             self.last_state = self.logic.state
         if self.logic.pose_lost:
             self.get_logger().error(
