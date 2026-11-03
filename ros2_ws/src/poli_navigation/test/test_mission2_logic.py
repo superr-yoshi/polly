@@ -580,6 +580,20 @@ def test_guard_stands_still_when_sandwiched(monkeypatch):
     assert all(command.linear == 0.0 for command in commands)
 
 
+def test_guard_moves_away_when_pinned_between_two_opponents(monkeypatch):
+    # 2026-11-03 17:33 실기: 0.27 m에서 미는 상대와 반대쪽 물체 사이에서 2초 서 있다가 탈락선 쪽으로 밀렸다.
+    # 상대가 이미 붙어 있으면 서 있지 않고 덜 막힌 쪽으로 빠진다 (정면 충돌은 _guard_drive가 막는다).
+    logic, robot = guarding_robot(monkeypatch)
+    touching = guard_point(GUARD_HOME_ANGLE + 0.3)
+    other = guard_point(GUARD_HOME_ANGLE - 0.55)
+    start = math.dist((robot.x, robot.y), touching)
+    assert start < mission2_logic.DODGE_BLOCKED_M
+    commands = run_guard_with_opponents(logic, robot, [touching, other], 2.0)
+    assert any(command.linear != 0.0 for command in commands)
+    assert math.dist((robot.x, robot.y), touching) > start + 0.05
+    assert math.dist((robot.x, robot.y), other) > 0.25
+
+
 def test_guard_dodges_toward_open_side_with_two_opponents(monkeypatch):
     logic, robot = guarding_robot(monkeypatch)
     start_angle = angle_from_center(robot.x, robot.y)

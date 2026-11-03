@@ -1060,8 +1060,20 @@ class Mission2Logic:
             # 끼임 판단은 LiDAR로 본 상대만 (밀어서 안 상대는 바로 붙어 있어 늘 막혀 보인다. 미는 쪽에서 비켜 가야 한다)
             seen = tuple(o for o in opponents
                          if self.push_opponent is None or o != self.push_opponent[:2])
-            if self._dodge_clearance(own_angle, self._dodge_direction, seen) < DODGE_BLOCKED_M:
+            pinned = opponent_distance < DODGE_BLOCKED_M
+            if pinned:
+                # 붙어 있는 상대의 반대쪽으로 원을 따라 빠진다 (양쪽 길이 다 막혀 보여도)
+                nearest = min(opponents, key=lambda other: math.dist((obs.x, obs.y), other))
+                side = math.atan2(math.sin(angle_around_center(nearest) - own_angle),
+                                  math.cos(angle_around_center(nearest) - own_angle))
+                if side != 0.0:
+                    self._dodge_direction = -math.copysign(1.0, side)
+            if (self._dodge_clearance(own_angle, self._dodge_direction, seen) < DODGE_BLOCKED_M
+                    and not pinned):
                 # 양쪽 다 막혔다. 안쪽은 상대가 모이고 바깥은 탈락선이라 서 있는다.
+                # 단 상대가 이미 붙어 있으면(pinned) 서 있으면 그대로 밀려 나가므로 덜 막힌 쪽으로 빠진다
+                # (2026-11-03 17:33 실기: 0.27 m에서 미는 상대와 반대쪽 0.45 m 물체 사이에서 2초 서 있다가
+                # 탈락선 쪽으로 밀림). 가는 방향 바로 앞 상대는 _guard_drive가 멈춘다.
                 return Command()
             self._guard_angle = own_angle + self._dodge_direction * DODGE_ARC_STEP_RAD
 
