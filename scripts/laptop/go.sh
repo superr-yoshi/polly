@@ -32,7 +32,7 @@ find_pi "${PI:-}"
 
 stop_now() {
   trap - INT TERM
-  [ -n "${WARM:-}" ] && kill "$WARM" 2> /dev/null
+  [ -n "${GOPID:-}" ] && kill "$GOPID" 2> /dev/null
   echo
   echo "정지 중..."
   pi '~/polly/scripts/stop_mission.sh | tail -1; pkill -f "^tail -n \\+1 -F /home/poli/poli_logs/"'
@@ -80,14 +80,33 @@ if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
   read -r -p "그래도 시작하려면 y, 멈추려면 엔터: " ANSWER
   [[ "$ANSWER" == [yYㅛ] ]] || stop_now
 fi
-# 엔터를 기다리는 동안 1초마다 연결을 확인해, 끊겼으면 미리 다시 열어 둔다 (엔터 뒤에 다시 연결하면 수 초 늦음)
-( while true; do PI_TIMEOUT=3 pi true > /dev/null 2>&1 || echo "⚠️  Pi 연결 끊김 - 다시 여는 중 (핫스팟을 로봇 가까이)"; sleep 1; done ) &
-WARM=$!
-read -r -p "준비 완료. 엔터 = 시작 (Ctrl+C = 취소) "
-kill "$WARM" 2> /dev/null
+# 시작 신호는 미리 열어 둔 명령으로 보낸다 (2026-11-04: 엔터 뒤에 SSH 명령을 새로 열면 Wi-Fi가 흔들릴 때
+# 가끔 늦었다). Pi 쪽은 'ready'를 보낸 뒤 줄 하나를 기다리다가, 받자마자 시작 파일부터 만들고 go를 실행한다.
+# 엔터를 기다리는 동안 이 연결이 끊기면(ServerAlive 약 3초) 바로 다시 연다.
+open_go() {
+  [ -n "${GOPID:-}" ] && { kill "$GOPID" 2> /dev/null; wait "$GOPID" 2> /dev/null; }
+  coproc GO { pi 'echo ready; read -r _ && touch /tmp/poli_mission_start && ~/polly/scripts/start_mission.sh go' 2>&1; }
+  GOPID=$GO_PID
+  local line
+  read -r -t 5 line <&"${GO[0]}" && [ "$line" = ready ]
+}
+open_go || echo "⚠️  Pi 연결이 늦다 - 다시 여는 중 (핫스팟을 로봇 가까이)"
+echo -n "준비 완료. 엔터 = 시작 (Ctrl+C = 취소) "
+until read -r -t 1; do
+  if ! kill -0 "$GOPID" 2> /dev/null; then
+    echo "⚠️  Pi 연결 끊김 - 다시 여는 중 (핫스팟을 로봇 가까이)"
+    open_go || echo "⚠️  아직 연결 안 됨"
+  fi
+done
 T0=$(date +%s%N)
-pi '~/polly/scripts/start_mission.sh go' | grep -v "^$"
+if kill -0 "$GOPID" 2> /dev/null; then
+  echo >&"${GO[1]}"
+  GO_OUT=$(timeout 5 cat <&"${GO[0]}")
+else
+  GO_OUT=$(pi '~/polly/scripts/start_mission.sh go' 2>&1)
+fi
 GO_MS=$(( ($(date +%s%N) - T0) / 1000000 ))
+echo "$GO_OUT" | grep -vE "^(ready)?$"
 echo "시작 신호까지 ${GO_MS} ms"
 [ "$GO_MS" -gt 500 ] && echo "⚠️  시작 신호가 ${GO_MS} ms 걸렸다 (Wi-Fi가 약하거나 끊겼다 다시 연결됨)"
 if [ "$RACE" = true ]; then
