@@ -659,6 +659,26 @@ def test_moves_closer_to_center_when_full_turn_finds_nothing():
     assert logic.state == GUARD
 
 
+def test_search_near_center_moves_around_after_full_turn():
+    # 2026-11-03 19:42 실기: 중앙에서 1.0 m 자리에서 큐브를 못 찾고 6초 넘게 제자리로만 돌았다.
+    # 한 바퀴 돌아도 없으면 중앙 둘레를 따라 옮겨 다시 찾는다.
+    logic = Mission2Logic()
+    logic.gripper_opened = True
+    start = (CENTER_M[0] - 0.9, CENTER_M[1] - 0.3)
+    robot = SimRobot(pose=(*start, 0.0), target=(100.0, 100.0))
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    run(logic, robot, max_seconds=12.0)
+    moved = angle_from_center(robot.x, robot.y) - angle_from_center(*start)
+    moved = math.atan2(math.sin(moved), math.cos(moved))
+    assert abs(moved) > math.radians(40.0)
+    # 옮긴 자리에서 보이는 큐브는 바로 잡으러 간다
+    side = robot.yaw + 2.0
+    robot.target = (robot.x + 0.6 * math.cos(side), robot.y + 0.6 * math.sin(side))
+    states = run(logic, robot, max_seconds=robot.now + 6.0, until=APPROACH)
+    assert logic.state == APPROACH, states
+
+
 def test_recenter_does_not_drive_into_opponent():
     logic = Mission2Logic()
     logic.state = RECENTER

@@ -485,6 +485,8 @@ class Mission2Logic:
         # LURK: 지금 자리에서 제자리로 돈 각도 (한 바퀴 돌면 원을 따라 옮긴다)
         self._lurk_turned = 0.0
         self._lurk_last_yaw = None
+        # RECENTER로 갈 중앙 둘레 각도 (None이면 지금 자리 쪽)
+        self._recenter_angle = None
         # RETREAT 중 선에서 가장 멀었던 거리와 그 시각, 비켜 가는 쪽 (0 = 곧장 안쪽)
         self._retreat_best = 0.0
         self._retreat_best_at = 0.0
@@ -813,15 +815,21 @@ class Mission2Logic:
                 return Command(angular=math.copysign(SEARCH_SPEED, error))
         self._search_turned += abs(normalize_angle(obs.yaw - self._search_last_yaw))
         self._search_last_yaw = obs.yaw
-        if (self._search_turned >= 2.0 * math.pi
-                and distance_to(obs, CENTER_M) > SEARCH_CENTER_M + GUARD_ARRIVE_M):
+        if self._search_turned >= 2.0 * math.pi:
+            # 한 바퀴 돌아도 없다: 멀면 중앙 쪽으로 다가가고, 가까우면 중앙 둘레를 따라 LURK_MOVE_RAD 옮겨
+            # 다시 찾는다 (2026-11-03 19:42 실기: 중앙에서 1.0 m 자리에서 6초 넘게 제자리로만 돎)
+            angle = angle_around_center((obs.x, obs.y))
+            if distance_to(obs, CENTER_M) <= SEARCH_CENTER_M + GUARD_ARRIVE_M:
+                angle += LURK_MOVE_RAD
+            self._recenter_angle = angle
             self._change_state(RECENTER, obs)
             return self._recenter(obs)
         return Command(angular=self._search_direction * SEARCH_SPEED)
 
     def _recenter_goal(self, obs):
-        """중앙에서 SEARCH_CENTER_M 떨어진, 지금 자리 쪽 점."""
-        angle = angle_around_center((obs.x, obs.y))
+        """중앙에서 SEARCH_CENTER_M 떨어진 점: _recenter_angle 쪽 (없으면 지금 자리 쪽)."""
+        angle = (angle_around_center((obs.x, obs.y)) if self._recenter_angle is None
+                 else self._recenter_angle)
         return (CENTER_M[0] + SEARCH_CENTER_M * math.cos(angle),
                 CENTER_M[1] + SEARCH_CENTER_M * math.sin(angle))
 
