@@ -48,6 +48,10 @@ HOLDING_TIMEOUT = 0.5
 # DRIVE가 끝나면(선에서 0.3 m 넘게) 다시 보정한다. 대신 첫 스캔으로 놓은 위치를 재서 로그로 남긴다.
 START_NO_WALL_FIX_STATES = ('TURN', 'DRIVE')
 START_OFFSET_WARN_M = 0.05
+# 큐브를 처음 잡으러 가는 동안(이 상태에 처음 들어가기 전)도 탈락선에서 NEAR_LINE_FIX_M 넘게 떨어져 있으면 벽 보정을
+# 하지 않는다 (2026-11-03 팀: 연습 때 경기장 밖에 선 사람들을 벽으로 봐 주춤). 경기장 가운데에서는 벽이 1.4~1.8 m라
+# 광선이 벽 위로 넘어가 벽 너머 사람을 맞힐 수 있다. 출발 칸에서 중앙까지 2~3 s는 엔코더·IMU로 충분하다.
+REACHED_CUBE_STATES = ('PUSH', 'GRASP', 'GUARD', 'HOLD', 'LURK', 'BACKOFF', 'SPIN', 'ATTACK')
 
 # 탈락선에서 이 거리 안이면 이 각속도까지 돌면서 찍은 스캔으로도 위치를 고친다 (평소 0.3 rad/s).
 # 피하며 빨리 도는 동안 위치 보정이 멈춰 한때 26 cm 어긋났다 (2026-11-03 17:33 실기, 밀려서 미끄러짐).
@@ -109,6 +113,7 @@ class Mission2Node(Node):
         self.start_file = self.declare_parameter('start_file', DEFAULT_START_FILE).value
         self.started = not self.wait_for_start
         self.start_offset_logged = False
+        self.reached_cube = False
         self.ready_logged = False
         # odom으로 계산한 위치와 회전 속도. 밀리면 실제 위치와 달라진다.
         self.odom_pose = None
@@ -234,13 +239,17 @@ class Mission2Node(Node):
         started = time.monotonic()
 
         x, y, yaw = self.wall_correction.apply(self.odom_pose)
+        margin = distance_to_danger_line(Observation(x=x, y=y, yaw=yaw, now=0.0))
+        near_line = margin < NEAR_LINE_FIX_M
+        if self.logic.state in REACHED_CUBE_STATES:
+            self.reached_cube = True
         if self.started and self.logic.state in START_NO_WALL_FIX_STATES:
             if not self.start_offset_logged:
                 self.log_start_offset(msg, (x, y, yaw))
             corrected = False
+        elif self.started and not self.reached_cube and not near_line:
+            corrected = False
         else:
-            margin = distance_to_danger_line(Observation(x=x, y=y, yaw=yaw, now=0.0))
-            near_line = margin < NEAR_LINE_FIX_M
             corrected = self.wall_correction.update(
                 msg, self.odom_pose, self.angular_speed,
                 NEAR_LINE_MAX_ANGULAR if near_line else MAX_ANGULAR_SPEED_FOR_SCAN)
@@ -316,6 +325,7 @@ class Mission2Node(Node):
         self.wall_correction = WallCorrection()
         self.started = True
         self.start_offset_logged = False
+        self.reached_cube = False
         self.get_logger().info('Start signal')
         return True
 
@@ -379,6 +389,9 @@ class Mission2Node(Node):
                     f'공격: 큐브를 잡은 상대 ({vx:.2f},{vy:.2f})를 '
                     f'{self.logic.attack_dir} 쪽 노란 선으로 민다')
             self.last_state = self.logic.state
+        if self.logic.notice:
+            self.get_logger().warn(self.logic.notice)
+            self.logic.notice = None
         if self.logic.pose_lost:
             self.get_logger().error(
                 f'추정 위치 ({x:.2f},{y:.2f})가 경기장 밖 -> 위치를 믿을 수 없어 서 있음',

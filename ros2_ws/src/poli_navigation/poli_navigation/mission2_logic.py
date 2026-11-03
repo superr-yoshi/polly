@@ -210,6 +210,16 @@ GRIPPER_SETTLE_S = 0.1
 # 집게가 닫힌 뒤 /gripper/holding(ToF)이 false여도 이만큼은 더 기다린다.
 # tof_node는 가까운 값이 3번(약 30 Hz, 0.1 s) 이어져야 true라서 바로 보면 잡았는데도 실패로 볼 수 있다.
 HOLDING_CONFIRM_S = 0.3
+# 잡은 것이 큐브인지 카메라로 확인한다 (2026-11-03 팀: 상대 바퀴 같은 다른 것을 잡아도 큐브로 봤다. 다른 것이면 놓는다).
+# 집게 ToF는 집게 안에 무엇이든 있으면 '잡음'이라 큐브와 구분하지 못한다. 2026-11-03 로그: 큐브를 잡고 있는 동안
+# 카메라는 1184번 모두 빨간 면적 35000~48000을 봤다.
+# - 닫은 뒤 HELD_CUBE_CONFIRM_S 안에 빨간 면적 HELD_CUBE_MIN_AREA 이상이 안 보이면 큐브가 아니다 -> 열고 LURK
+# - 잡고 있는 동안(GUARD·HOLD) HELD_CUBE_LOST_S 동안 안 보이면 같다
+# - ToF가 집게 안을 보고 바로 닫는 지름길(APPROACH·PUSH·LURK)도 큰 빨강이 보일 때만
+# 카메라 결과가 끊겼으면(vision_stamp None) 예전처럼 ToF만 믿는다 (카메라 고장으로 큐브를 놓지 않게). TODO_MEASURE
+HELD_CUBE_MIN_AREA = 20000.0
+HELD_CUBE_CONFIRM_S = 0.5
+HELD_CUBE_LOST_S = 1.0
 
 # 못 잡았거나 놓쳤으면 집게를 열고 이만큼 곧게 후진한 뒤 다시 찾는다 (2026-11-01).
 # 큐브가 집게 바로 앞(카메라 아래)에 있으면 화면에 안 보여 SEARCH가 한 바퀴를 다 돈다.
@@ -510,6 +520,9 @@ class Mission2Logic:
         self.push_reason = ''
         # 추정 위치가 경기장 밖이라 서 있는 중인지 (POSE_LOST_MARGIN_M)
         self.pose_lost = False
+        # 잡고 있는 동안 집게 앞 큰 빨강을 마지막으로 본 시각, 노드가 한 번 남길 알림
+        self._held_red_seen_at = 0.0
+        self.notice = None
         # ATTACK: 미는 상대 위치, 미는 방향(단위 벡터), 들이미는 중인지
         self.attack_victim = None
         self.attack_dir = None
@@ -920,7 +933,8 @@ class Mission2Logic:
         return Command(angular=self._turn_speed(error))
 
     def _approach(self, obs):
-        if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+        if (obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M
+                and self._red_in_gripper(obs)):
             # 적외선이 큐브를 이미 집게 안에서 본다 (카메라 아래로 사라졌어도) -> 바로 닫는다
             return self._start_push(obs)
         if self._opponent_too_close(obs):
@@ -996,7 +1010,8 @@ class Mission2Logic:
         """
         pushed = math.hypot(obs.x - self._push_start[0], obs.y - self._push_start[1])
         if self._push_tof:
-            if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+            if (obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M
+                    and self._red_in_gripper(obs)):
                 self._change_state(GRASP, obs)
                 self._grab_sent_at = obs.now
                 return Command(gripper=GRIPPER_GRAB)
@@ -1040,8 +1055,13 @@ class Mission2Logic:
             if obs.now - self._grasp_closed_at < HOLDING_CONFIRM_S:
                 return Command()
             return self._start_backoff(obs)
+        if not self._red_in_gripper(obs):
+            if obs.now - self._grasp_closed_at < HELD_CUBE_CONFIRM_S:
+                return Command()
+            return self._release_not_cube(obs)
 
         # TODO: 집게 상태를 알 수 없으면(None) 잡았다고 가정한다.
+        self._held_red_seen_at = obs.now
         if GUARD_ENABLED:
             self._guard_angle = GUARD_HOME_ANGLE
             self._dodging = False
@@ -1053,9 +1073,26 @@ class Mission2Logic:
 
     def _lost_cube(self, obs):
         """큐브를 놓쳤으면 집게를 열고 물러나 다시 찾는다. 놓치지 않았으면 None."""
+        if self._red_in_gripper(obs):
+            self._held_red_seen_at = obs.now
+        elif obs.now - self._held_red_seen_at > HELD_CUBE_LOST_S:
+            return self._release_not_cube(obs)
         if obs.holding is not False:
             return None
         return self._start_backoff(obs)
+
+    def _red_in_gripper(self, obs):
+        """집게 앞에 큰 빨강(큐브)이 보이는지. 카메라 결과가 끊겼으면 모르니 True (ToF만 믿는다)."""
+        if obs.vision_stamp is None:
+            return True
+        return obs.detected and obs.area >= HELD_CUBE_MIN_AREA
+
+    def _release_not_cube(self, obs):
+        """잡은 것이 큐브가 아니다 (카메라에 큰 빨강이 없다): 집게를 열고 LURK로 물러난다."""
+        self.notice = '잡은 것이 큐브가 아님 (카메라에 큰 빨강 없음) -> 놓고 물러남'
+        command = self._start_lurk(obs)
+        command.gripper = GRIPPER_OPEN
+        return command
 
     def _start_backoff(self, obs):
         if LURK_AFTER_FAIL:
@@ -1102,7 +1139,8 @@ class Mission2Logic:
         원 위에 서 있는 동안은 제자리에서 돌며 카메라로 둘러보고, 피하는 중이 아니고 상대가 DODGE_CLEAR_M 밖일 때
         빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (상대가 잡고 있는 큐브로 보이면 가지 않는다).
         """
-        if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
+        if (obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M
+                and self._red_in_gripper(obs)):
             # 큐브가 이미 집게 안에 있다 (ToF가 잠깐 '놓침'으로 봤다) -> 열지 않고 다시 닫는다
             return self._start_push(obs)
         opponents = self._opponents(obs)

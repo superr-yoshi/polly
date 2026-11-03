@@ -1257,6 +1257,78 @@ def test_stands_still_when_pose_is_outside_arena():
     assert logic.state != RETREAT
 
 
+def _with_camera(obs, red_area=None):
+    """카메라 결과가 살아 있는 관측. red_area를 주면 그 면적의 빨강이 보이는 것으로 바꾼다."""
+    obs.vision_stamp = obs.now
+    if red_area is not None:
+        obs.detected, obs.x_offset, obs.area = red_area > 0, 0.0, red_area
+    return obs
+
+
+def test_releases_grabbed_thing_that_is_not_cube():
+    # 2026-11-03 팀: 상대 바퀴 같은 다른 것을 잡아도 큐브로 봤다. 카메라에 큰 빨강이 없으면 놓는다.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    robot.holding = True  # ToF는 집게 안에 무언가 있다고 한다
+    commands = []
+    # 닫힘 기다리기(최대 GRASP_WAIT_S) + 빨강 확인(HELD_CUBE_CONFIRM_S)
+    for _ in range(int(3.0 / DT)):
+        command = logic.step(_with_camera(robot.observe(), red_area=0.0))
+        robot.apply(command)
+        commands.append(command)
+        if logic.state == LURK:
+            break
+    assert logic.state == LURK
+    assert commands[-1].gripper == GRIPPER_OPEN
+    assert '큐브가 아님' in logic.notice
+
+
+def test_keeps_real_cube_and_releases_when_red_disappears():
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GRASP)
+    robot.holding = True
+    # 진짜 큐브: 집게 앞에 큰 빨강이 계속 보이면 지킨다
+    for _ in range(int(3.0 / DT)):
+        robot.apply(logic.step(_with_camera(robot.observe(), red_area=38000.0)))
+    assert logic.state == GUARD
+    # 잡고 있는 것에서 빨강이 1초 넘게 안 보이면(큐브가 빠지고 다른 것이 끼었다) 놓는다
+    for _ in range(int(1.5 / DT)):
+        command = logic.step(_with_camera(robot.observe(), red_area=0.0))
+        robot.apply(command)
+        if logic.state == LURK:
+            break
+    assert logic.state == LURK and command.gripper == GRIPPER_OPEN
+
+
+def test_camera_dropout_does_not_release_cube():
+    # 카메라 결과가 끊기면(vision_stamp 없음) 예전처럼 ToF만 믿는다
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+    robot.holding = True
+    for _ in range(int(3.0 / DT)):
+        obs = robot.observe()
+        obs.detected, obs.area = False, 0.0
+        robot.apply(logic.step(obs))
+    assert logic.state == GUARD
+
+
+def test_tof_shortcut_does_not_close_on_non_red_thing():
+    # 다가가는 중 ToF가 집게 안을 봐도 큰 빨강이 아니면 바로 닫지 않는다 (상대 바퀴)
+    logic = Mission2Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    logic.gripper_opened = True
+    logic.target = (1.8, 1.8)
+    logic._target_seen_at = 0.0
+    obs = _with_camera(Observation(x=1.8, y=1.2, yaw=math.pi / 2, now=0.1, detected=True,
+                                   x_offset=0.0, area=3000.0, gripper_range=0.03))
+    logic.step(obs)
+    assert logic.state != PUSH
+
+
 def test_retreat_sidesteps_when_blocked_at_line():
     logic = Mission2Logic()
     robot = SimRobot()
