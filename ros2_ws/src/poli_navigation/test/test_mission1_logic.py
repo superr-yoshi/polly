@@ -601,6 +601,44 @@ def test_return_reverses_instead_of_turning_around():
     assert logic._turn(obs).linear < 0.0
 
 
+def test_does_not_turn_into_unknown_cell_with_wall_on_the_way(monkeypatch):
+    # 2026-11-03 15:05 실기: (4,7)에서 서서 봐도 (4,8)이 '?'(콘 광선이 애매)라 그대로 들어가 상자에 닿았다.
+    # 진행선 위 칸 앞쪽 절반에 벽 점이 보이면 막힘으로 보고 다른 칸으로 간다.
+    true_grid = GridMap(use_point_symmetry=False)
+    true_grid.mark_blocked((9, 2))
+    original = mission1_logic.neighbor_states
+
+    def ambiguous_front(scan, pose, center=None):
+        states = original(scan, pose, center)
+        states.pop((9, 2), None)
+        return states
+
+    monkeypatch.setattr(mission1_logic, 'neighbor_states', ambiguous_front)
+    logic = Mission1Logic(point_symmetry=False)
+    robot = SimRobot(true_grid)
+    run(logic, robot, max_seconds=3.0, until=TURN)
+    assert logic.state == TURN
+    assert logic.grid.get((9, 2)) == BLOCKED
+    assert logic.path[1] == (8, 1)
+
+
+def test_unknown_cell_without_wall_is_still_entered(monkeypatch):
+    # 진행선에 벽이 없으면 예전처럼 '모름' 칸으로 간다 (모르는 칸은 지나갈 수 있다고 본다).
+    original = mission1_logic.neighbor_states
+
+    def ambiguous_front(scan, pose, center=None):
+        states = original(scan, pose, center)
+        states.pop((9, 2), None)
+        return states
+
+    monkeypatch.setattr(mission1_logic, 'neighbor_states', ambiguous_front)
+    logic = Mission1Logic(point_symmetry=False)
+    robot = SimRobot(GridMap(use_point_symmetry=False))
+    run(logic, robot, max_seconds=3.0, until=TURN)
+    assert logic.grid.get((9, 2)) != BLOCKED
+    assert logic.path[1] == (9, 2)
+
+
 def _reverse_into_dead_end(odom_lag_m):
     """
     (5,5)에서 (7,5)로 후진, 너머 (8,5)는 상자. 엔코더 위치는 실제보다 odom_lag_m 덜 간 것으로 나온다.

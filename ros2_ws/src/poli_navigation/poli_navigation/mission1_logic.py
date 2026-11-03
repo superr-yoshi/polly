@@ -260,6 +260,11 @@ CHAIN_GUARD_RANGE_M = 0.6
 # (5,5)->(7,5) 후진 중 엔코더 위치가 3 cm 넘게 덜 간 것으로 나와(벽 보정 상한 +3 cm) (8,5) 상자에 박았다.
 # 벽으로 본 남은 거리가 엔코더로 본 것과 REVERSE_WALL_MATCH_M 넘게 다르면 목표 칸 너머 벽이 아닌 것으로 본다.
 REVERSE_WALL_MATCH_M = 0.10
+# 서서 찍은 스캔에도 다음 칸이 '모름'(콘 광선이 애매)이면, 그 방향 진행선 ±CHAIN_GUARD_HALF_WIDTH_M 안에서
+# 다음 칸 앞쪽 절반(칸 경계 + 이 거리)까지 벽 점이 있는지 본다. 있으면 막힘으로 보고 다시 계획한다.
+# 2026-11-03 15:05 실기: (4,7)에서 서서 봐도 (4,8)이 '?'라 그대로 돌아 들어갔고, 회전 직후 0.3 s는
+# 앞 벽 감시를 쉬어(GUARD_AFTER_TURN_S) 상자 앞면에 닿은 뒤 멈췄다.
+UNKNOWN_WALL_DEPTH_M = CELL_SIZE_M / 2.0
 # 회전이 덜 끝났을 때는 앞 벽 감시를 하지 않는다: 빨리 도는 동안 찍힌 스캔은 한 바퀴(0.1 s) 동안 20도 가까이
 # 비틀려 옆 상자 모서리가 진행선 위로 온다 (2026-11-01 20:25 실기: (9,2)에서 157도로 아직 돌며 '앞에 벽' 급정지)
 GUARD_MAX_TURN_RATE = 0.8                 # rad/s
@@ -897,6 +902,11 @@ class Mission1Logic:
             self._change_state(STUCK, obs)
             return Command()
 
+        if self._wall_into_unknown(obs, current, path[1]):
+            self.grid.mark_blocked(path[1])
+            self._note(f'{path[1]}은 모름이지만 그쪽 진행선에 벽 -> 막힘으로 보고 다시 계획')
+            return self._plan(obs)
+
         self.path = path
         center = cell_center_m(current)
         drive_origin = center
@@ -941,6 +951,21 @@ class Mission1Logic:
             self.target[1] - drive_origin[1], self.target[0] - drive_origin[0])
         self._change_state(TURN, obs)
         return Command()
+
+    def _wall_into_unknown(self, obs, current, nxt):
+        """서서 본 스캔으로, 아직 '모름'인 이웃 칸 nxt 쪽 진행선 위 칸 앞쪽 절반 안에 벽이 보이는지."""
+        if (self.phase != EXPLORE or obs.scan is None or self.grid.get(nxt) == FREE
+                or nxt in self.maze.state.visits
+                or abs(nxt[0] - current[0]) + abs(nxt[1] - current[1]) != 1):
+            return False
+        heading = math.atan2(nxt[1] - current[1], nxt[0] - current[0])
+        cos_h, sin_h = math.cos(heading), math.sin(heading)
+        center = cell_center_m(current)
+        # 칸 경계까지 거리 (로봇이 가운데에서 그 방향으로 비켜 있으면 그만큼 가깝다)
+        to_edge = CELL_SIZE_M / 2.0 - ((obs.x - center[0]) * cos_h + (obs.y - center[1]) * sin_h)
+        ahead = nearest_ahead(obs.scan, (obs.x, obs.y, obs.yaw), heading,
+                              CHAIN_GUARD_HALF_WIDTH_M)
+        return ahead is not None and ahead < to_edge + UNKNOWN_WALL_DEPTH_M
 
     def _arc_plan(self, path, end):
         """
