@@ -10,6 +10,11 @@ find_pi() {
   PI=$(cat "$PI_CACHE" 2>/dev/null)
   # 지난번 IP로 연결을 열어 본다 (열리면 뒤 명령들이 그 연결을 다시 쓴다)
   if [ -n "$PI" ] && PI_TIMEOUT=2 pi true 2>/dev/null; then echo "Pi: $PI"; return; fi
+  # WSL은 Wi-Fi가 약하면 Pi 주소(ARP)를 잃어 'timed out'이 난다. Windows가 한 번 통신하면 살아난다 (2026-11-03)
+  if [ -n "$PI" ]; then
+    /mnt/c/Windows/System32/PING.EXE -4 -n 2 -w 1000 "$PI" > /dev/null 2>&1
+    if PI_TIMEOUT=4 pi true 2>/dev/null; then echo "Pi: $PI"; return; fi
+  fi
   PI=$(/mnt/c/Windows/System32/PING.EXE -4 -n 1 poli-desktop.local 2>/dev/null \
        | grep -oE '\[[0-9.]+\]' | tr -d '[]' | head -1)
   if [ -z "$PI" ]; then
