@@ -6,6 +6,7 @@
 #   bash scripts/laptop/go.sh 2 --test   # Foxglove·카메라 영상까지 켬
 #   PI=10.175.8.69 bash scripts/laptop/go.sh   # Pi IP를 직접 줄 때
 #   BAG=1 bash scripts/laptop/go.sh 1    # rosbag도 기록 (Pi ~/poli_bags/, scripts/record_bag.sh)
+#   NO_UPDATE=1 bash scripts/laptop/go.sh 2   # Pi 코드 업데이트를 묻지 않음 (옛 커밋으로 비교 시험할 때)
 #
 # 1) 이전 임무를 끄고 모든 노드를 미리 켠다 (start_mission.sh prepare, 시작 신호 전에는 바퀴·집게 명령 없음)
 # 2) 'Ready'가 나오면 엔터를 기다린다. 엔터 -> 시작 신호(start_mission.sh go)까지 약 0.1 s
@@ -31,7 +32,9 @@ trap stop_now INT TERM
 pi '~/polly/scripts/stop_mission.sh > /dev/null 2>&1'
 # Pi의 install은 복사본이라 git pull만으로는 실행 코드가 안 바뀐다 (2026-11-01: 옛 코드로 두 번 시험).
 # 노트북에 push된 최신 커밋과 Pi 빌드가 다르면 알려 주고, y면 받아서 빌드한다.
-STALE=$(pi 'cd ~/polly && git fetch -q origin 2>/dev/null; H=$(git rev-parse --short HEAD); \
+# NO_UPDATE=1이면 건너뛴다 (일부러 옛 커밋으로 시험할 때, 2026-11-03)
+[ "${NO_UPDATE:-0}" = 1 ] && echo "NO_UPDATE=1: Pi 코드 업데이트 확인을 건너뛴다 ($(pi 'cd ~/polly && git log --oneline -1'))"
+[ "${NO_UPDATE:-0}" = 1 ] || STALE=$(pi 'cd ~/polly && git fetch -q origin 2>/dev/null; H=$(git rev-parse --short HEAD); \
   for f in $(cd ros2_ws/src && ls */*/*.py | grep -E "^poli_(navigation|hardware)/poli_"); do \
     cmp -s ros2_ws/src/$f ros2_ws/install/${f%%/*}/lib/python3.12/site-packages/${f#*/} || { echo "빌드 안 됨: $f"; break; }; done; \
   [ "$H" = "$(git rev-parse --short origin/integrate/mdd10-control)" ] || echo "Pi 저장소 $H, 원격 최신 $(git rev-parse --short origin/integrate/mdd10-control)"')
