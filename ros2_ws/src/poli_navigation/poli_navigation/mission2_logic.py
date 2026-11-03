@@ -14,6 +14,7 @@ ROS2와 무관한 순수 Python 모듈이다.
   (LURK_AFTER_FAIL False면 SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀),
    둘 다 False면 예전처럼 BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기)
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
+  처음 잡으러 가다가 중앙 근처에서 놓치거나 SEARCH·RECENTER 중 상대가 오면 LURK (2026-11-04 팀)
   + 언제나 탈락선 감시 (RETREAT)
 
 GUARD (2026-11-01 팀 결정 "빠르게 잡고 도망"):
@@ -273,6 +274,11 @@ LURK_MOVE_RAD = math.radians(60.0)
 # 2026-11-03 팀: 0.85 m(GUARD_RADIUS_M과 같았음)는 너무 바깥에서 돈다 -> 0.7 m. 원 위 어디서든 맞은편 원까지
 # 1.4 m라 중앙 둘레가 거의 다 보이고, 탈락선까지는 가장 가까운 정면 방향에서도 0.7 m 남는다. TODO_MEASURE
 LURK_RADIUS_M = 0.7
+# 처음 잡으러 가다가 중앙 근처(SEARCH_CENTER_M 원 안)에서 큐브를 놓치면 그 자리에서 돌며 찾지 않고 바로 LURK
+# (원으로 빠져 상대를 피하며 둘러보기). SEARCH·RECENTER 중 상대가 DODGE_START_M 안으로 와도 LURK로 피한다.
+# 2026-11-04 00:11 실기 뒤 팀: 가운데서 6초 돌다 후진하는 것을 빼고, 원으로 옮겨 가다 상대가 0.27 m까지 와도
+# 피하지 않고 19초 서 있던 것(RECENTER는 멈추기만 함)을 고친다.
+LURK_WHEN_LOST_NEAR_CENTER = True
 # 상대가 잡은 큐브(상대에서 LURK_IGNORE_NEAR_OPPONENT_M 안)를 보면 그 상대를 가장 가까운 노란 선 쪽으로 민다
 # (2026-11-03 팀: 연습에서 조금만 더 밀면 선 밖으로 밀 수 있었다. 상대 밀기 허용 3.4.6, 탈락한 팀의 큐브는 중앙으로).
 # 상대 뒤편(선 반대쪽) ATTACK_STANDOFF_M 지점으로 가서(우리가 상대와 선 사이면 옆으로 돌아서) 선 쪽을 보고
@@ -753,7 +759,8 @@ class Mission2Logic:
 
     def wants_opponents(self):
         """상대 위치(LiDAR)가 필요한 상태인지. 출발·첫 접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
-        return self.holding_cube() or self.state in (RECENTER, LURK, ATTACK) or self._retrying()
+        return (self.holding_cube() or self.state in (SEARCH, RECENTER, LURK, ATTACK)
+                or self._retrying())
 
     def _retrying(self):
         """실패 뒤 LURK에서 다시 잡으러 가는 중인지 (이때도 GUARD·LURK처럼 상대를 피한다)."""
@@ -901,9 +908,16 @@ class Mission2Logic:
         self._change_state(ALIGN, obs)
         return self._align(obs)
 
+    def _opponent_near(self, obs):
+        """SEARCH·RECENTER 중 상대가 DODGE_START_M 안에 왔는지 (LURK로 가서 피한다)."""
+        return LURK_WHEN_LOST_NEAR_CENTER and LURK_AFTER_FAIL and any(
+            math.dist((obs.x, obs.y), other) < DODGE_START_M for other in self._opponents(obs))
+
     def _search(self, obs):
         if obs.detected:
             return self._pause_search(obs)
+        if self._opponent_near(obs):
+            return self._start_lurk(obs)
 
         if self._search_step < 2:
             goal = self._search_start_yaw + (
@@ -938,6 +952,8 @@ class Mission2Logic:
         """한 바퀴 돌아도 없으면 중앙 쪽으로 다가가 다시 찾는다. 상대가 앞에 있으면 멈춘다."""
         if obs.detected:
             return self._pause_search(obs)
+        if self._opponent_near(obs):
+            return self._start_lurk(obs)
         goal = self._recenter_goal(obs)
         if distance_to(obs, goal) < GUARD_ARRIVE_M:
             self._change_state(SEARCH, obs)
@@ -965,6 +981,10 @@ class Mission2Logic:
                 self._search_step = 2
                 self._search_turned = turned
             return Command()
+        if (LURK_WHEN_LOST_NEAR_CENTER and LURK_AFTER_FAIL
+                and distance_to(obs, CENTER_M) <= SEARCH_CENTER_M + GUARD_ARRIVE_M):
+            # 중앙 근처에서 놓쳤다: 가운데서 돌지 않고 원으로 빠져 둘러본다
+            return self._start_lurk(obs)
         self._change_state(SEARCH, obs)
         return Command()
 

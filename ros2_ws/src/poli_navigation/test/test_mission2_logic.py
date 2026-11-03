@@ -422,11 +422,64 @@ def test_approach_lost_target_goes_to_search():
     logic.state_started_at = 0.0
     logic.gripper_opened = True
 
-    obs = Observation(x=1.8, y=1.2, yaw=0.0, now=0.0, detected=False)
+    # 중앙에서 먼 곳(SEARCH_CENTER_M 원 밖)에서 놓치면 그 자리에서 돌며 찾는다
+    obs = Observation(x=1.8, y=0.7, yaw=0.0, now=0.0, detected=False)
     command = logic.step(obs)
 
     assert logic.state == SEARCH
     assert command == Command()
+
+
+def test_approach_lost_near_center_backs_out_to_circle_without_spinning():
+    """
+    중앙 근처에서 놓치면 가운데서 돌지 않고 바로 LURK 원(0.7 m)으로 빠진다.
+
+    2026-11-04 00:11 실기: 중앙에서 놓친 뒤 가운데서 6초 돌고 나서야 후진해 원으로 갔다 (팀: 도는 것 빼기).
+    """
+    logic = Mission2Logic()
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    logic.gripper_opened = True
+    start = (CENTER_M[0] + 0.2, CENTER_M[1] - 0.1, math.radians(140.0))
+    robot = SimRobot(pose=start, target=(100.0, 100.0))
+    logic.step(robot.observe())
+    assert logic.state == LURK
+    turned = 0.0
+    while robot.now < 3.0:
+        yaw = robot.yaw
+        robot.apply(logic.step(robot.observe()))
+        turned += abs(robot.yaw - yaw)
+        if math.dist((robot.x, robot.y), CENTER_M) > LURK_RADIUS_M - GUARD_ARRIVE_M:
+            break
+    assert math.dist((robot.x, robot.y), CENTER_M) > LURK_RADIUS_M - GUARD_ARRIVE_M
+    assert turned < math.radians(90.0)
+
+
+def test_recenter_dodges_approaching_opponent():
+    """
+    원으로 옮겨 가는 중(RECENTER) 상대가 다가오면 서서 기다리지 않고 LURK로 피한다.
+
+    2026-11-04 00:11 실기: 상대가 0.27 m까지 왔는데 RECENTER는 멈추기만 해 19초 서 있었다.
+    """
+    logic = Mission2Logic()
+    logic.gripper_opened = True
+    robot = SimRobot(pose=(2.48, 1.69, math.radians(-1163.0)), target=(100.0, 100.0))
+    logic._recenter_angle = angle_from_center(2.48, 1.69) + math.radians(60.0)
+    logic._change_state(RECENTER, robot.observe())
+    opponent = [2.53, 1.95]
+    while robot.now < 4.0:
+        # 상대가 0.15 m/s로 우리 쪽으로 다가온다
+        dx, dy = robot.x - opponent[0], robot.y - opponent[1]
+        gap = math.hypot(dx, dy)
+        if gap > 0.25:
+            opponent[0] += 0.15 * DT * dx / gap
+            opponent[1] += 0.15 * DT * dy / gap
+        obs = robot.observe()
+        obs.opponents = (tuple(opponent),)
+        robot.apply(logic.step(obs))
+    assert logic.state == LURK
+    assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M - 0.1
+    assert distance_to_danger_line(robot.observe()) > 0.3
 
 
 # ---------------------------------------------------------------
