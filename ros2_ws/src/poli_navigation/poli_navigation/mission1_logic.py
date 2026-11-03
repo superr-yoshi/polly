@@ -118,7 +118,15 @@ DRIVE_SPEED = 0.6
 # 복귀(큐브를 끌고 감)는 빠를 필요 없이 적당히 (2026-11-01 팀). 출발을 부드럽게 해 큐브가 빠지지 않게
 # (임무 2 GUARD도 큐브를 끌 때 가속 0.6). 감속은 큐브를 닫힌 집게 쪽으로 미니 그대로 (도착 후 바로 섬).
 # TODO_MEASURE: 큐브가 흔들리면 더 낮춘다
-RETURN_DRIVE_SPEED = 0.45
+# 2026-11-03 0.45 -> 0.35 (팀: 복귀는 조금 느려도 안전하게. 옆으로 밀림·지나침이 줄어든다)
+RETURN_DRIVE_SPEED = 0.35
+# 복귀를 안전하게 (2026-11-03 팀): 꺾는 칸에 도착하면 서서 스캔해(벽으로 위치를 바로잡고) 계획하고,
+# 새로 갈 방향 기준 옆으로 RETURN_RECENTER_M 넘게 비켜 있으면 먼저 칸 가운데(RECENTER_ARRIVE_M 안)로 옮긴 뒤 돈다.
+# 2026-11-03 22:46·22:48 실기: 꺾는 칸에 3~4 cm 덜 와서 그대로 돌아 새 통로 입구 모서리에 걸렸다 (여유 4.7 cm).
+# 꺾는 칸마다 약 0.3~0.5 s 더 걸린다.
+RETURN_SAFE_TURNS = True
+RETURN_RECENTER_M = 0.02
+RECENTER_ARRIVE_M = 0.01
 RETURN_LINEAR_ACCEL = 0.6
 RETURN_LINEAR_DECEL = 2.0  # LINEAR_DECEL과 같게
 # 복귀 회전은 부드럽게 (2026-11-01 23:11 실기: 잡은 큐브가 제자리 회전 직후 화면 면적 35000 -> 16000~23000으로
@@ -563,6 +571,8 @@ class Mission1Logic:
         self._drive_max_lateral = 0.0
         # 후진 도착을 뒤 벽 거리로 앞당긴 만큼 (로그용)
         self._reverse_wall_gap = 0.0
+        # 지금 주행이 칸 가운데로 옮기기(recenter)인지
+        self._recentering = False
         # 스캔에서 벽이 보인 칸 사이 연결 (frozenset 쌍). 복귀·되돌아가기는 이 연결로 지나가지 않는다.
         self._wall_edges = set()
         self._side_guard_noted = False
@@ -957,6 +967,11 @@ class Mission1Logic:
         self._drive_origin_cell = center
 
         recenter = distance_to(obs, center) > CELL_CENTER_TOLERANCE_M
+        if RETURN_SAFE_TURNS and self.phase == RETURN and not recenter:
+            # 새로 갈 방향 기준 옆으로 비켜 있으면 그 통로 입구 모서리에 걸린다 -> 먼저 가운데로
+            step_x, step_y = path[1][0] - path[0][0], path[1][1] - path[0][1]
+            lateral = abs(-(obs.x - center[0]) * step_y + (obs.y - center[1]) * step_x)
+            recenter = lateral > RETURN_RECENTER_M
         if recenter:
             # 같은 칸에서 가운데 복귀가 이어지면(지나침·왕복) RECENTER_MAX번 뒤에는 건너뛴다.
             same = self._recenter_cell == current
@@ -968,6 +983,7 @@ class Mission1Logic:
         else:
             self._recenter_cell = None
             self._recenters = 0
+        self._recentering = recenter
         if recenter:
             # 격자 가운데에서 벗어나 있으면 먼저 가운데로 돌아간다.
             # (옆 격자로 비스듬히 가다가 장애물 모서리에 걸리지 않게)
@@ -1514,8 +1530,7 @@ class Mission1Logic:
                 if by_wall is not None and by_wall < remaining:
                     self._reverse_wall_gap = along - by_wall
                     remaining = by_wall
-            endpoint_reached = remaining <= (REVERSE_ARRIVE_M if self.reverse
-                                             else ARRIVE_TOLERANCE_M)
+            endpoint_reached = remaining <= self._arrive_tolerance()
             # 목표 바로 앞에서는 작은 옆 오차가 큰 회전각으로 증폭되므로 진행축만 유지한다.
             correction = (0.0 if distance < CELL_CENTER_TOLERANCE_M
                           else clamp(DRIVE_LATERAL_GAIN * lateral, DRIVE_MAX_CORRECTION_RAD))
@@ -1536,8 +1551,7 @@ class Mission1Logic:
 
         # 도착했거나, 가까운 곳에서 목표를 지나쳤으면 (목표가 뒤에 있음) 멈춘다.
         passed = distance < CELL_CENTER_TOLERANCE_M and abs(error) > math.pi / 2
-        arrive = REVERSE_ARRIVE_M if self.reverse else ARRIVE_TOLERANCE_M
-        if distance < arrive or passed or endpoint_reached:
+        if distance < self._arrive_tolerance() or passed or endpoint_reached:
             if self._drive_max_lateral > DRIVE_LATERAL_LOG_M:
                 self._note(f'진행선 옆 오차 최대 {self._drive_max_lateral * 100:.1f} cm '
                            f'({target_cell}까지)')
@@ -1557,8 +1571,12 @@ class Mission1Logic:
                 self._decided_for = None
                 return self._plan(obs)
             if self.phase == RETURN:
-                # 복귀는 지나온 칸으로만 가므로 새로 볼 것이 없다 -> 꺾는 칸에서도 서서 스캔하지 않고
-                # 바로 다음 구간으로 (2026-10-31 팀 요청: 왔던 길은 계산 없이 빠르게).
+                if RETURN_SAFE_TURNS and not self._recentering:
+                    # 꺾는 칸: 서서 스캔해 벽으로 위치를 바로잡은 뒤 계획한다 (가운데에서 비켜 있으면 먼저 옮김)
+                    self._change_state(SCAN, obs)
+                    return Command()
+                # 가운데로 옮긴 뒤(또는 RETURN_SAFE_TURNS 끔): 새로 볼 것이 없으니 바로 다음 구간으로
+                # (2026-10-31 팀 요청: 왔던 길은 계산 없이 빠르게).
                 return self._plan(obs)
             if self._backtrack is not None and target_cell != self._backtrack[-1]:
                 # 막다른 길에서 되돌아가는 중 꺾는 칸: 지나온 칸이라 복귀처럼 서지 않는다.
@@ -1672,6 +1690,12 @@ class Mission1Logic:
         dx, dy = self.target[0] - sx, self.target[1] - sy
         to_target = dx * cos_h + dy * sin_h
         return ahead < to_target - CHAIN_WALL_MARGIN_M
+
+    def _arrive_tolerance(self):
+        """칸 가운데 이 거리 안이면 도착: 가운데로 옮기기·후진은 1 cm, 그 밖(전진)은 ARRIVE_TOLERANCE_M."""
+        if self._recentering:
+            return RECENTER_ARRIVE_M
+        return REVERSE_ARRIVE_M if self.reverse else ARRIVE_TOLERANCE_M
 
     def _wall_known_beyond(self, target_cell):
         """주행 방향으로 목표 칸 바로 너머가 막힘이거나 경기장 밖인지 (그 벽까지 거리를 믿을 수 있다)."""

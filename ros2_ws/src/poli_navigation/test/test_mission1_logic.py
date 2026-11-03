@@ -1154,8 +1154,9 @@ def test_cube_goal_prefers_neighbor_along_cube_offset():
     assert set(logic._cube_goals()) == {(3, 4), (3, 6)}
 
 
-def test_return_turns_at_corner_without_scan_wait():
-    """복귀 중 꺾는 칸에 도착하면 SCAN에서 기다리지 않고 바로 다음 구간으로 돈다."""
+def test_return_turns_at_corner_without_scan_wait(monkeypatch):
+    """RETURN_SAFE_TURNS를 끄면 복귀 중 꺾는 칸에서 SCAN에서 기다리지 않고 바로 다음 구간으로 돈다."""
+    monkeypatch.setattr(mission1_logic, 'RETURN_SAFE_TURNS', False)
     logic = Mission1Logic()
     logic.phase = RETURN
     for cell in ((9, 2), (9, 3), (8, 3)):
@@ -1167,6 +1168,37 @@ def test_return_turns_at_corner_without_scan_wait():
     x, y = cell_center_m((9, 3))
     logic._drive(Observation(x=x - 0.01, y=y, yaw=0.0, now=1.0))
     assert logic.state == TURN
+
+
+def test_return_scans_at_corner_and_recenters_before_turning():
+    """
+    복귀 중 꺾는 칸에 도착하면 서서 스캔하고, 새 방향 기준 옆으로 2 cm 넘게 비켜 있으면 먼저 가운데로 옮긴다.
+
+    2026-11-03 22:46·22:48 실기: (5,6)에 3~4 cm 덜 와서 그대로 돌아 (6,6) 입구 모서리에 걸렸다.
+    """
+    logic = Mission1Logic()
+    logic.phase = RETURN
+    for cell in ((9, 2), (9, 3), (8, 3)):
+        logic.maze.observe(cell, math.pi / 2)
+    x, y = cell_center_m((8, 3))
+    logic._plan(Observation(x=x, y=y, yaw=0.0, now=0.0))
+    assert logic.target == cell_center_m((9, 3))
+    logic.state = DRIVE
+    cx, cy = cell_center_m((9, 3))
+    # (9,3)에 4 cm 덜 와서(오는 방향 +x) 도착 -> 서서 스캔
+    logic._drive(Observation(x=cx - 0.025, y=cy, yaw=0.0, now=1.0))
+    assert logic.state == SCAN
+    # 다음은 (9,2)로 -y. 지금 x가 가운데보다 4 cm 모자라면 새 방향 기준 옆으로 비켜 있다 -> 가운데로
+    logic._plan(Observation(x=cx - 0.04, y=cy, yaw=0.0, now=1.5))
+    assert logic.target == (cx, cy)
+    assert logic._recentering
+    # 가운데 1 cm 안까지 가야 도착
+    logic.state = DRIVE
+    logic._drive(Observation(x=cx - 0.02, y=cy, yaw=0.0, now=2.0))
+    assert logic.state == DRIVE
+    logic._drive(Observation(x=cx - 0.005, y=cy, yaw=0.0, now=2.5))
+    assert logic.state == TURN
+    assert logic.target == cell_center_m((9, 2))
 
 
 def test_chain_after_90_degree_turn_even_with_small_heading_error():
