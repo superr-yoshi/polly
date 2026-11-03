@@ -7,7 +7,7 @@ ROS2와 무관한 순수 Python 모듈이다.
 
 전략 (docs/mission_strategy.md 3장, 2026-10-31 임무 1 개선을 옮김):
   DRIVE(출발하자마자 가속하며 중앙 쪽으로 곡선) -> 카메라에 보이면 바로 APPROACH
-  -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(중앙에서 떨어진 원 위로 빠져서 지키기)
+  -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(180도 돌아 중앙에서 떨어진 원 위로 빠져서 지키기)
   못 잡았거나 놓치면(/gripper/holding false) LURK: GUARD처럼 원 위로 빠져 상대를 피하고,
   빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (LURK_AFTER_FAIL, 2026-11-02 팀)
   (LURK_AFTER_FAIL False면 SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀),
@@ -232,10 +232,17 @@ PIVOT_DONE_RAD = math.radians(4.0)   # 남은 각도가 이 안이면 직진 시
 
 # 잡은 뒤 지키기 (GUARD). False면 예전처럼 잡은 자리에 서 있는다 (HOLD).
 GUARD_ENABLED = True
-# True = 잡자마자 후진으로 원 위 우리 출발 쪽 점까지 빠진 뒤 지킨다 (2026-11-01 '잡고 도망').
+# True = 잡자마자 원 위 우리 출발 쪽 점까지 빠진 뒤 지킨다 (2026-11-01 '잡고 도망'). 빠지는 방식은 아래.
 # False = 잡은 자리에 서 있다가 상대가 DODGE_START_M 안으로 오면 원을 따라 피하고, 멀어지면 그 자리에 선다
 # (2026-11-02 팀이 잠깐 정했다가 되돌림: 뒤로 빠지되 거리만 줄인다 -> GUARD_RADIUS_M 1.0 -> 0.85).
 GUARD_ESCAPE_FIRST = True
+# True = 처음 빠질 때 후진하지 않고 제자리에서 180도 돌아 전진으로 원 위 점까지 간다 (2026-11-03 팀:
+# 중앙 쪽 상대가 큐브를 못 보게 차체로 가린다. 도착하면 큐브가 바깥을 본다). 도는 동안 약 1.3 s 더 걸린다.
+# False = 예전처럼 중앙을 본 채 후진. TODO_MEASURE: 큐브를 끌고 돌 때 빠지면 GUARD_MAX_ANGULAR를 낮춘다
+GUARD_ESCAPE_TURN_AROUND = True
+# 돌아설 때 목표 점 방향과 이 안으로 맞을 때까지는 제자리에서만 돈다 (곡선으로 크게 휘면 도착했을 때
+# 큐브가 바깥이 아니라 옆을 본다, 시뮬레이션 40도)
+GUARD_TURN_AROUND_DONE_RAD = math.radians(20.0)
 # 지키는 원의 반지름 (중앙에서). 0.85 m면 대각선(처음 빠지는 점)에서 탈락선까지 0.80 m, 원이 선과 가장 가까운
 # 정면 방향이면 0.55 m 남는다 (RETREAT 0.3 m보다 멀다). 2026-11-01 0.8 -> 1.0 ("너무 조금 후진", 약 0.87 m 후진)
 # TODO_MEASURE: 연습장에서 상대 로봇 접근을 보고 조정 (제출 전에 확정, 경기장 공개 후 수정 금지)
@@ -1049,7 +1056,8 @@ class Mission2Logic:
             self._escaping = False
             return None
         speed = GUARD_ESCAPE_SPEED if self._escaping else GUARD_SPEED
-        return self._guard_drive(obs, goal, speed, opponents)
+        forward_only = self._escaping and self.holding_cube() and GUARD_ESCAPE_TURN_AROUND
+        return self._guard_drive(obs, goal, speed, opponents, forward_only)
 
     def _opponents(self, obs):
         if obs.opponents:
@@ -1070,15 +1078,17 @@ class Mission2Logic:
         return min((math.dist(point, other) for point in path for other in opponents),
                    default=math.inf)
 
-    def _guard_drive(self, obs, goal, speed, opponents=()):
+    def _guard_drive(self, obs, goal, speed, opponents=(), forward_only=False):
         """
         큐브를 잡은 채 goal로 천천히 간다. 앞·뒤 중 덜 도는 쪽으로 간다.
 
-        잡자마자는 중앙(큐브 쪽)을 보고 있으므로 돌지 않고 후진으로 빠진다.
+        forward_only면 후진하지 않고 goal 쪽으로 돌아서 전진한다 (GUARD_ESCAPE_TURN_AROUND).
         가는 방향 바로 앞에 상대가 있으면 들이받지 않게 멈추고 방향만 맞춘다.
         """
         error = heading_error_to(obs, goal)
-        if self._guard_reverse:
+        if forward_only:
+            self._guard_reverse = False
+        elif self._guard_reverse:
             self._guard_reverse = abs(error) > math.pi / 2 - GUARD_REVERSE_HYSTERESIS_RAD
         else:
             self._guard_reverse = abs(error) > math.pi / 2 + GUARD_REVERSE_HYSTERESIS_RAD
@@ -1090,6 +1100,8 @@ class Mission2Logic:
         remaining = distance_to(obs, goal)
         speed = min(speed, braking_speed(remaining, self._last_linear, 0.0, decel))
         linear = speed * max(0.0, math.cos(error))
+        if forward_only and abs(error) > GUARD_TURN_AROUND_DONE_RAD:
+            linear = 0.0
         if self._guard_reverse:
             linear = -linear
         angular = clamp(GUARD_HEADING_GAIN * error, GUARD_MAX_ANGULAR)

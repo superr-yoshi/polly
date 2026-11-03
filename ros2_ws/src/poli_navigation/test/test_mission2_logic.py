@@ -215,6 +215,7 @@ def test_never_enters_danger_zone_in_normal_run():
 
 def test_guard_backs_out_to_circle_and_stays(monkeypatch):
     monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_FIRST', True)
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_TURN_AROUND', False)
     logic = Mission2Logic()
     robot = SimRobot()
     run(logic, robot, until=GUARD)
@@ -239,6 +240,33 @@ def test_guard_backs_out_to_circle_and_stays(monkeypatch):
     assert max(-c.linear for c in commands) > GUARD_ESCAPE_SPEED - 0.01
 
     # 도착하면 서 있는다.
+    assert all(c.linear == 0.0 and c.angular == 0.0 for c in commands[-20:])
+
+
+def test_guard_turns_around_and_drives_forward_to_circle(monkeypatch):
+    # 2026-11-03 팀: 후진 대신 180도 돌아 전진으로 빠진다 (중앙 쪽 상대가 큐브를 못 보게).
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_FIRST', True)
+    monkeypatch.setattr(mission2_logic, 'GUARD_ESCAPE_TURN_AROUND', True)
+    logic = Mission2Logic()
+    robot = SimRobot()
+    run(logic, robot, until=GUARD)
+
+    commands = []
+    while robot.now < 30.0:
+        command = logic.step(robot.observe())
+        robot.apply(command)
+        commands.append(command)
+        assert command.linear >= 0.0
+        assert command.linear <= GUARD_ESCAPE_SPEED + 1e-9
+        assert distance_to_danger_line(robot.observe()) > 0.4
+    assert logic.state == GUARD
+    goal = guard_point(GUARD_HOME_ANGLE)
+    assert math.dist((robot.x, robot.y), goal) < GUARD_ARRIVE_M + 0.02
+    # 도착하면 중앙을 등지고(큐브가 바깥 쪽) 서 있다
+    away = math.atan2(robot.y - CENTER_M[1], robot.x - CENTER_M[0])
+    assert abs(math.atan2(math.sin(robot.yaw - away), math.cos(robot.yaw - away))) \
+        < math.radians(30.0)
+    assert max(c.linear for c in commands) > GUARD_ESCAPE_SPEED - 0.01
     assert all(c.linear == 0.0 and c.angular == 0.0 for c in commands[-20:])
 
 
