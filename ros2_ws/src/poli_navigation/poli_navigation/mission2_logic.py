@@ -55,8 +55,9 @@ SAFE_ZONE_MAX_M = ARENA_SIZE_M - CELL_SIZE_M
 # 2026-11-01 0.15 -> 0.3: 0.15면 차체 옆·앞 끝(중심에서 약 0.15~0.22 m)이 이미 선에 닿는다.
 # 우리 로봇은 미는 힘이 약해 크게 밀릴 수 있어 일찍 돌아온다.
 DANGER_MARGIN_M = 0.3
-# 출발 중(TURN, DRIVE)에만: 출발 위치가 선에서 0.2 m라 0.3이면 출발하자마자 RETREAT가 된다.
-# 출발하면 바로 중앙 쪽으로 가므로 선에서 멀어진다.
+# 출발 뒤 선에서 DANGER_MARGIN_M 넘게 처음 멀어질 때까지만: 출발 위치가 선에서 0.2 m라 0.3이면 출발하자마자
+# RETREAT가 된다. 출발하면 바로 중앙 쪽으로 가므로 선에서 멀어진다.
+# 2026-11-03 23:12 실기: 출발 0.4초 만에 큐브가 보여 DRIVE -> APPROACH로 바뀌자 기준이 0.3으로 돌아와 RETREAT.
 START_DANGER_MARGIN_M = 0.15
 # 복귀 시작 거리보다 이만큼 더 들어오면 원래 하던 동작으로
 RETREAT_EXIT_EXTRA_M = 0.15
@@ -132,6 +133,12 @@ SEARCH_SWEEP_DONE_RAD = math.radians(5.0)
 # 카메라는 약 1.4 m(면적 300)까지만 큐브를 알아본다. 탈락한 팀의 큐브는 중앙으로 돌아온다(3.4.6).
 SEARCH_CENTER_M = 1.0
 RECENTER_SPEED = 0.4
+# 돌다가(SEARCH)·옮기다가(RECENTER) 큐브가 보여 쫓아갔는데 이 시간 안에 놓쳤고 면적이 SEARCH_RESUME_MAX_AREA
+# 밑이었으면(멀리서 깜빡 보인 것), 처음부터 다시 돌지 않고 하던 것을 잇는다 (돈 각도, 옮겨 가던 점).
+# 2026-11-03 23:12 실기: 1.2 m 넘게 떨어져 면적 350~500으로 깜빡 보인 큐브를 0.3~1초씩 쫓다 놓치기를 2분 동안
+# 되풀이했다. 그때마다 돈 각도가 0이 되어 한 바퀴를 못 채워 원을 따라 옮기지 못했다.
+SEARCH_RESUME_S = 4.0
+SEARCH_RESUME_MAX_AREA = 3000.0  # 카메라에서 약 46 cm
 
 # 카메라: x_offset 1.0 = 화면 끝 = 약 33도
 CAMERA_HALF_FOV_RAD = math.radians(33.0)
@@ -182,6 +189,10 @@ APPROACH_STRAIGHT_MAX_OFFSET = 0.15
 APPROACH_GRAB_MAX_OFFSET = 0.3
 APPROACH_CENTER_GAIN = 2.0   # rad/s 당 카메라 방향 오차(rad)
 APPROACH_SLOW_AREA = 20000.0  # 카메라에서 약 18 cm (잡기 GRAB_AREA는 약 13 cm, 2026-11-01 실측 기준)
+# 이만큼 가까운데(카메라 약 80 cm) 큐브가 화면 가운데에서 APPROACH_GRAB_MAX_OFFSET 넘게 비켜 있으면
+# APPROACH_SLOW_SPEED로 줄이고 카메라 방향으로 돈다. 2026-11-03 23:12 실기: 40 cm 앞 x_offset +0.58에서
+# 0.77 m/s 그대로 달려(실제 회전 0.6 rad/s) 화면 옆으로 놓치고 큐브 자리를 지나가 큐브를 밀어냈다.
+APPROACH_TURN_SLOW_AREA = 1000.0
 # 카메라가 대상을 잠깐 놓쳐도 이 시간은 기다린다 (카메라 지연 약 0.3초)
 TARGET_LOST_S = 0.5
 
@@ -480,6 +491,8 @@ class Mission2Logic:
         self.gripper_opened = False
         self._state_before_retreat = DRIVE
         self._retreat_exit_margin = DANGER_MARGIN_M + RETREAT_EXIT_EXTRA_M
+        # 출발 뒤 선에서 DANGER_MARGIN_M 넘게 멀어진 적이 있는지 (그 전까지는 START_DANGER_MARGIN_M)
+        self._left_start = False
         self._target_seen_at = None
         # 카메라로 계산한 큐브 위치 (경기장 좌표). 카메라 지연 때문에 화면 값으로 바로 돌지 않고
         # 이 점을 향해 엔코더·IMU 위치로 돈다 (위치는 지연이 작다).
@@ -537,6 +550,8 @@ class Mission2Logic:
         self._lurk_last_yaw = None
         # RECENTER로 갈 중앙 둘레 각도 (None이면 지금 자리 쪽)
         self._recenter_angle = None
+        # 큐브가 보여 SEARCH·RECENTER를 멈춘 때의 (상태, 돈 각도, 옮겨 가던 각도, 시각). 짧게 쫓다 놓치면 잇는다.
+        self._search_paused = None
         # RETREAT 중 선에서 가장 멀었던 거리와 그 시각, 비켜 가는 쪽 (0 = 곧장 안쪽)
         self._retreat_best = 0.0
         self._retreat_best_at = 0.0
@@ -604,7 +619,9 @@ class Mission2Logic:
 
     def _safety_check(self, obs):
         margin = distance_to_danger_line(obs)
-        danger = START_DANGER_MARGIN_M if self.state in (TURN, DRIVE) else DANGER_MARGIN_M
+        if margin >= DANGER_MARGIN_M:
+            self._left_start = True
+        danger = DANGER_MARGIN_M if self._left_start else START_DANGER_MARGIN_M
 
         if self.state != RETREAT and margin < danger:
             self._state_before_retreat = self.state
@@ -865,11 +882,17 @@ class Mission2Logic:
             remaining, self._last_linear, APPROACH_SLOW_SPEED, DRIVE_DECEL))
         return self._drive_toward(obs, CENTER_M, speed)
 
+    def _pause_search(self, obs):
+        """큐브가 보여 SEARCH·RECENTER를 멈춘다. 짧게 쫓다 놓치면 _search_again이 이어서 한다."""
+        self._search_paused = (self.state, self._search_turned, self._recenter_angle, obs.now)
+        self._area_best = 0.0  # ALIGN에서 놓쳐도 지난 접근의 면적으로 판단하지 않게
+        self._target_seen_at = obs.now
+        self._change_state(ALIGN, obs)
+        return self._align(obs)
+
     def _search(self, obs):
         if obs.detected:
-            self._target_seen_at = obs.now
-            self._change_state(ALIGN, obs)
-            return self._align(obs)
+            return self._pause_search(obs)
 
         if self._search_step < 2:
             goal = self._search_start_yaw + (
@@ -903,9 +926,7 @@ class Mission2Logic:
     def _recenter(self, obs):
         """한 바퀴 돌아도 없으면 중앙 쪽으로 다가가 다시 찾는다. 상대가 앞에 있으면 멈춘다."""
         if obs.detected:
-            self._target_seen_at = obs.now
-            self._change_state(ALIGN, obs)
-            return self._align(obs)
+            return self._pause_search(obs)
         goal = self._recenter_goal(obs)
         if distance_to(obs, goal) < GUARD_ARRIVE_M:
             self._change_state(SEARCH, obs)
@@ -920,6 +941,19 @@ class Mission2Logic:
         """대상을 놓쳤다. 한 번 실패한 뒤(다시 잡으러 가던 중)면 LURK로, 아니면 SEARCH."""
         if self.gave_up and LURK_AFTER_FAIL:
             return self._start_lurk(obs)
+        paused, self._search_paused = self._search_paused, None
+        if (paused is not None and obs.now - paused[3] <= SEARCH_RESUME_S
+                and self._area_best < SEARCH_RESUME_MAX_AREA):
+            state, turned, angle, _ = paused
+            self._change_state(SEARCH, obs)
+            if state == RECENTER:
+                self._recenter_angle = angle
+                self._change_state(RECENTER, obs)
+            else:
+                # 앞쪽 훑기는 건너뛰고 돈 각도를 잇는다 (방향은 _change_state가 마지막 큐브 쪽으로)
+                self._search_step = 2
+                self._search_turned = turned
+            return Command()
         self._change_state(SEARCH, obs)
         return Command()
 
@@ -977,6 +1011,12 @@ class Mission2Logic:
                 remaining, self._last_linear, APPROACH_SLOW_SPEED, APPROACH_DECEL))
         command = self._drive_toward(
             obs, self.target, speed, APPROACH_HEADING_GAIN, APPROACH_MAX_ANGULAR)
+        if (self._area_best < APPROACH_STRAIGHT_AREA and obs.detected
+                and obs.area >= APPROACH_TURN_SLOW_AREA
+                and abs(obs.x_offset) > APPROACH_GRAB_MAX_OFFSET):
+            # 가까운데 옆에 있다 -> 천천히, 카메라 방향으로 돈다 (0.4 m/s면 0.66 rad/s로 40 cm 앞 19도를 맞춘다)
+            command = Command(linear=min(speed, APPROACH_SLOW_SPEED),
+                              angular=self._center_turn(obs))
         if self._area_best >= APPROACH_STRAIGHT_AREA:
             if obs.detected and abs(obs.x_offset) > APPROACH_STRAIGHT_MAX_OFFSET:
                 # 가운데가 아니다 -> 서지 않고 가면서 카메라 방향으로 맞춘다 (큐브를 조금 밀어도 된다.

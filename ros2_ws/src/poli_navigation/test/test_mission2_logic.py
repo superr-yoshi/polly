@@ -7,6 +7,7 @@ from poli_navigation import mission2_logic
 from poli_navigation.mission2_logic import (
     ALIGN,
     APPROACH,
+    APPROACH_SLOW_SPEED,
     ATTACK,
     BACKOFF,
     BACKOFF_M,
@@ -679,6 +680,96 @@ def test_search_near_center_moves_around_after_full_turn():
     robot.target = (robot.x + 0.6 * math.cos(side), robot.y + 0.6 * math.sin(side))
     states = run(logic, robot, max_seconds=robot.now + 6.0, until=APPROACH)
     assert logic.state == APPROACH, states
+
+
+def _flicker_then_lose(logic, now):
+    """멀리서 큐브가 깜빡 보였다가(면적 400) 사라진다. 다시 SEARCH·RECENTER가 될 때까지 돌린다."""
+    logic.step(Observation(x=1.0, y=2.6, yaw=0.0, now=now, detected=True,
+                           x_offset=0.0, area=400.0))
+    assert logic.state in (ALIGN, APPROACH)
+    for i in range(1, 40):
+        logic.step(Observation(x=1.0, y=2.6, yaw=0.0, now=now + i * DT))
+        if logic.state in (SEARCH, RECENTER):
+            return
+
+
+def test_short_chase_resumes_search_turn_count():
+    # 2026-11-03 23:12 실기: 깜빡 보인 큐브를 쫓다 놓칠 때마다 돈 각도가 0이 되어 원을 따라 옮기지 못했다.
+    logic = Mission2Logic()
+    logic.gripper_opened = True
+    logic._left_start = True
+    logic.state = SEARCH
+    logic.state_started_at = 0.0
+    logic._search_step = 2
+    logic._search_turned = 5.0
+    logic._search_last_yaw = 0.0
+    _flicker_then_lose(logic, 0.0)
+    assert logic.state == SEARCH
+    assert logic._search_turned >= 5.0
+    assert logic._search_step == 2
+
+
+def test_short_chase_resumes_recenter_goal():
+    logic = Mission2Logic()
+    logic.gripper_opened = True
+    logic._left_start = True
+    logic.state = RECENTER
+    logic.state_started_at = 0.0
+    logic._recenter_angle = 3.3
+    _flicker_then_lose(logic, 0.0)
+    assert logic.state == RECENTER
+    assert logic._recenter_angle == 3.3
+
+
+def test_long_chase_starts_search_fresh():
+    logic = Mission2Logic()
+    logic.gripper_opened = True
+    logic._left_start = True
+    logic.state = SEARCH
+    logic.state_started_at = 0.0
+    logic._search_step = 2
+    logic._search_turned = 5.0
+    _flicker_then_lose(logic, 0.0)
+    logic.state = APPROACH
+    logic._search_paused = (SEARCH, 5.0, None, 0.0)
+    logic._target_seen_at = 10.0
+    logic.step(Observation(x=1.0, y=2.6, yaw=0.0, now=10.6))
+    assert logic.state == SEARCH
+    assert logic._search_turned < 1.0
+
+
+def test_close_off_center_cube_slows_and_turns():
+    # 2026-11-03 23:12 실기: 40 cm 앞 x_offset +0.58에서 0.77 m/s로 달려 큐브 옆을 지나가며 밀어냈다.
+    logic = Mission2Logic()
+    logic.gripper_opened = True
+    logic._left_start = True
+    logic.state = APPROACH
+    logic.state_started_at = 0.0
+    logic.target = (2.0, 1.4)
+    logic._area_best = 2000.0
+    logic._area_best_at = (2.27, 1.34)
+    logic._target_seen_at = 0.0
+    logic._last_linear = 0.77
+    command = logic._approach(Observation(x=2.27, y=1.34, yaw=math.radians(130), now=0.05,
+                                          detected=True, x_offset=0.58, area=2000.0))
+    assert command.linear <= APPROACH_SLOW_SPEED
+    assert command.angular < -0.5  # 큐브가 오른쪽 -> 오른쪽으로
+
+
+def test_no_retreat_when_cube_seen_right_after_start():
+    # 2026-11-03 23:12 실기: 출발 0.4초 만에 큐브를 보고 APPROACH가 되자 출발 칸(선에서 0.2~0.3 m)에서 RETREAT.
+    logic = Mission2Logic()
+    robot = SimRobot()
+    logic.step(robot.observe())
+    logic.state = APPROACH
+    logic.step(robot.observe())
+    assert logic.state != RETREAT
+    # 선에서 한 번 멀어진 뒤에는 다시 0.3 m 기준
+    robot.x, robot.y = robot.x - 0.3, robot.y + 0.3
+    logic.step(robot.observe())
+    robot.x, robot.y = robot.x + 0.25, robot.y - 0.25
+    logic.step(robot.observe())
+    assert logic.state == RETREAT
 
 
 def test_recenter_does_not_drive_into_opponent():
