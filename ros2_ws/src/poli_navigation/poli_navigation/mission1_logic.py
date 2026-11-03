@@ -47,13 +47,13 @@ from poli_navigation.mission2_logic import (
     ramp,
 )
 from poli_navigation.scan_to_grid import (
-    count_points_in_rect,
     GUARD_AHEAD_M,
     GUARD_MIN_POINTS,
     nearest_ahead,
     neighbor_states,
     obstacle_ahead,
     point_to_cell,
+    rect_ray_counts,
     scan_to_cells,
     wall_in_direction,
 )
@@ -271,6 +271,12 @@ REVERSE_WALL_MATCH_M = 0.10
 # 달리면서 판단할 때도 같은 검사로 막힘을 알면 서서 다시 보지 않는다 (오후 실행마다 4~5번 서던 것).
 UNKNOWN_WALL_BEFORE_M = 0.03
 UNKNOWN_WALL_DEPTH_M = CELL_SIZE_M / 2.0
+# 같은 사각형에 맞은 점이 없고, 사각형을 지나 더 멀리 맞은 광선이 이만큼 있으면 빈칸으로 본다.
+# 2026-11-03 15:52 실기: 달리며 찍은 스캔(칸 가운데 15~18 cm 앞, LiDAR는 축 8 cm 뒤)에서는 꺾을 칸 쪽
+# 콘 광선 일부가 지나온 쪽 옆 상자 면((8,1)->(8,2)면 (9,2))을 가까이 맞혀 빈칸인 (8,2)·(7,5)가 '?'가 됐고,
+# 회전마다 서서 다시 봤다. 시뮬레이션: 빈칸은 안 0개·지나감 41~54개, 막힘은 안 18~48개·지나감 4~6개
+# (광선 1도 간격, 실제 C1은 0.5도라 두 배). TODO_MEASURE: 실기 로그로 확인
+UNKNOWN_CLEAR_MIN_RAYS = 15
 # 회전이 덜 끝났을 때는 앞 벽 감시를 하지 않는다: 빨리 도는 동안 찍힌 스캔은 한 바퀴(0.1 s) 동안 20도 가까이
 # 비틀려 옆 상자 모서리가 진행선 위로 온다 (2026-11-01 20:25 실기: (9,2)에서 157도로 아직 돌며 '앞에 벽' 급정지)
 GUARD_MAX_TURN_RATE = 0.8                 # rad/s
@@ -850,14 +856,17 @@ class Mission1Logic:
         (self.target, self._drive_heading, self.reverse, self.delivering, self.path,
          self.state, self.state_started_at, self.stop_reason) = saved
         self._decided_for = self.target
-        if (next_cell is not None and self.grid.get(next_cell) != FREE
-                and next_cell not in self.maze.state.visits
-                and self._wall_into_unknown(obs.scan, (x, y, yaw), point_to_cell(*self.target),
-                                            next_cell)):
+        judged = (None if next_cell is None else self._judge_unknown(
+            obs.scan, (x, y, yaw), point_to_cell(*self.target), next_cell))
+        if judged == BLOCKED:
             # '모름'이지만 그 칸 앞쪽 절반에 벽 점이 있다 -> 막힘으로 보고 서지 않고 다시 판단
             self.grid.mark_blocked(next_cell)
             self._note(f'주행 중 {next_cell}은 모름이지만 벽 점이 보여 막힘으로 봄')
             return self._rolling_decision(obs)
+        if judged == FREE:
+            # 콘으로는 애매했지만 그 칸 앞쪽 절반이 비었고 광선이 지나간다 -> 빈칸으로 보고 바로 돈다
+            self.grid.mark_free(next_cell)
+            self._note(f'주행 중 {next_cell}은 모름이지만 광선이 지나가 빈칸으로 봄')
         if (next_cell is not None and self.grid.get(next_cell) != FREE
                 and next_cell not in self.maze.state.visits):
             # 꺾어 들어갈 옆 칸을 빈칸으로 못 봤다 (애매해서 '모름'). 미로는 모름을 지나갈 수 있다고 보지만
@@ -916,8 +925,8 @@ class Mission1Logic:
             self._change_state(STUCK, obs)
             return Command()
 
-        if obs.scan is not None and self._wall_into_unknown(
-                obs.scan, (obs.x, obs.y, obs.yaw), current, path[1]):
+        if obs.scan is not None and self._judge_unknown(
+                obs.scan, (obs.x, obs.y, obs.yaw), current, path[1]) == BLOCKED:
             self.grid.mark_blocked(path[1])
             self._note(f'{path[1]}은 모름이지만 그쪽 진행선에 벽 -> 막힘으로 보고 다시 계획')
             return self._plan(obs)
@@ -967,18 +976,27 @@ class Mission1Logic:
         self._change_state(TURN, obs)
         return Command()
 
-    def _wall_into_unknown(self, scan, pose, current, nxt):
-        """아직 '모름'인 이웃 칸 nxt의 앞쪽 절반에 돌아온 벽 점이 GUARD_MIN_POINTS개 이상 보이는지."""
+    def _judge_unknown(self, scan, pose, current, nxt):
+        """
+        아직 '모름'인 이웃 칸 nxt를 그 칸 앞쪽 절반 사각형으로 다시 본다: BLOCKED, FREE, 또는 None(그대로 모름).
+
+        안에 돌아온 벽 점이 GUARD_MIN_POINTS개 이상이면 막힘, 하나도 없고 지나간 광선이
+        UNKNOWN_CLEAR_MIN_RAYS개 이상이면 빈칸.
+        """
         if (self.phase != EXPLORE or self.grid.get(nxt) == FREE
                 or nxt in self.maze.state.visits
                 or abs(nxt[0] - current[0]) + abs(nxt[1] - current[1]) != 1):
-            return False
+            return None
         heading = math.atan2(nxt[1] - current[1], nxt[0] - current[0])
         half = CELL_SIZE_M / 2.0
-        points = count_points_in_rect(
+        inside, through = rect_ray_counts(
             scan, pose, cell_center_m(current), heading, half - UNKNOWN_WALL_BEFORE_M,
             half + UNKNOWN_WALL_DEPTH_M, CHAIN_GUARD_HALF_WIDTH_M)
-        return points >= GUARD_MIN_POINTS
+        if inside >= GUARD_MIN_POINTS:
+            return BLOCKED
+        if inside == 0 and through >= UNKNOWN_CLEAR_MIN_RAYS:
+            return FREE
+        return None
 
     def _arc_plan(self, path, end):
         """

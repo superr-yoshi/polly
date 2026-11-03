@@ -2,7 +2,7 @@ import math
 import types
 
 from hw_model import actual_twist
-from poli_navigation import mission1_logic
+from poli_navigation import mission1_logic, scan_to_grid
 from poli_navigation.grid_map import (
     BLOCKED,
     cell_center_m,
@@ -750,6 +750,8 @@ def test_rolling_decision_stops_to_scan_when_turn_cell_is_unknown(monkeypatch):
         return states
 
     monkeypatch.setattr(mission1_logic, 'neighbor_states', without_side)
+    # 칸 앞쪽 절반 사각형으로도 판단할 점이 없다 (반사가 하나도 안 돌아옴)
+    monkeypatch.setattr(mission1_logic, 'rect_ray_counts', lambda *args: (0, 0))
     logic, obs = _rolling_logic(true_grid, 0.06)
     logic.step(obs)
     assert logic.grid.get((8, 2)) != FREE
@@ -775,6 +777,41 @@ def test_rolling_decision_marks_unknown_turn_cell_with_wall_points_without_stopp
     logic, obs = _rolling_logic(true_grid, 0.06)
     logic.step(obs)
     assert logic.grid.get((8, 2)) == BLOCKED
+    assert '못 봐서' not in (logic.event or '')
+
+
+def test_rolling_turn_into_corridor_beside_box_does_not_stop(monkeypatch):
+    """
+    옆 상자 때문에 콘으로 '?'인 꺾을 칸도 광선이 지나가면 빈칸으로 보고 서지 않는다.
+
+    2026-11-03 15:52 실기: (9,1)->(8,1)을 달리며 칸 가운데 15 cm 앞에서 찍은 스캔으로는 (9,2) 상자 면 때문에
+    꺾을 칸 (8,2)가 콘 판단으로 '?'라 서서 다시 봤다.
+    """
+    monkeypatch.setattr(mission1_logic, 'ROLLING_DECISION', True)
+    monkeypatch.setattr(scan_to_grid, 'LASER_OFFSET_X_M', -0.08)  # 실제 장착 (URDF)
+    true_grid = GridMap(use_point_symmetry=False)
+    for cell in ((9, 2), (9, 3), (7, 1), (7, 3)):
+        true_grid.mark_blocked(cell)
+    logic = Mission1Logic(point_symmetry=False)
+    logic.gripper_opened = True
+    x, y0, yaw = START_POSE
+    logic.step(Observation(x=x, y=y0, yaw=yaw, now=0.0))
+    logic.maze.observe((8, 1), math.pi)
+    logic.state = DRIVE
+    logic.state_started_at = 0.0
+    logic.target = cell_center_m((8, 1))
+    logic._drive_heading = math.pi
+    logic._has_scan_time = True
+    logic._last_linear = mission1_logic.ROLL_SPEED
+    logic._last_command_at = 1.0
+    logic._speed_changed_at = 0.0
+    pose = (logic.target[0] + 0.15, logic.target[1], math.pi)
+    scan = simulate_scan(true_grid, pose)
+    assert scan_to_grid.neighbor_states(scan, pose, logic.target).get((8, 2)) is None  # 콘으로는 '?'
+    obs = Observation(x=pose[0], y=pose[1], yaw=pose[2], now=1.0, scan=scan, scan_time=1.0)
+    assert logic.rolling_scan_ok(obs)
+    logic.step(obs)
+    assert logic.grid.get((8, 2)) == FREE
     assert '못 봐서' not in (logic.event or '')
 
 

@@ -558,12 +558,13 @@ def nearest_ahead(scan, robot_pose, axis=None, half_width=BODY_HALF_WIDTH_M + GU
     return alongs[GUARD_MIN_POINTS - 1]
 
 
-def count_points_in_rect(scan, robot_pose, origin, axis, along_min, along_max, half_width):
+def rect_ray_counts(scan, robot_pose, origin, axis, along_min, along_max, half_width):
     """
-    스캔 점 중 origin에서 axis 방향으로 along_min~along_max, 옆으로 half_width 안에 있는 점의 수.
+    origin에서 axis 방향 along_min~along_max, 옆으로 half_width 사각형에 대해 (안에 맞은 점 수, 지나간 광선 수).
 
-    반사가 안 돌아온 광선은 세지 않는다 (콘 광선 비율 판단과 달리 검은 벽처럼 반사가 약해도 점이 있으면 센다).
-    로봇 자기 부품(축에서 CONE_SKIP_M 안)은 뺀다.
+    '지나간 광선'은 레이저에서 맞은 점까지 선분이 사각형을 지나고 맞은 점은 사각형 밖(더 먼 곳)인 광선이다.
+    반사가 안 돌아온 광선은 어느 쪽에도 세지 않는다 (콘 광선 비율 판단과 달리 검은 벽처럼 반사가 약해도
+    돌아온 점만으로 판단한다). 로봇 자기 부품(축에서 CONE_SKIP_M 안)은 뺀다.
     """
     robot_x, robot_y, robot_yaw = robot_pose
     cos_r = math.cos(robot_yaw)
@@ -572,7 +573,14 @@ def count_points_in_rect(scan, robot_pose, origin, axis, along_min, along_max, h
     laser_y = robot_y + LASER_OFFSET_X_M * sin_r + LASER_OFFSET_Y_M * cos_r
     cos_a = math.cos(axis)
     sin_a = math.sin(axis)
-    count = 0
+
+    def local(x, y):
+        rel_x = x - origin[0]
+        rel_y = y - origin[1]
+        return rel_x * cos_a + rel_y * sin_a, -rel_x * sin_a + rel_y * cos_a
+
+    start_along, start_lateral = local(laser_x, laser_y)
+    inside = through = 0
     for i, distance in enumerate(scan.ranges):
         if not math.isfinite(distance):
             continue
@@ -583,13 +591,24 @@ def count_points_in_rect(scan, robot_pose, origin, axis, along_min, along_max, h
         hit_y = laser_y + distance * math.sin(angle)
         if math.hypot(hit_x - robot_x, hit_y - robot_y) < CONE_SKIP_M:
             continue
-        rel_x = hit_x - origin[0]
-        rel_y = hit_y - origin[1]
-        along = rel_x * cos_a + rel_y * sin_a
-        lateral = -rel_x * sin_a + rel_y * cos_a
+        along, lateral = local(hit_x, hit_y)
         if along_min <= along <= along_max and abs(lateral) <= half_width:
-            count += 1
-    return count
+            inside += 1
+            continue
+        # 선분이 사각형을 지나는지 (사각형 축마다 들어가는 t 구간의 겹침)
+        t_in, t_out = 0.0, 1.0
+        for p0, p1, low, high in ((start_along, along, along_min, along_max),
+                                  (start_lateral, lateral, -half_width, half_width)):
+            delta = p1 - p0
+            if abs(delta) < 1e-9:
+                if not low <= p0 <= high:
+                    t_in, t_out = 1.0, 0.0
+                continue
+            t0, t1 = sorted(((low - p0) / delta, (high - p0) / delta))
+            t_in, t_out = max(t_in, t0), min(t_out, t1)
+        if t_in < t_out:
+            through += 1
+    return inside, through
 
 
 def obstacle_ahead(scan, robot_pose, ahead=GUARD_AHEAD_M):
