@@ -9,12 +9,16 @@
   python3 scripts/sim_mission2.py                          # 상대 1대, 0.4 m/s, 1분
   python3 scripts/sim_mission2.py --opp-speed 0.6 --opp-start 2,2
   python3 scripts/sim_mission2.py --opp-count 3 --time 300 --opp-behavior wander
+  python3 scripts/sim_mission2.py --opp-count 3 --code ../polly-team   # 다른 폴더(브랜치)의 임무 2 코드로
 
 가정 (실제와 다를 수 있다):
 - 우리 위치는 참값을 쓴다 (실제는 엔코더 + IMU + 벽 보정).
 - 모터 지연 0.15 s, 카메라 지연 0.1 s, 하드웨어 최저 바퀴 속도 (test_mission2_logic.LaggedSimRobot과 같음).
 - 로봇은 원, 부딪히면 둘이 반씩 밀린다. 큐브(50 mm)는 밀리고, 열린 집게 입구로는 들어온다.
 - 상대 로봇은 단순한 규칙으로 움직인다 (--opp-behavior).
+- 한쪽이 잡은 큐브를 다른 쪽이 집거나 --steal-s 동안 붙어 있으면 같이 잡음. 같이 잡은 채 둘이 벌어지면
+  큐브가 우리 집게에서 빠져나오고(적외선 거리가 커짐) COHOLD_SLIP_M을 넘으면 우리가 놓친다 (불리하게 가정).
+  끝날 때 같이 잡고 있으면 재경기 (규정 3.4.7.2). --opp-pull이면 같이 잡은 상대가 그 속도로 뒤로 끈다.
 """
 
 import argparse
@@ -30,6 +34,10 @@ import sys
 from types import SimpleNamespace
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+# --code 폴더: 그 폴더(저장소)의 임무 2 판단 코드로 돌린다 (다른 브랜치·팀원 작업과 같은 조건으로 비교).
+# 판단 코드를 불러오기 전에 정해야 해서 argparse보다 먼저 읽는다.
+if '--code' in sys.argv:
+    ROOT = os.path.abspath(sys.argv[sys.argv.index('--code') + 1])
 sys.path.insert(0, os.path.join(ROOT, 'ros2_ws', 'src', 'poli_navigation'))
 sys.path.insert(0, os.path.join(ROOT, 'ros2_ws', 'src', 'poli_navigation', 'test'))
 
@@ -59,6 +67,8 @@ CAMERA_BLIND_M = 0.06     # 카메라에서 이보다 가까우면 화면 아래
 AREA_SCALE = m2.TARGET_AREA_AT_50CM * 0.5 ** 2
 
 CUBE_RADIUS_M = 0.03      # 50 mm 큐브
+OPP_CAMERA_RANGE_M = 1.45  # spin 상대가 큐브를 알아보는 거리 (우리 카메라 면적 300과 같게)
+COHOLD_SLIP_M = 0.04      # 같이 잡은 채 당기면 이만큼 빠져나가다 놓친다 (SIM_ONLY 가정)
 NUM_RAYS = 360
 RANGE_MAX = 12.0
 
@@ -106,9 +116,13 @@ def ray_circle(x, y, dx, dy, center, radius):
 class Opponent:
     """단순 규칙으로 움직이는 상대 로봇 (SIM_ONLY)."""
 
-    def __init__(self, name, pose, args, rng):
+    def __init__(self, name, pose, args, rng, behavior=None, speed=None):
         self.name = name
+        self.behavior = behavior or args.opp_behavior
+        self.speed = args.opp_speed if speed is None else speed
+        self.searching = False   # spin: 큐브를 못 잡아 제자리에서 돌며 찾는 중
         self.x, self.y, self.yaw = pose
+        self.start = pose
         self.v = 0.0
         self.w = 0.0
         self.alive = True
@@ -121,11 +135,31 @@ class Opponent:
         r = self.args.opp_radius
         return self.x + r * math.cos(self.yaw), self.y + r * math.sin(self.yaw)
 
+    def hide_point(self):
+        """자기 출발 쪽 대각선과 지키는 원이 만나는 점 (우리 GUARD와 같은 방식으로 숨는 상대)."""
+        angle = math.atan2(self.start[1] - m2.CENTER_M[1], self.start[0] - m2.CENTER_M[0])
+        return (m2.CENTER_M[0] + m2.GUARD_RADIUS_M * math.cos(angle),
+                m2.CENTER_M[1] + m2.GUARD_RADIUS_M * math.sin(angle)), angle
+
+    def sees_cube(self, world):
+        """상대 카메라 (우리와 같은 화각, 인식 거리 SIM_ONLY)."""
+        d = math.dist((self.x, self.y), world.cube)
+        bearing = m2.normalize_angle(
+            math.atan2(world.cube[1] - self.y, world.cube[0] - self.x) - self.yaw)
+        return d < OPP_CAMERA_RANGE_M and abs(bearing) < m2.CAMERA_HALF_FOV_RAD
+
     def goal(self, world):
-        behavior = self.args.opp_behavior
-        if behavior == 'still' or world.cube_holder == self.name:
+        behavior = self.behavior
+        if behavior == 'spin' and self.name not in (world.cube_holder, world.co_holder):
+            if world.cube_holder not in (None, self.name):
+                self.searching = True  # 남이 먼저 잡았다 -> 제자리에서 돌며 찾기
+            if self.searching and not self.sees_cube(world):
+                return 'spin'
+        if behavior == 'hide' and world.cube_holder == self.name:
+            return self.hide_point()[0]
+        if behavior == 'still' or self.name in (world.cube_holder, world.co_holder):
             return None
-        if behavior == 'wander':
+        if behavior in ('wander',):
             if self.waypoint is None or math.dist((self.x, self.y), self.waypoint) < 0.15:
                 low, high = m2.SAFE_ZONE_MIN_M + 0.3, m2.SAFE_ZONE_MAX_M - 0.3
                 self.waypoint = (self.rng.uniform(low, high), self.rng.uniform(low, high))
@@ -139,10 +173,19 @@ class Opponent:
             return
         goal = self.goal(world)
         target_v, target_w = 0.0, 0.0
-        if goal is not None and math.dist((self.x, self.y), goal) > 0.02:
+        if world.co_holder == self.name and self.args.opp_pull > 0.0:
+            target_v = -self.args.opp_pull  # 같이 잡은 큐브를 뒤로 끌고 간다
+        elif goal == 'spin':
+            target_w = m2.SPIN_SPEED
+        elif (self.behavior == 'hide' and world.cube_holder == self.name
+              and math.dist((self.x, self.y), goal) <= 0.05):
+            # 숨을 자리에 왔다: 큐브(앞)가 바깥을 보게 돌아선다 (중앙 쪽에서는 차체에 가려 안 보인다)
+            error = m2.normalize_angle(self.hide_point()[1] - self.yaw)
+            target_w = max(-self.args.opp_turn, min(self.args.opp_turn, 3.0 * error))
+        elif goal is not None and math.dist((self.x, self.y), goal) > 0.02:
             error = m2.normalize_angle(math.atan2(goal[1] - self.y, goal[0] - self.x) - self.yaw)
             target_w = max(-self.args.opp_turn, min(self.args.opp_turn, 3.0 * error))
-            target_v = self.args.opp_speed * max(0.0, math.cos(error))
+            target_v = self.speed * max(0.0, math.cos(error))
         step_v = self.args.opp_accel * DT
         self.v += max(-step_v, min(step_v, target_v - self.v))
         self.w = target_w
@@ -160,6 +203,8 @@ class World:
         self.x, self.y, self.yaw = m2.START_POSE
         self.cube = m2.CENTER_M
         self.cube_holder = None   # None / 'us' / 상대 이름
+        self.co_holder = None     # 우리와 같이 잡고 있는 상대 이름 (cube_holder는 'us')
+        self.cohold_start = None  # 같이 잡기 시작할 때 (우리 큐브 점, 상대 앞 점)
         self.gripper = 'open'     # open / moving / closed
         self.gripper_target = 'open'
         self.gripper_done_at = 0.0
@@ -179,9 +224,14 @@ class World:
         opp_cells = [c for c in ('2,8', '2,2', '8,8') if c != args.opp_start]
         cells = [args.opp_start] + opp_cells
         self.opps = []
+        behaviors = args.opp_behaviors.split(',') if args.opp_behaviors else []
+        speeds = [float(v) for v in args.opp_speeds.split(',')] if args.opp_speeds else []
         for i in range(args.opp_count):
             pose = rotate_about_center(m2.START_POSE, START_CELLS[cells[i]])
-            self.opps.append(Opponent(f'상대{i + 1}', pose, args, self.rng))
+            self.opps.append(Opponent(
+                f'상대{i + 1}', pose, args, self.rng,
+                behaviors[i] if i < len(behaviors) else None,
+                speeds[i] if i < len(speeds) else None))
 
     def event(self, now, text, kind='info'):
         self.events.append({'t': round(now, 2), 'text': text, 'kind': kind})
@@ -292,18 +342,54 @@ class World:
         self.gripper = m2.GRIPPER_CLOSED
         lx, ly = self.cube_local()
         if GRAB_MIN_M <= lx <= GRAB_MAX_M and abs(ly) <= MOUTH_HALF_M:
-            stolen = self.cube_holder not in (None, 'us')
+            other = self.cube_holder if self.cube_holder not in (None, 'us') else None
             self.cube_holder = 'us'
             self.hold_since = now
-            self.event(now, '잡기 성공 (상대에게서 탈환)' if stolen else '잡기 성공', 'good')
+            if other is not None:
+                self.start_cohold(other, now)
+                self.event(now, f'잡기 성공 ({other}와 같이 잡음)', 'good')
+            else:
+                self.event(now, '잡기 성공', 'good')
         else:
             self.event(now, f'잡기 실패 (큐브 앞 {lx:.2f} m, 옆 {ly:+.2f} m)', 'bad')
 
     def release_cube(self, now, why):
         if self.cube_holder == 'us':
             self.hold_since = None
-        self.cube_holder = None
+        self.cube_holder = self.co_holder  # 같이 잡던 상대가 있으면 그쪽만 남는다
+        self.co_holder = None
         self.event(now, why, 'bad')
+
+    def opp_by_name(self, name):
+        return next(o for o in self.opps if o.name == name)
+
+    def start_cohold(self, name, now):
+        self.co_holder = name
+        # 기준은 우리 집게의 큐브 자리 (닫힌 집게로 같이 잡으면 큐브가 그 자리에서 조금 벗어나 있을 수 있다)
+        attach = (self.x + HELD_CUBE_AHEAD_M * math.cos(self.yaw),
+                  self.y + HELD_CUBE_AHEAD_M * math.sin(self.yaw))
+        self.cohold_start = (attach, self.opp_by_name(name).front())
+        self.cohold_gap = math.dist(*self.cohold_start)
+
+    def check_cohold(self, now):
+        """
+        같이 잡은 채 둘이 벌어지면 큐브가 우리 집게에서 조금씩 빠져나가고(적외선 거리가 커짐),
+
+        COHOLD_SLIP_M을 넘으면 우리가 놓친다 (SIM_ONLY, 불리하게 가정).
+        """
+        opp = self.opp_by_name(self.co_holder)
+        attach = self.cube
+        front = opp.front()
+        gap = math.dist(attach, front)
+        # 같이 잡기 시작할 때의 간격에서 벌어진 만큼 (상대가 큐브에 파고들어 있었을 수 있다)
+        slack = gap - self.cohold_gap
+        if slack <= 0.0:
+            return
+        if slack <= COHOLD_SLIP_M:
+            self.cube = (attach[0] + (front[0] - attach[0]) * slack / gap,
+                         attach[1] + (front[1] - attach[1]) * slack / gap)
+            return
+        self.release_cube(now, f'같이 잡은 채 벌어져 놓침 -> {opp.name}만 잡음')
 
     def move_us(self, command):
         self.commands.append(command)
@@ -319,8 +405,9 @@ class World:
         before = (self.x, self.y)
         radius = self.args.opp_radius
         bodies = [o for o in self.opps if o.alive]
-        for opp in bodies:
-            self._separate(self, OUR_RADIUS_M, opp, radius)
+        if not self.our_eliminated:  # 탈락한 로봇은 경기장에서 뺀다
+            for opp in bodies:
+                self._separate(self, OUR_RADIUS_M, opp, radius)
         for i, a in enumerate(bodies):
             for b in bodies[i + 1:]:
                 self._separate(a, radius, b, radius)
@@ -375,17 +462,21 @@ class World:
         if self.cube_holder == 'us':
             self.cube = (self.x + HELD_CUBE_AHEAD_M * math.cos(self.yaw),
                          self.y + HELD_CUBE_AHEAD_M * math.sin(self.yaw))
-            for opp in self.opps:
-                touching = opp.alive and math.dist(opp.front(), self.cube) < CUBE_RADIUS_M + 0.04
-                opp.contact = opp.contact + DT if touching else 0.0
-                if self.args.steal_s > 0 and opp.contact >= self.args.steal_s:
-                    self.release_cube(now, f'{opp.name}에게 큐브를 뺏김')
-                    self.cube_holder = opp.name
-                    opp.contact = 0.0
-                    break
+            if self.co_holder is not None:
+                self.check_cohold(now)
+            else:
+                for opp in self.opps:
+                    touching = (opp.alive
+                                and math.dist(opp.front(), self.cube) < CUBE_RADIUS_M + 0.04)
+                    opp.contact = opp.contact + DT if touching else 0.0
+                    if self.args.steal_s > 0 and opp.contact >= self.args.steal_s:
+                        self.start_cohold(opp.name, now)
+                        self.event(now, f'{opp.name}도 큐브를 같이 잡음', 'bad')
+                        opp.contact = 0.0
+                        break
         elif self.cube_holder is None:
             for opp in self.opps:
-                if (opp.alive and self.args.opp_behavior == 'chase'
+                if (opp.alive and opp.behavior != 'still'
                         and math.dist(opp.front(), self.cube) < CUBE_RADIUS_M + 0.04):
                     self.cube_holder = opp.name
                     self.event(now, f'{opp.name}이(가) 큐브를 잡음', 'bad')
@@ -394,6 +485,15 @@ class World:
             if self.cube_holder == opp.name:
                 self.cube = (opp.x + (radius + CUBE_RADIUS_M) * math.cos(opp.yaw),
                              opp.y + (radius + CUBE_RADIUS_M) * math.sin(opp.yaw))
+                lx, ly = self.cube_local()
+                if (self.gripper == m2.GRIPPER_CLOSED and GRAB_MIN_M <= lx <= GRAB_MAX_M
+                        and abs(ly) <= MOUTH_HALF_M):
+                    # 상대가 든 큐브가 우리 닫힌 집게 안에 들어왔다 (적외선도 잡음으로 본다) -> 같이 잡음
+                    self.cube_holder = 'us'
+                    self.hold_since = now
+                    self.start_cohold(opp.name, now)
+                    self.event(now, f'닫힌 집게에 {opp.name}의 큐브가 들어옴 (같이 잡음)', 'good')
+                break
 
     def check_elimination(self, now):
         """로봇 중심이 노란 선 밖(바깥 테두리 격자)으로 나가면 탈락 (규정 3.4.6)."""
@@ -404,16 +504,18 @@ class World:
             if opp.alive and outside(opp.x, opp.y):
                 opp.alive = False
                 self.event(now, f'{opp.name} 탈락 (노란 선 밖)', 'good')
-                if self.cube_holder == opp.name:
-                    self.cube_holder = None
+                if opp.name in (self.cube_holder, self.co_holder):
+                    if self.cube_holder == 'us':
+                        self.hold_since = None
+                    self.cube_holder = self.co_holder = None
                     self.cube = m2.CENTER_M
                     self.event(now, '큐브가 중앙으로 재배치됨')
-        if outside(self.x, self.y):
+        if not self.our_eliminated and outside(self.x, self.y):
             self.our_eliminated = True
             self.event(now, '우리 로봇 탈락 (노란 선 밖)', 'bad')
             if self.cube_holder == 'us':
                 self.hold_since = None
-                self.cube_holder = None
+                self.cube_holder = self.co_holder = None
                 self.cube = m2.CENTER_M
 
     # ---------- 실행 ----------
@@ -429,6 +531,7 @@ class World:
             [[round(p[0], 3), round(p[1], 3)] for p in obs.opponents],
             int(obs.detected),
             None if target is None else [round(target[0], 3), round(target[1], 3)],
+            self.co_holder,
         ])
 
     def run(self):
@@ -461,6 +564,8 @@ class World:
         end = self.args.time
         if self.our_eliminated:
             verdict = '우리 탈락'
+        elif self.cube_holder == 'us' and self.co_holder is not None:
+            verdict = f'우리와 {self.co_holder} 같이 확보 -> 재경기 (규정 3.4.7.2)'
         elif self.cube_holder == 'us':
             verdict = f'우리가 확보 (연속 {end - self.hold_since:.1f} s)'
         elif self.cube_holder is None:
@@ -662,7 +767,8 @@ function updatePanel() {
   document.getElementById('k-time').textContent = `${f[0].toFixed(1)} / ${DATA.time} s`;
   document.getElementById('k-state').textContent = f[4];
   document.getElementById('k-grip').textContent = {open: '열림', moving: '움직이는 중', closed: '닫힘'}[f[5]] || f[5];
-  document.getElementById('k-cube').textContent = f[8] === 'us' ? '우리가 잡음' : (f[8] ? `${f[8]}이(가) 잡음` : '아무도 안 잡음');
+  document.getElementById('k-cube').textContent = f[13] ? `우리 + ${f[13]} 같이 잡음` :
+    (f[8] === 'us' ? '우리가 잡음' : (f[8] ? `${f[8]}이(가) 잡음` : '아무도 안 잡음'));
   const h = holdTime();
   document.getElementById('k-hold').textContent = h === null ? '-' : `${h.toFixed(1)} s`;
   document.getElementById('k-cam').textContent = f[11] ? '큐브 보임' : '안 보임';
@@ -722,10 +828,12 @@ def write_html(world, args, verdict, path):
     data = {
         'time': args.time,
         'verdict': verdict,
-        'setup': (f'상대 {args.opp_count}대 · {args.opp_behavior} · 속도 {args.opp_speed} m/s · '
+        'setup': (f'상대 {args.opp_count}대 · '
+                  + ', '.join(f'{o.name} {o.behavior} {o.speed} m/s' for o in world.opps) + ' · '
                   f'회전 {args.opp_turn} rad/s · 반지름 {args.opp_radius} m · '
-                  f'뺏기 {args.steal_s or "없음"}{" s" if args.steal_s else ""} · '
-                  f'출발 지연 {args.opp_delay} s (우리 로봇: 실제 임무 2 코드)'),
+                  f'같이 잡기 {args.steal_s or "없음"}{" s" if args.steal_s else ""} · '
+                  f'끌기 {args.opp_pull} m/s · 출발 지연 {args.opp_delay} s '
+                  f'(우리 로봇: 실제 임무 2 코드 {os.path.abspath(ROOT)})'),
         'arena': {
             'size': m2.ARENA_SIZE_M, 'cell': cell, 'dt': DT,
             'safe_min': m2.SAFE_ZONE_MIN_M, 'safe_max': m2.SAFE_ZONE_MAX_M,
@@ -762,14 +870,25 @@ def parse_args():
     parser.add_argument('--opp-turn', type=float, default=2.0, help='상대 최고 회전 rad/s')
     parser.add_argument('--opp-accel', type=float, default=1.0, help='상대 가속 m/s^2')
     parser.add_argument('--opp-radius', type=float, default=0.15, help='상대 반지름 m (규정 최대 0.2)')
-    parser.add_argument('--opp-behavior', default='chase', choices=('chase', 'still', 'wander'),
-                        help='chase = 큐브(누가 잡든)로 감, still = 가만히, wander = 아무 데나')
+    parser.add_argument('--opp-behavior', default='chase',
+                        choices=('chase', 'still', 'wander', 'hide', 'spin'),
+                        help='chase = 큐브(누가 잡든)로 감, still = 가만히, wander = 아무 데나, '
+                             'hide = chase처럼 가다가 잡으면 자기 쪽 원 위로 빠져 등을 돌림, '
+                             'spin = chase처럼 가다가 남이 먼저 잡으면 제자리에서 돌며 찾고 보이면 감')
+    parser.add_argument('--opp-behaviors', default='',
+                        help='상대마다 행동 (쉼표, 예: spin,wander,wander). 비우면 --opp-behavior')
+    parser.add_argument('--opp-speeds', default='',
+                        help='상대마다 최고 속도 m/s (쉼표, 예: 0.5,0.4,0.6). 비우면 --opp-speed')
     parser.add_argument('--opp-delay', type=float, default=0.0, help='상대 출발 지연 s')
     parser.add_argument('--steal-s', type=float, default=2.0,
-                        help='상대가 우리가 잡은 큐브에 이만큼 붙어 있으면 뺏김 (0 = 안 뺏김)')
+                        help='상대가 우리가 잡은 큐브에 이만큼 붙어 있으면 같이 잡음 (0 = 안 잡음)')
+    parser.add_argument('--opp-pull', type=float, default=0.0,
+                        help='같이 잡은 상대가 뒤로 끄는 속도 m/s (0 = 그 자리에 있음)')
     parser.add_argument('--seed', type=int, default=1, help='wander 무작위 씨앗')
     parser.add_argument('--out', default=None, help='HTML 저장 경로')
     parser.add_argument('--no-open', action='store_true', help='브라우저로 열지 않음')
+    parser.add_argument('--code', default=None,
+                        help='이 저장소 폴더의 임무 2 코드로 돌린다 (예: ../polly-team, 비우면 이 저장소)')
     return parser.parse_args()
 
 
