@@ -19,6 +19,7 @@ find_pi "${PI:-}"
 
 stop_now() {
   trap - INT TERM
+  [ -n "${WARM:-}" ] && kill "$WARM" 2> /dev/null
   echo
   echo "정지 중..."
   pi '~/polly/scripts/stop_mission.sh | tail -1; pkill -f "^tail -n \\+1 -F /home/poli/poli_logs/"'
@@ -61,8 +62,16 @@ if ! pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1)
   read -r -p "그래도 시작하려면 y, 멈추려면 엔터: " ANSWER
   [[ "$ANSWER" == [yYㅛ] ]] || stop_now
 fi
+# 엔터를 기다리는 동안 1초마다 연결을 확인해, 끊겼으면 미리 다시 열어 둔다 (엔터 뒤에 다시 연결하면 수 초 늦음)
+( while true; do PI_TIMEOUT=3 pi true > /dev/null 2>&1 || echo "⚠️  Pi 연결 끊김 - 다시 여는 중 (핫스팟을 로봇 가까이)"; sleep 1; done ) &
+WARM=$!
 read -r -p "준비 완료. 엔터 = 시작 (Ctrl+C = 취소) "
+kill "$WARM" 2> /dev/null
+T0=$(date +%s%N)
 pi '~/polly/scripts/start_mission.sh go' | grep -v "^$"
+GO_MS=$(( ($(date +%s%N) - T0) / 1000000 ))
+echo "시작 신호까지 ${GO_MS} ms"
+[ "$GO_MS" -gt 500 ] && echo "⚠️  시작 신호가 ${GO_MS} ms 걸렸다 (Wi-Fi가 약하거나 끊겼다 다시 연결됨)"
 echo "진행 보기 (Ctrl+C = 정지)"
 pi 'f=$(ls -t ~/poli_logs/mission*_*.log | head -1); tail -n +1 -F "$f"' \
   | grep --line-buffered -E "Start signal|State:|Phase:|Gripper:|fault|ERROR|지연|timeout|출발 자세|막힘 표시|막다른|감시|칸 한 번에" \

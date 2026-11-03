@@ -22,7 +22,10 @@ find_pi() {
 save_pi() { mkdir -p "$(dirname "$PI_CACHE")" && echo "$PI" > "$PI_CACHE"; }
 
 # 연결을 한 번 열어 두고 다시 쓴다 (ControlMaster). 두 번째 명령부터 약 0.4 s -> 0.05 s (2026-11-01)
+# ServerAlive: Wi-Fi가 잠깐 끊겨 죽은 연결을 약 3초 안에 알아채고 버린다. 없으면 죽은 연결로 보낸 명령이
+# TCP 재전송을 기다리며 오래 멈춘다 (2026-11-03: 엔터를 쳐도 한 번씩 출발이 늦음).
 pi() {
   ssh -o BatchMode=yes -o ConnectTimeout="${PI_TIMEOUT:-8}" -o ControlMaster=auto \
-      -o ControlPath=/tmp/poli-ssh-%C -o ControlPersist=600 poli@"$PI" "$@"
+      -o ControlPath=/tmp/poli-ssh-%C -o ControlPersist=600 \
+      -o ServerAliveInterval=1 -o ServerAliveCountMax=3 poli@"$PI" "$@"
 }
