@@ -225,6 +225,12 @@ LURK_RETRY_MAX_AREA = APPROACH_STRAIGHT_AREA  # 카메라에서 약 25 cm
 # 큐브 위치가 상대 로봇(LiDAR 중심)에서 이 안이면 상대가 잡은 큐브로 보고 가지 않는다 (차체가 약해
 # 부딪히지 않는 것이 우선). 0이면 언제나 간다. TODO_MEASURE: 상대 집게 길이에 맞춰
 LURK_IGNORE_NEAR_OPPONENT_M = 0.3
+# 원 위 한 자리에서 제자리로 한 바퀴(LURK_TURN_BEFORE_MOVE_RAD) 돌아도 다시 잡으러 가지 못하면 원을 따라
+# LURK_MOVE_RAD 옮겨 다시 돈다 (2026-11-03 팀). 한 자리에서는 멀거나(약 1.35 m 넘게) 상대에 가린 큐브를 끝내 못 봤다.
+# 시뮬레이션 300가지(상대 0~3대가 가림): 30초 안에 찾음 242 -> 272, 지금 방식이 찾는 경우는 똑같이 빠름,
+# 부딪힘·탈락선 0.2 m 안 0번. (원을 돌며 중앙만 보는 방식은 253, 평균이 더 느렸다). TODO_MEASURE
+LURK_TURN_BEFORE_MOVE_RAD = 2 * math.pi
+LURK_MOVE_RAD = math.radians(60.0)
 
 # 시작할 때 집게 열기 명령을 보낼지. 2026-11-01 False로 했다가 True로 되돌림:
 # 임무를 켜면 Mega가 리셋돼 서보 힘이 빠지고 집게가 조금 닫힌다. 열기를 안 보내면 덜 열린 채로
@@ -476,6 +482,9 @@ class Mission2Logic:
         self.push_reason = ''
         # 서 있는 동안의 벽 보정값 기록 [(시각, (x, y))] (미끄러짐 감지)
         self._slide_history = []
+        # LURK: 지금 자리에서 제자리로 돈 각도 (한 바퀴 돌면 원을 따라 옮긴다)
+        self._lurk_turned = 0.0
+        self._lurk_last_yaw = None
         # RETREAT 중 선에서 가장 멀었던 거리와 그 시각, 비켜 가는 쪽 (0 = 곧장 안쪽)
         self._retreat_best = 0.0
         self._retreat_best_at = 0.0
@@ -1021,6 +1030,8 @@ class Mission2Logic:
         self._guard_angle = angle_around_center((obs.x, obs.y))
         self._dodging = False
         self._escaping = True
+        self._lurk_turned = 0.0
+        self._lurk_last_yaw = None
         self._change_state(LURK, obs)
         return self._lurk(obs)
 
@@ -1039,7 +1050,9 @@ class Mission2Logic:
         # 큐브 위치는 이번에 새로 계산된 것만 쓴다 (빨리 돌 때는 갱신하지 않아 옛 위치가 남는다)
         # 상대가 DODGE_CLEAR_M 밖일 때만 간다 (그 안이면 가다가 바로 다시 피하게 된다)
         clear = all(math.dist((obs.x, obs.y), other) > DODGE_CLEAR_M for other in opponents)
-        retry = (not self._dodging and clear and self._sees_target(obs) and self.target is not None
+        # 원 위에 서서 둘러볼 때만 판단한다 (옮겨 가는 중에는 카메라 지연만큼 큐브 위치가 틀어져
+        # 상대가 잡은 큐브를 빈 큐브로 볼 수 있다)
+        retry = (command is None and clear and self._sees_target(obs) and self.target is not None
                  and self._target_updated_at == obs.now and obs.area < LURK_RETRY_MAX_AREA
                  and not self._target_near_opponent(opponents))
         if retry:
@@ -1050,8 +1063,23 @@ class Mission2Logic:
                 command.gripper = GRIPPER_OPEN
             return command
         if command is None:
-            return Command(angular=SPIN_SPEED)
+            return self._lurk_look_around(obs)
+        # 원 위 점으로 가거나 피하는 중: 새 자리에서 다시 한 바퀴를 센다
+        self._lurk_turned = 0.0
+        self._lurk_last_yaw = None
         return command
+
+    def _lurk_look_around(self, obs):
+        """원 위에 서서 제자리로 돌며 둘러본다. 한 바퀴 돌아도 못 찾으면 원을 따라 LURK_MOVE_RAD 옮긴다."""
+        if self._lurk_last_yaw is not None:
+            self._lurk_turned += abs(normalize_angle(obs.yaw - self._lurk_last_yaw))
+        self._lurk_last_yaw = obs.yaw
+        if self._lurk_turned >= LURK_TURN_BEFORE_MOVE_RAD:
+            self._lurk_turned = 0.0
+            self._lurk_last_yaw = None
+            self._guard_angle += LURK_MOVE_RAD
+            return Command()
+        return Command(angular=SPIN_SPEED)
 
     def _target_near_opponent(self, opponents):
         return any(math.dist(self.target, other) < LURK_IGNORE_NEAR_OPPONENT_M

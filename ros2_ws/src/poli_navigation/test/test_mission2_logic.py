@@ -895,7 +895,9 @@ def test_lurk_dodges_opponent_along_circle():
     assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M
 
 
-def test_lurk_does_not_chase_cube_held_by_opponent():
+def test_lurk_does_not_chase_cube_held_by_opponent(monkeypatch):
+    # 가짜 카메라는 지연이 없다: 로직이 실제 지연(CAMERA_LAG_S)을 빼면 도는 동안 큐브 위치가 15 cm 틀어진다
+    monkeypatch.setattr(mission2_logic, 'CAMERA_LAG_S', 0.0)
     logic, robot = lurking_robot()
     run(logic, robot, max_seconds=robot.now + 8.0)
     # 원 위에서 돌다 보면 큐브가 보이지만, 상대 로봇(큐브에서 0.15 m) 집게에 있어 가지 않는다.
@@ -954,6 +956,31 @@ def test_lurk_waits_for_opponent_to_clear_before_retry():
         robot.apply(logic.step(obs))
         if math.dist((robot.x, robot.y), opponent) <= mission2_logic.DODGE_CLEAR_M:
             assert logic.state == LURK
+
+
+def test_lurk_moves_along_circle_after_full_turn_without_cube():
+    # 2026-11-03 팀: 한 자리에서 한 바퀴 돌아도 못 찾으면 원을 따라 LURK_MOVE_RAD 옮겨 다시 돈다.
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 4.0)
+    spot = (robot.x, robot.y)
+    first_angle = angle_from_center(*spot)
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    assert logic.state == LURK
+    moved = angle_from_center(robot.x, robot.y) - first_angle
+    moved = math.atan2(math.sin(moved), math.cos(moved))
+    assert abs(moved) > math.radians(40.0)
+    assert abs(math.dist((robot.x, robot.y), CENTER_M) - GUARD_RADIUS_M) < 0.15
+
+
+def test_lurk_finds_far_cube_after_moving():
+    # 첫 자리에서는 너무 멀어(약 1.35 m 넘게) 안 보이던 큐브를 옮긴 자리에서 보고 잡으러 간다.
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 4.0)
+    # 원 위 첫 자리에서 약 1.9 m (안 보임), LURK_MOVE_RAD 옮긴 자리에서 약 1.1 m
+    away = angle_from_center(robot.x, robot.y) + 2 * mission2_logic.LURK_MOVE_RAD
+    robot.target = (CENTER_M[0] + 1.3 * math.cos(away), CENTER_M[1] + 1.3 * math.sin(away))
+    states = run(logic, robot, max_seconds=robot.now + 25.0, until=APPROACH)
+    assert logic.state == APPROACH, states
 
 
 def test_lurk_returns_to_lurk_after_retreat():
