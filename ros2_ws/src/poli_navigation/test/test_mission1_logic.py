@@ -601,6 +601,20 @@ def test_return_reverses_instead_of_turning_around():
     assert logic._turn(obs).linear < 0.0
 
 
+def test_reverse_toward_known_wall_trusts_wall_more_and_slows_down():
+    # 2026-11-03 16:26 실기: 엔코더가 약 10 cm 덜 간 것으로 나와 10 cm 창에 늦게 들어오고
+    # 0.32 m/s에서 서다 박았다.
+    center_x = cell_center_m((7, 5))[0]
+    speeds = []
+    stopped = _reverse_into_dead_end(0.15, wall_known=True, speeds=speeds)
+    assert stopped <= center_x + 0.005
+    # 마지막 구간(실제로 가운데 20 cm 안)은 천천히
+    slow = mission1_logic.REVERSE_WALL_SLOW_SPEED
+    assert max(v for left, v in speeds if left < 0.2) <= slow + 1e-9
+    # 너머 벽을 모르면 예전처럼 10 cm 창만 쓴다
+    assert _reverse_into_dead_end(0.15) > center_x + 0.05
+
+
 def test_does_not_turn_into_unknown_cell_with_wall_on_the_way(monkeypatch):
     # 2026-11-03 15:05 실기: (4,7)에서 서서 봐도 (4,8)이 '?'(콘 광선이 애매)라 그대로 들어가 상자에 닿았다.
     # 진행선 위 칸 앞쪽 절반에 벽 점이 보이면 막힘으로 보고 다른 칸으로 간다.
@@ -639,15 +653,18 @@ def test_unknown_cell_without_wall_is_still_entered(monkeypatch):
     assert logic.path[1] == (9, 2)
 
 
-def _reverse_into_dead_end(odom_lag_m):
+def _reverse_into_dead_end(odom_lag_m, wall_known=False, speeds=None):
     """
     (5,5)에서 (7,5)로 후진, 너머 (8,5)는 상자. 엔코더 위치는 실제보다 odom_lag_m 덜 간 것으로 나온다.
 
-    로봇이 멈춘 순간의 실제 x를 돌려준다.
+    로봇이 멈춘 순간의 실제 x를 돌려준다. wall_known이면 지도에 (8,5)가 이미 막힘이다.
+    speeds가 있으면 (가운데까지 실제 남은 거리, 명령 속도)를 모은다.
     """
     true_grid = GridMap(use_point_symmetry=False)
     true_grid.mark_blocked((8, 5))
     logic = Mission1Logic(point_symmetry=False)
+    if wall_known:
+        logic.grid.mark_blocked((8, 5))
     logic.state = DRIVE
     logic.state_started_at = 0.0
     logic.target = cell_center_m((7, 5))
@@ -662,6 +679,8 @@ def _reverse_into_dead_end(odom_lag_m):
         command = logic._drive(obs)
         if logic.state != DRIVE:
             break
+        if speeds is not None:
+            speeds.append((cell_center_m((7, 5))[0] - x, abs(command.linear)))
         x += command.linear * math.cos(yaw) * DT
         now += DT
     return x

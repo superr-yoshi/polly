@@ -262,6 +262,12 @@ CHAIN_GUARD_RANGE_M = 0.6
 # (5,5)->(7,5) 후진 중 엔코더 위치가 3 cm 넘게 덜 간 것으로 나와(벽 보정 상한 +3 cm) (8,5) 상자에 박았다.
 # 벽으로 본 남은 거리가 엔코더로 본 것과 REVERSE_WALL_MATCH_M 넘게 다르면 목표 칸 너머 벽이 아닌 것으로 본다.
 REVERSE_WALL_MATCH_M = 0.10
+# 목표 칸 너머가 이미 막힘(또는 외벽)으로 알려져 있으면 그 벽이 확실하므로 더 넓게 믿고, 마지막 구간은 천천히 간다.
+# 2026-11-03 16:26 실기: 큐브를 잡고 (6,5)->(7,5) 후진. 엔코더가 약 10 cm 덜 간 것으로 나와(주행 중 벽 보정은
+# 오차의 절반, 한 번에 3 cm까지) 10 cm 창에 늦게 들어왔고, 0.32 m/s에서 서느라 밀려 (8,5) 상자에 닿았다.
+REVERSE_WALL_MATCH_KNOWN_M = 0.25
+REVERSE_WALL_SLOW_ZONE_M = 0.25
+REVERSE_WALL_SLOW_SPEED = 0.2  # TODO_MEASURE: 이 속도에서 서는 거리(지연 + 감속)가 뒤 여유 4 cm 안인지
 # 꺾어 들어갈 옆 칸이 '모름'이면(콘 광선 중 가까운 점이 70%가 안 되고 빈칸도 아님) 그 칸 앞쪽 절반
 # (칸 경계 - UNKNOWN_WALL_BEFORE_M ~ 경계 + UNKNOWN_WALL_DEPTH_M, 칸 가운데 선 ±CHAIN_GUARD_HALF_WIDTH_M)에
 # 돌아온 벽 점이 GUARD_MIN_POINTS개 이상 있는지 본다. 있으면 막힘으로 보고 다시 계획한다.
@@ -1443,6 +1449,7 @@ class Mission1Logic:
         endpoint_reached = False
         remaining = distance
         lateral = 0.0
+        wall_known = False
         if self._drive_heading is not None:
             # 목표 점을 겨누지 않고 계획한 진행선(출발 가운데 -> 목표 가운데)을 따라간다.
             # 2026-10-31 실기: 위치 보정으로 목표 점이 옆으로 옮겨지면 점을 겨누느라 대각선·45도 꺾임.
@@ -1453,8 +1460,10 @@ class Mission1Logic:
             along = dx * math.cos(axis) + dy * math.sin(axis)
             lateral = -dx * math.sin(axis) + dy * math.cos(axis)  # 진행선이 로봇 왼쪽이면 +
             remaining = along
+            wall_known = self.reverse and self._wall_known_beyond(target_cell)
             if self.reverse and obs.scan is not None:
-                by_wall = self._reverse_wall_left(obs, along)
+                by_wall = self._reverse_wall_left(
+                    obs, along, REVERSE_WALL_MATCH_KNOWN_M if wall_known else REVERSE_WALL_MATCH_M)
                 if by_wall is not None and by_wall < remaining:
                     self._reverse_wall_gap = along - by_wall
                     remaining = by_wall
@@ -1510,8 +1519,12 @@ class Mission1Logic:
             return Command()
 
         # 목표에 가까워지면 일정한 감속으로 줄여 최저 속도로 도착한다. (출발 가속은 _limit_accel)
+        if wall_known and remaining < REVERSE_WALL_SLOW_ZONE_M:
+            slow_cap = REVERSE_WALL_SLOW_SPEED
+        else:
+            slow_cap = math.inf
         remaining = max(0.0, remaining - ARRIVE_TOLERANCE_M)
-        speed = min(self._max_speed(),
+        speed = min(self._max_speed(), slow_cap,
                     math.sqrt(MIN_DRIVE_SPEED ** 2 + 2.0 * DRIVE_DECEL * remaining))
         if arc:
             # 원호 시작점(꺾는 칸 가운데 R 앞)에서 ARC_SPEED가 되게 줄인다 (멈추지 않음)
@@ -1604,7 +1617,15 @@ class Mission1Logic:
         to_target = dx * math.cos(self._drive_heading) + dy * math.sin(self._drive_heading)
         return ahead < to_target - CHAIN_WALL_MARGIN_M
 
-    def _reverse_wall_left(self, obs, along):
+    def _wall_known_beyond(self, target_cell):
+        """주행 방향으로 목표 칸 바로 너머가 막힘이거나 경기장 밖인지 (그 벽까지 거리를 믿을 수 있다)."""
+        if target_cell is None or self._drive_heading is None:
+            return False
+        beyond = (target_cell[0] + round(math.cos(self._drive_heading)),
+                  target_cell[1] + round(math.sin(self._drive_heading)))
+        return not self.grid.in_bounds(beyond) or self.grid.get(beyond) == BLOCKED
+
+    def _reverse_wall_left(self, obs, along, match=REVERSE_WALL_MATCH_M):
         """
         후진 중 차체 뒤(진행 방향) 벽까지 거리로 본 목표 가운데까지 남은 거리.
 
@@ -1619,7 +1640,7 @@ class Mission1Logic:
         cos_a, sin_a = math.cos(self._drive_heading), math.sin(self._drive_heading)
         moved = (obs.x - sx) * cos_a + (obs.y - sy) * sin_a
         left = wall - moved - CELL_SIZE_M / 2.0
-        if abs(left - along) > REVERSE_WALL_MATCH_M:
+        if abs(left - along) > match:
             return None
         return left
 
