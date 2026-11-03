@@ -669,7 +669,7 @@ def test_search_near_center_moves_around_after_full_turn():
     # 한 바퀴 돌아도 없으면 중앙 둘레를 따라 옮겨 다시 찾는다.
     logic = Mission2Logic()
     logic.gripper_opened = True
-    start = (CENTER_M[0] - 0.9, CENTER_M[1] - 0.3)
+    start = (CENTER_M[0] - 0.65, CENTER_M[1] - 0.2)  # SEARCH_CENTER_M(0.7 m) 원 위
     robot = SimRobot(pose=(*start, 0.0), target=(100.0, 100.0))
     logic.state = APPROACH
     logic.state_started_at = 0.0

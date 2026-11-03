@@ -134,7 +134,8 @@ SEARCH_SWEEP_RAD = math.radians(50.0)
 SEARCH_SWEEP_DONE_RAD = math.radians(5.0)
 # 계속 돌며 한 바퀴를 다 봐도 없으면, 중앙에서 SEARCH_CENTER_M 거리까지 다가가 다시 돈다 (RECENTER).
 # 카메라는 약 1.4 m(면적 300)까지만 큐브를 알아본다. 탈락한 팀의 큐브는 중앙으로 돌아온다(3.4.6).
-SEARCH_CENTER_M = 1.0
+# 2026-11-03 23:52 실기 뒤 팀: 1.0 m 원은 너무 바깥에서 돈다 -> LURK_RADIUS_M과 같은 0.7 m. TODO_MEASURE
+SEARCH_CENTER_M = 0.7
 RECENTER_SPEED = 0.4
 # 돌다가(SEARCH)·옮기다가(RECENTER) 큐브가 보여 쫓아갔는데 이 시간 안에 놓쳤고 면적이 SEARCH_RESUME_MAX_AREA
 # 밑이었으면(멀리서 깜빡 보인 것), 처음부터 다시 돌지 않고 하던 것을 잇는다 (돈 각도, 옮겨 가던 점).
