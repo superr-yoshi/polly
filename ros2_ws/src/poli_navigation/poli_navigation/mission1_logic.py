@@ -431,6 +431,13 @@ RELEASE_AT_START = True
 
 # 갈 길이 없을 때 다시 스캔하기 전까지 기다리는 시간
 STUCK_RETRY_S = 1.0
+# 바퀴만 돌고 차체는 안 돌 때 (모서리에 걸림): 이만큼 이어지면 멈추고 조금 물러난 뒤 다시 본다.
+# 2026-11-04 07:30·07:33 실기: 왼쪽으로 꺾다 오른쪽 벽 12 cm에서 몸통이 걸려 엔코더 회전 1.4 rad/s,
+# IMU 0으로 2.6~3.4초 헛돌았고, 그동안 엔코더 이동이 위치에 들어가 20 cm 틀어져 큐브를 포기했다.
+# 헛도는 판단은 mission1_node(엔코더 회전 vs IMU 회전)가 해서 Observation.wheel_slip_s로 넘긴다.
+SLIP_STUCK_S = 0.4
+SLIP_BACKOFF_SPEED = 0.15  # m/s, 걸린 쪽 반대로
+SLIP_BACKOFF_S = 0.4       # 약 5 cm
 
 EXPLORE = 'EXPLORE'
 RETURN = 'RETURN'
@@ -518,6 +525,8 @@ class Observation:
     scan_time: Optional[float] = None
     # 집게 안 적외선 거리 (m, 범위 밖 inf). 센서가 없거나 끊기면 None
     gripper_range: Optional[float] = None
+    # 바퀴는 도는데 차체(IMU)는 안 도는 상태가 이어진 시간 (초, 아니면 0). mission1_node가 잰다
+    wheel_slip_s: float = 0.0
 
 
 class Mission1Logic:
@@ -540,6 +549,8 @@ class Mission1Logic:
         self.path = None
         self.turn_pulse = TurnPulse()
         self.maze = Mission1Maze()
+        # 바퀴 헛돎으로 STUCK이 됐을 때 물러나는 속도 (0이면 그냥 기다림)
+        self._slip_backoff = 0.0
         self.reverse = False
         self._drive_block_scans = 0
         self._last_drive_scan = None
@@ -1444,6 +1455,13 @@ class Mission1Logic:
         return '회전 왕복 제한'
 
     def _drive(self, obs):
+        if obs.wheel_slip_s >= SLIP_STUCK_S:
+            # 몸통이 벽 모서리에 걸려 바퀴만 돈다 -> 가던 쪽 반대로 조금 물러나서 다시 스캔·판단
+            self.stop_reason = f'바퀴만 돎 {obs.wheel_slip_s:.1f}초 (차체가 걸림) -> 물러나서 다시 판단'
+            self._slip_backoff = SLIP_BACKOFF_SPEED if self.reverse else -SLIP_BACKOFF_SPEED
+            self._chained = False
+            self._change_state(STUCK, obs)
+            return Command(linear=self._slip_backoff)
         # 주행 중 대상이 보여도 바로 꺾지 않는다 (대각선 접근 방지). 칸 가운데에서 판단한다.
         # 단 큐브가 바로 앞이면(적외선, 또는 카메라에 크게) 그 칸으로 밀고 들어가지 않고 진행선으로 바로 잡는다.
         if self.phase == EXPLORE and not self.reverse and not self.delivering:
@@ -1741,9 +1759,13 @@ class Mission1Logic:
     def _stuck(self, obs):
         # 상대 로봇이 길을 막고 있을 수 있다. 기다렸다가 다시 스캔한다.
         # (상대가 떠났으면 다시 볼 때 neighbor_states가 빈칸으로 바꾼다)
-        if obs.now - self.state_started_at < STUCK_RETRY_S:
+        elapsed = obs.now - self.state_started_at
+        if self._slip_backoff and elapsed < SLIP_BACKOFF_S:
+            return Command(linear=self._slip_backoff)
+        if elapsed < STUCK_RETRY_S:
             return Command()
 
+        self._slip_backoff = 0.0
         self._change_state(SCAN, obs)
         return Command()
 

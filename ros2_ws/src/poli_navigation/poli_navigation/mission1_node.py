@@ -41,6 +41,11 @@ from std_msgs.msg import Bool, String
 # 가짜 RETREAT가 계속 걸렸다 (Mega 포트 'multiple access' 오류).
 ODOM_JUMP_M = 0.15
 ODOM_JUMP_RAD = 0.5
+# 바퀴 헛돎: 엔코더 회전이 SLIP_ENC_W(rad/s)를 넘는데 IMU 회전이 그 SLIP_IMU_RATIO 배도 안 되면 차체가 걸려
+# 바퀴만 도는 것. 그동안의 엔코더 이동은 위치에 넣지 않고, 이어진 시간을 Observation.wheel_slip_s로 넘긴다
+# (mission1_logic.SLIP_STUCK_S). 2026-11-04 07:30·07:33 실기: 엔코더 1.4 rad/s, IMU 0.0~0.1 rad/s.
+SLIP_ENC_W = 0.5
+SLIP_IMU_RATIO = 0.3
 
 # 판단 주기 (초)
 CONTROL_PERIOD = 0.05
@@ -123,6 +128,8 @@ class Mission1Node(Node):
         # 진단 로그용: 마지막 IMU 회전 속도, 엔코더 회전 속도, 이번 주행의 IMU - 엔코더 회전 누적
         self.imu_w = 0.0
         self.enc_w = 0.0
+        # 바퀴 헛돎이 시작된 시각 (아니면 None)
+        self.slip_since = None
         self.yaw_gap = 0.0
         self.last_drive_log = 0.0
         self.drive_logged_for = None
@@ -220,6 +227,16 @@ class Mission1Node(Node):
             imu_ok = (self.use_imu_yaw and self.imu_received_at is not None
                       and now - self.imu_received_at < 0.3)
             enc_dyaw = math.atan2(math.sin(odom_yaw - prev_yaw), math.cos(odom_yaw - prev_yaw))
+            enc_w = msg.twist.twist.angular.z
+            slipping = (imu_ok and abs(enc_w) > SLIP_ENC_W
+                        and abs(self.imu_w) < SLIP_IMU_RATIO * abs(enc_w))
+            if slipping:
+                # 바퀴가 헛돈다 -> 엔코더가 잰 이동도 믿지 않는다
+                ds = 0.0
+                if self.slip_since is None:
+                    self.slip_since = now
+            else:
+                self.slip_since = None
             if imu_ok:
                 dyaw = self.imu_dyaw
                 self.yaw_gap += self.imu_dyaw - enc_dyaw
@@ -343,6 +360,7 @@ class Mission1Node(Node):
             gripper_range=(self.gripper_range if self.gripper_range_received_at is not None
                            and now - self.gripper_range_received_at <= HOLDING_TIMEOUT else None),
             gripper_state=self.gripper_state,
+            wheel_slip_s=0.0 if self.slip_since is None else now - self.slip_since,
         )
         if scan is not None:
             observation.scan_time = scan.header.stamp.sec + scan.header.stamp.nanosec * 1e-9

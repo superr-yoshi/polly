@@ -2120,3 +2120,36 @@ def test_push_keeps_going_while_cube_slides_deeper():
         command = logic._push(Observation(x=x - 0.01 * k, y=y, yaw=math.pi, now=1.0 + 0.1 * k,
                                           gripper_range=0.065 - 0.006 * k))
         assert logic.state == PUSH and command.linear > 0.0
+
+
+def test_wheel_slip_stops_backs_off_and_rescans():
+    """바퀴만 돌고 차체가 안 돌면(모서리에 걸림) 멈추고 조금 물러난 뒤 다시 스캔한다 (2026-11-04 실기)."""
+    logic = Mission1Logic()
+    logic.state = DRIVE
+    logic.target = (1.8, 2.2)
+    logic._drive_heading = -math.pi / 2
+    obs = Observation(x=1.75, y=2.3, yaw=-1.95, now=0.0, wheel_slip_s=0.2)
+    logic._drive(obs)
+    assert logic.state == DRIVE
+    obs = Observation(x=1.75, y=2.3, yaw=-1.95, now=0.3, wheel_slip_s=0.5)
+    command = logic._drive(obs)
+    assert logic.state == STUCK
+    assert command.linear < 0.0 and command.angular == 0.0
+    command = logic._stuck(Observation(x=1.75, y=2.3, yaw=-1.95, now=0.5))
+    assert command.linear < 0.0
+    command = logic._stuck(Observation(x=1.75, y=2.33, yaw=-1.95, now=0.8))
+    assert command.linear == 0.0
+    logic._stuck(Observation(x=1.75, y=2.33, yaw=-1.95, now=1.4))
+    assert logic.state == SCAN
+    assert logic._slip_backoff == 0.0
+
+
+def test_wheel_slip_while_reversing_backs_off_forward():
+    logic = Mission1Logic()
+    logic.state = DRIVE
+    logic.target = (1.8, 2.2)
+    logic._drive_heading = math.pi / 2
+    logic.reverse = True
+    command = logic._drive(Observation(x=1.8, y=2.4, yaw=math.pi / 2, now=0.0, wheel_slip_s=0.5))
+    assert logic.state == STUCK
+    assert command.linear > 0.0
