@@ -151,7 +151,7 @@ ANGULAR_ACCEL = 15.0  # rad/s^2, 2026-10-31 10 -> 15 (0 -> 3.5 rad/s 약 0.23초
 # 이만큼 판단이 끊기면 그동안 노드가 정지 명령을 보냈다고 보고 0에서 다시 가속한다.
 ACCEL_RESET_S = 0.15
 # 카메라 접근: 멀 때는 빠르게, 큐브가 커 보이면 천천히 (면적 판단 지연으로 지나치지 않게)
-APPROACH_SPEED = 0.25  # 2026-10-31 0.2 -> 0.25 (가까우면 APPROACH_SLOW_SPEED)
+APPROACH_SPEED = 0.35  # 2026-10-31 0.2 -> 0.25, 2026-11-04 0.25 -> 0.35 팀 요청 (가까우면 APPROACH_SLOW_SPEED)
 APPROACH_SLOW_SPEED = 0.12
 APPROACH_SLOW_AREA = 20000.0  # TODO_MEASURE: 잡는 위치 약 15 cm 전
 # 2026-10-31 1.2 -> 1.8 (회전이 느리고 끊김). hardware.yaml max_angular 2.0 안.
