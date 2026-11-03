@@ -202,7 +202,7 @@ class Mission2Node(Node):
         if corrected and not self.wall_corrected:
             self.get_logger().info('Wall correction active')
             self.wall_corrected = True
-        # 상대 위치는 큐브를 잡은 뒤(GUARD)와 중앙으로 다가갈 때(RECENTER)만 쓴다.
+        # 상대 위치는 잡은 뒤(GUARD), 실패 뒤(LURK·다시 잡으러 가기), 중앙으로 다가갈 때(RECENTER)만 쓴다.
         if self.logic.wants_opponents():
             self.opponents = find_opponents(msg, self.wall_correction.apply(self.odom_pose))
             self.opponent_received_at = self.now_seconds()

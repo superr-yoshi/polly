@@ -10,6 +10,7 @@ ROS2와 무관한 순수 Python 모듈이다.
   -> PUSH(밀어 넣으며 닫기) -> GRASP -> GUARD(180도 돌아 중앙에서 떨어진 원 위로 빠져서 지키기)
   못 잡았거나 놓치면(/gripper/holding false) LURK: GUARD처럼 원 위로 빠져 상대를 피하고,
   빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (LURK_AFTER_FAIL, 2026-11-02 팀)
+  다시 잡으러 가는 중(ALIGN·APPROACH)에도 상대가 DODGE_START_M 안으로 오면 LURK로 돌아가 피한다 (2026-11-03)
   (LURK_AFTER_FAIL False면 SPIN: 끝까지 제자리 회전만 (SPIN_AFTER_FAIL, 2026-11-01 팀),
    둘 다 False면 예전처럼 BACKOFF(집게 열고 후진) -> SEARCH -> 다시 잡기)
   중앙 근처까지 와도 안 보이면 SEARCH -> ALIGN -> APPROACH
@@ -601,8 +602,17 @@ class Mission2Logic:
         return SEARCH
 
     def wants_opponents(self):
-        """상대 위치(LiDAR)가 필요한 상태인지. 출발·접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
-        return self.holding_cube() or self.state in (RECENTER, LURK)
+        """상대 위치(LiDAR)가 필요한 상태인지. 출발·첫 접근 중에는 판단을 늦추지 않게 계산하지 않는다."""
+        return self.holding_cube() or self.state in (RECENTER, LURK) or self._retrying()
+
+    def _retrying(self):
+        """실패 뒤 LURK에서 다시 잡으러 가는 중인지 (이때도 GUARD·LURK처럼 상대를 피한다)."""
+        return self.gave_up and LURK_AFTER_FAIL and self.state in (ALIGN, APPROACH)
+
+    def _opponent_too_close(self, obs):
+        """다시 잡으러 가는 중에 상대가 DODGE_START_M 안으로 왔는지 -> LURK로 돌아가 피한다."""
+        return self._retrying() and any(
+            math.dist((obs.x, obs.y), other) < DODGE_START_M for other in self._opponents(obs))
 
     def holding_cube(self):
         if self.state == RETREAT:
@@ -785,6 +795,8 @@ class Mission2Logic:
         return Command()
 
     def _align(self, obs):
+        if self._opponent_too_close(obs):
+            return self._start_lurk(obs)
         if self._target_lost(obs) or self.target is None:
             return self._search_again(obs)
 
@@ -797,6 +809,8 @@ class Mission2Logic:
         if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
             # 적외선이 큐브를 이미 집게 안에서 본다 (카메라 아래로 사라졌어도) -> 바로 닫는다
             return self._start_push(obs)
+        if self._opponent_too_close(obs):
+            return self._start_lurk(obs)
         if self._target_lost(obs) or self.target is None:
             if self._area_best >= APPROACH_SLOW_AREA:
                 # 바로 앞까지 왔다가 카메라 아래로 사라졌다 = 집게 앞에 있다. 밀며 잡는다.
@@ -969,8 +983,8 @@ class Mission2Logic:
         """
         잡지 못했거나 놓친 뒤 (LURK_AFTER_FAIL): GUARD처럼 원 위에서 상대를 피하며 기다린다.
 
-        원 위에 서 있는 동안은 제자리에서 돌며 카메라로 둘러보고, 피하는 중이 아닐 때 빨간 대상이 보이면
-        집게를 열고 다시 잡으러 간다 (상대가 잡고 있는 큐브로 보이면 가지 않는다).
+        원 위에 서 있는 동안은 제자리에서 돌며 카메라로 둘러보고, 피하는 중이 아니고 상대가 DODGE_CLEAR_M 밖일 때
+        빨간 대상이 보이면 집게를 열고 다시 잡으러 간다 (상대가 잡고 있는 큐브로 보이면 가지 않는다).
         """
         if obs.gripper_range is not None and obs.gripper_range <= GRAB_TOF_M:
             # 큐브가 이미 집게 안에 있다 (ToF가 잠깐 '놓침'으로 봤다) -> 열지 않고 다시 닫는다
@@ -978,7 +992,9 @@ class Mission2Logic:
         opponents = self._opponents(obs)
         command = self._keep_away(obs, opponents)
         # 큐브 위치는 이번에 새로 계산된 것만 쓴다 (빨리 돌 때는 갱신하지 않아 옛 위치가 남는다)
-        retry = (not self._dodging and self._sees_target(obs) and self.target is not None
+        # 상대가 DODGE_CLEAR_M 밖일 때만 간다 (그 안이면 가다가 바로 다시 피하게 된다)
+        clear = all(math.dist((obs.x, obs.y), other) > DODGE_CLEAR_M for other in opponents)
+        retry = (not self._dodging and clear and self._sees_target(obs) and self.target is not None
                  and self._target_updated_at == obs.now and obs.area < LURK_RETRY_MAX_AREA
                  and not self._target_near_opponent(opponents))
         if retry:

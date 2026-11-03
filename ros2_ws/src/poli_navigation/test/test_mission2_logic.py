@@ -902,6 +902,46 @@ def test_lurk_does_not_chase_cube_held_by_opponent():
     assert APPROACH in states and logic.state == PUSH
 
 
+def test_lurk_retry_dodges_opponent_like_guard():
+    # 2026-11-03 실기: 실패 뒤 다시 잡으러 가는 중(ALIGN·APPROACH)에는 상대를 안 봐서 피하지 않았다.
+    # 이제는 GUARD·LURK처럼 상대가 DODGE_START_M 안으로 오면 LURK로 돌아가 피한다.
+    logic, robot = lurking_robot(target=CENTER_M)
+    run(logic, robot, max_seconds=robot.now + 15.0, until=APPROACH)
+    assert logic.state == APPROACH
+    assert logic.wants_opponents()
+    # 큐브 쪽으로 가는 길 옆에 상대가 다가와 있다
+    ahead = (robot.x + 0.5 * math.cos(robot.yaw), robot.y + 0.5 * math.sin(robot.yaw))
+    opponent = (ahead[0] - 0.15 * math.sin(robot.yaw), ahead[1] + 0.15 * math.cos(robot.yaw))
+    states = []
+    closest = math.inf
+    for _ in range(int(3.0 / DT)):
+        obs = robot.observe()
+        obs.opponents = (opponent,)
+        robot.apply(logic.step(obs))
+        states.append(logic.state)
+        closest = min(closest, math.dist((robot.x, robot.y), opponent))
+    assert states[0] == LURK
+    assert PUSH not in states and GRASP not in states
+    assert closest > 0.35
+    assert math.dist((robot.x, robot.y), opponent) > DODGE_START_M
+
+
+def test_lurk_waits_for_opponent_to_clear_before_retry():
+    # 상대가 DODGE_START_M ~ DODGE_CLEAR_M 사이에 있으면 다시 잡으러 가지 않는다 (가다가 바로 피하게 된다)
+    logic, robot = lurking_robot()
+    run(logic, robot, max_seconds=robot.now + 8.0)
+    robot.target = CENTER_M
+    toward_center = math.atan2(CENTER_M[1] - robot.y, CENTER_M[0] - robot.x)
+    side = toward_center + math.pi / 2
+    opponent = (robot.x + 0.8 * math.cos(side), robot.y + 0.8 * math.sin(side))
+    for _ in range(int(5.0 / DT)):
+        obs = robot.observe()
+        obs.opponents = (opponent,)
+        robot.apply(logic.step(obs))
+        if math.dist((robot.x, robot.y), opponent) <= mission2_logic.DODGE_CLEAR_M:
+            assert logic.state == LURK
+
+
 def test_lurk_returns_to_lurk_after_retreat():
     logic, robot = lurking_robot()
     robot.x, robot.y = 0.6, 1.8
