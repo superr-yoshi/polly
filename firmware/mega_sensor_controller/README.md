@@ -1,8 +1,9 @@
 # mega_sensor_controller — Arduino Mega 2560 펌웨어 (조원 A)
 
 2026-10-29부터 RRC Lite를 쓰지 않고 **Mega가 주행까지 맡는다** (모터 드라이버 Cytron MDD10).
-주행 모터 2개 속도 제어(MDD10) + 엔코더 2개 + IMU BNO085 + 초음파 HC-SR04 ×4 + 집게 서보(D9) + Pi와 시리얼 통신
+주행 모터 2개 속도 제어(MDD10) + 엔코더 2개 + 집게 서보(D9) + Pi와 시리얼 통신
 (`docs/serial_protocol.md` v2.0). 핀은 `docs/pin_map.md`.
+대회 설정에서 BNO085(`SIM_IMU 1`)와 초음파(`NO_ULTRASONIC 1`) 코드는 꺼 두었다. IMU는 Pi에 연결한 MPU6050이다.
 
 | 파일 | 내용 |
 |---|---|
@@ -33,7 +34,7 @@
 
 ## SIM / REAL
 - `SIM_ULTRASONIC 1`: 초음파 모의값. `SIM_GRIPPER 1`: 서보 신호를 내지 않음 (상태만 계산).
-- `SIM_IMU 1`(기본): BNO085 없이 빌드. `$IMU`를 보내지 않는다 → Pi는 휠 각속도로 `/imu/data` z축만 채운다.
+- `SIM_IMU 1`(기본): BNO085 없이 빌드. `$IMU`를 보내지 않는다. 실제 로봇의 `/imu/data`는 Pi의 `imu_node`(MPU6050)가 발행한다.
   BNO085를 연결하면 `SIM_IMU 0`으로 바꾸고 `IMU_I2C_ADDR`(0x4A/0x4B)를 보드에 맞춘다.
 - 모터·엔코더는 SIM 스위치가 없다. 부품 없이 Pi를 시험하려면 Pi 쪽 `fake_mega_node`를 쓴다.
 
@@ -45,8 +46,7 @@ arduino-cli lib install "SparkFun BNO080 Cortex Based IMU"  # SIM_IMU 0일 때�
 arduino-cli compile --fqbn arduino:avr:mega firmware/mega_sensor_controller
 ```
 - 2026-09-29 확인 (MDD10 전): SIM 빌드 7,854 B / RAM 464 B, REAL 빌드 8,892 B / RAM 624 B.
-- 2026-10-29 MDD10 버전: **arduino-cli 컴파일 아직 안 함** (작성 PC에 arduino-cli 없음). g++ + 가짜 Arduino 헤더로
-  `SIM_IMU`·`SIM_GRIPPER` 4가지 조합 문법 검사만 통과. 처음 굽기 전에 위 명령으로 컴파일해 확인한다.
+- 2026-11-01 MDD10 버전: Pi의 arduino-cli로 컴파일 확인 (12984 bytes). 노트북 WSL에는 arduino-cli가 없다.
 
 ## 업로드 후 확인 (⚠️ 바퀴를 바닥에서 띄운다)
 ```bash
@@ -70,7 +70,7 @@ python scripts/pc_serial_tester.py <포트>     # pip install pyserial
 | 2026-09-29 | HC-SR04 1개를 ① 전방 자리(D22/D23, 코드상 0번 = 현재 `/range/front`)에 연결, `SIM_ULTRASONIC 0` | 15 s 120회 중 117회 유효. 손 20~70 mm, 배경 약 1870 mm, 정지 시 흔들림 ±5 mm. 실패 3회는 20 mm 미만 근접 |
 | 2026-09-29 | WSL2 Ubuntu + ROS 2에서 `mega_bridge_node`로 실물 Mega 연결 (`docs/wsl_usb.md`) | `/range/front_left`(현재 `/range/front`) 7.9 Hz, 1.869 m, 없는 센서 자리는 `inf`, `/gripper/set`(당시 인터페이스, 이후 `/gripper/command`로 교체) 닫기·열기 success, Ctrl+C·SIGTERM 정상 종료 |
 
-- 남은 센서 3개(D24~D29)는 도착 후 같은 방법으로 확인한다.
-- MDD10·엔코더·BNO085·집게 서보(D9)는 아직 실기 확인 전이다 (2026-10-29 코드 작성).
+- 위 초음파 기록은 시험 때 것이고, 실제 로봇에는 초음파 센서가 없다 (2026-11-02 팀 확인).
+- MDD10·엔코더·집게 서보(D9)는 2026-10-30 실기 확인 뒤 2026-11-04 대회까지 사용했다. BNO085 코드는 실기로 쓰지 않았다.
 - 초음파는 이제 `pulseInLong`(micros 기반)으로 잰다. 엔코더 인터럽트가 끼어도 거리가 짧게 나오지 않게 하려는 것이다.
   측정 1개가 최대 24 ms 걸리는 동안에도 엔코더는 인터럽트로 세므로 tick은 빠지지 않는다 (속도 제어 주기만 조금 늘어남).

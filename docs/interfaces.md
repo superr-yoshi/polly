@@ -178,6 +178,8 @@ ros2 launch poli_hardware hardware.launch.py                            # fake (
 - 실측 필요(TODO_MEASURE): 0.05초 펄스 한 번에 실제로 몇 도 도는지 (`drive_test`). 펄스가 너무 짧아 바퀴가 안 움직이면 `PULSE_S`를 늘린다.
 
 ### 5-5. 조원 A·팀 변경 (2026-10-29) — RRC Lite → MDD10 + Mega
+> 2026-11-04 대회 기준: `/imu/data`는 BNO085가 아니라 Pi에 연결한 MPU6050(`imu_node`, 50 Hz)이 발행했다. 아래 BNO085 내용은 당시 계획 기록이다.
+
 - 모터 드라이버를 **Cytron MDD10**으로 바꾸고 RRC Lite를 뺐습니다. 속도 제어·엔코더·IMU(BNO085)·집게(D9)는 **Mega**가 맡습니다
   (`docs/pin_map.md`, `docs/serial_protocol.md` v2.0). 배터리는 12 V.
 - **토픽 이름·형식·frame_id는 그대로입니다.** `/cmd_vel`, `/odom_raw`, `/imu/data`, `/range/*`, `/gripper/command`, `/gripper/state`.

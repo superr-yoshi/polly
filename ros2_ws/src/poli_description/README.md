@@ -13,12 +13,12 @@ ros2 launch poli_hardware hardware.launch.py             # 하드웨어 launch�
 |---|---|---|
 | `base_link` | 좌우 구동 바퀴 축의 가운데 | x 정면, y 왼쪽, z 위 |
 | `laser` | RPLIDAR C1 레이저 | sllidar_ros2 기본 frame 이름과 같음. 레이저 높이 < 0.20 m 이어야 함 |
-| `imu_link` | BNO085 (Mega I2C) | 보드 위치·방향 실측 필요 |
+| `imu_link` | MPU6050 (Pi I2C 버스 3) | 보드 위치·방향 실측 필요 |
 | `camera_link` | AI Camera | 아래로 숙인 각 `camera_pitch` |
-| `ultrasonic_front_link` / `_left_link` / `_right_link` / `_rear_link` | HC-SR04 | +x = 센서가 보는 방향. 좌측만 낮게, 나머지 지면 약 14 cm |
+| `ultrasonic_front_link` / `_left_link` / `_right_link` / `_rear_link` | HC-SR04 (실제 로봇에 없음) | URDF에만 남은 옛 계획. +x = 센서가 보는 방향 |
 | `gripper_link` | 집게 | 들어 올리기 없음 |
 
-odom → base_link는 여기서 발행하지 않는다 (robot_localization EKF 소유).
+odom → base_link는 여기서 발행하지 않는다 (임무 launch에 EKF 없음, 임무 노드가 위치를 직접 계산).
 
 ## 실측 후 고칠 것
 `urdf/poli.urdf.xacro` 맨 위 property만 고치면 된다. `TODO_MEASURE` / `SIM_ONLY` 표시가 붙은 값이 실측 대상이다.

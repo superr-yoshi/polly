@@ -24,7 +24,7 @@ Mega USB 포트 하나를 한 노드만 열 수 있어서 초음파·집게도 `
 | `/gripper/state` | Topic | std_msgs/String | 발행 2 Hz + 바뀔 때 | `open` / `closed` / `moving` |
 | `/gripper/command` | Topic | std_msgs/String | 구독 | `"open"` 열기 / `"grab"` 닫아 잡기 (**들어 올리기 없음**) |
 
-- odom → base_link **TF는 발행하지 않는다** (robot_localization EKF 소유).
+- odom → base_link **TF는 발행하지 않는다** (임무 launch에 EKF 없음, 임무 노드가 위치를 직접 계산).
 - `/cmd_vel`이 `cmd_timeout`(0.3 s) 이상 끊기면 0 속도. 노드가 죽거나 USB가 빠져도 **Mega 펌웨어가 0.3 s 뒤 스스로 멈춘다**.
 - `/odom_raw`: **엔코더 기반** (Mega가 4체배로 센 tick, `$ENC` 50 Hz). fake는 명령 그대로.
 - `/imu/data`: orientation 미제공(`orientation_covariance[0] = -1`). real = MPU6050 가속도·자이로 3축 (`imu_node`, 2026-10-30부터.

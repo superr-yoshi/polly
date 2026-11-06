@@ -18,8 +18,8 @@
 | 이름 | 형식 | 주기 | 설명 |
 |---|---|---|---|
 | ENC | `$ENC,seq,millis,left,right,status*CS` | 50 Hz | 엔코더 **누적** tick (4체배, 바퀴 1바퀴 약 1320). 로봇 전진 = + (펌웨어 `ENC_*_INVERT` 적용). status는 아래 표 |
-| IMU | `$IMU,seq,millis,qx,qy,qz,qw,gx,gy,gz,ax,ay,az*CS` | 25 Hz | BNO085. q = 쿼터니언 ×10000 (Game Rotation Vector, 자기장 안 씀, 켤 때 yaw 0), g = 각속도 mrad/s, a = 가속도 mm/s² (중력 포함). **BNO085가 없으면(`SIM_IMU 1`·못 찾음) 보내지 않는다** |
-| RNG | `$RNG,seq,millis,front,left,right,rear*CS` | 8 Hz | 초음파 4개 거리(mm). 0 = 측정 실패 또는 범위 밖 |
+| IMU | `$IMU,seq,millis,qx,qy,qz,qw,gx,gy,gz,ax,ay,az*CS` | 25 Hz | BNO085. q = 쿼터니언 ×10000 (Game Rotation Vector, 자기장 안 씀, 켤 때 yaw 0), g = 각속도 mrad/s, a = 가속도 mm/s² (중력 포함). **BNO085가 없으면(`SIM_IMU 1`·못 찾음) 보내지 않는다.** 대회 설정은 `SIM_IMU 1`이고 `/imu/data`는 Pi의 `imu_node`(MPU6050)가 발행했다 |
+| RNG | `$RNG,seq,millis,front,left,right,rear*CS` | 8 Hz | 초음파 4개 거리(mm). 0 = 측정 실패 또는 범위 밖. 대회 설정은 `NO_ULTRASONIC 1`이라 항상 0 (실제 센서 없음) |
 | GST | `$GST,seq,millis,last_id,state,angle*CS` | 2 Hz + 명령 직후 | 집게 상태. state 0=열림, 1=닫힘, 2=이동 중. angle = 서보 각도(도). last_id = 마지막으로 처리한 GRIP 명령 id |
 
 ENC status:

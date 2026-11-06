@@ -21,8 +21,6 @@
 - Connection: USB Serial → Raspberry Pi 5 (docs/serial_protocol.md v2.0)
 - Role:
   - MDD10 모터 속도 제어 + 엔코더 2개 (D2/D3, D18/D19)
-  - BNO085 IMU (I2C D20/D21)
-  - HC-SR04 ultrasonic sensors × 4
   - 집게 서보 DS3218 (D9)
   - 안전: 명령이 0.3 s 끊기면 정지, 엔코더 방향 반대·신호 없음 감지 시 정지
 
@@ -37,21 +35,21 @@
 
 ## 5. Camera
 - Raspberry Pi AI Camera (Sony IMX500, 수평 시야각 66.3°, 수동 초점 20 cm~∞)
-- Connection: CSI → Raspberry Pi 5 **CAM0**
+- Connection: CSI → Raspberry Pi 5 **CAM/DISP 1 (J4)**
 - Role:
   - Red rescue target detection
   - Visual alignment
 
 ## 6. IMU
-- **BNO085** (2026-10-29, RRC Lite 내장 IMU에서 변경)
-- Connection: Mega I2C (D20 SDA / D21 SCL) → `$IMU` → Raspberry Pi 5 (mega_bridge_node). 배선 TODO, 레벨 시프터 필요 여부 확인
+- **MPU6050 호환 (GY-521)** (RRC Lite 소손으로 내장 IMU에서 변경. BNO085 계획은 쓰지 않음)
+- Connection: Raspberry Pi 5 소프트웨어 I2C 버스 3 (15·16번 핀, 0x68) → `imu_node`
 - Role:
   - Robot heading
   - Rotation angle
   - Orientation
   - ROS 2 /imu/data
 
-## 7. Ultrasonic Sensors
+## 7. Ultrasonic Sensors — 사용 안 함 (실제 로봇에 없음, 2026-11-02 팀 확인, 아래는 당시 계획)
 - HC-SR04 × 4
 - Connection: Arduino Mega 2560 (D22~D29, docs/pin_map.md)
 - Role:
@@ -64,6 +62,7 @@
 - Byte Robot Black Composite Claw 125mm (최대 개폐 125 mm, 파지력 500 g, 140 g)
 - Servo: DS3218 × 1 (확정, **Mega D9**, 전원 5V 10A 컨버터 + GND 공통, 사양 4.8~6.8 V, PWM 500~2500 µs). 들어 올리기 없음
   - 2026-10-07 RRC PWM 포트로 옮겼다가 2026-10-29 Mega D9로 되돌림 (`docs/pin_map.md` 1장)
+- 집게 ToF: VL53L0X (Pi 소프트웨어 I2C 버스 4, `tof_node`, 2026-11-01). 잡기 판단에만 쓴다
 - Role:
   - Open / close gripper
   - Rescue object handling
@@ -78,10 +77,10 @@
 ## 10. Software Interface Plan
 - /cmd_vel → motor command (mega_bridge_node → `$DRV` → Mega → MDD10)
 - /odom_raw → 엔코더 odometry (Mega `$ENC`)
-- /imu/data → BNO085 (Mega `$IMU`). 미연결이면 휠 각속도로 z축만
-- /range/front, /range/left, /range/right, /range/rear → 초음파 (전방·좌측·우측·후방)
+- /imu/data → MPU6050 (`imu_node`, Pi I2C 버스 3)
+- /range/gripper, /gripper/holding → 집게 ToF (`tof_node`). 초음파 토픽은 쓰지 않음
 - /gripper/command ("open" / "grab", 들어 올리기 없음), /gripper/state → gripper (Mega D9)
 - /battery_state → 없음 (2026-10-29, 전압 측정원 없음)
 - /scan → RPLIDAR C1 LaserScan
-- /odometry/filtered → robot_localization filtered odometry
+- /odometry/filtered → 없음 (EKF를 실행하지 않음. 임무 노드가 위치를 직접 계산)
 - /camera/image_raw → camera image
