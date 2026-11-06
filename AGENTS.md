@@ -6,7 +6,7 @@
 
 ## 1. 프로젝트
 - 2026 창원대 전국대학생 자율로봇경진대회 출전 자율 구조 로봇 "POLI"
-- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·IMU·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · BNO085 IMU · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
+- Raspberry Pi 5 (Ubuntu 24.04 + ROS 2 Jazzy) · Arduino Mega 2560 (주행 속도 제어·엔코더·집게) · Cytron MDD10 (모터 드라이버) · JGB37-520 엔코더 모터 ×2 · MPU6050 호환 IMU (Pi I2C 버스 3, `imu_node`) · RPLIDAR C1 · Raspberry Pi AI Camera (IMX500) · 12 V 배터리
 - **2026-11-02: 실제 로봇에 초음파 센서가 없다.** 아래·다른 문서·URDF·펌웨어에 남은 HC-SR04 ×4, `/range/front·left·right·rear`는 옛 계획이다. 초음파를 쓰는 기능을 만들지 않는다.
 - **2026-10-29: RRC Lite를 쓰지 않는다** (MDD10 + Mega로 변경). 옛 RRC 문서·코드 기록(`docs/rrc_*.md`, `firmware/rrc_lite_patch/`)은 참고용이다.
 
@@ -52,7 +52,7 @@
 | `ros2_ws/src/poli_navigation/` | 임무(mission2), 격자 지도, LiDAR 처리, fake_scan / fake_odom | 담당 1 |
 | `ros2_ws/src/poli_hardware/` | Mega 브리지 `mega_bridge_node`(주행·센서·집게), fake 하드웨어 `fake_mega_node`, 보정 도구 `drive_test` | 조원 A |
 | `ros2_ws/src/poli_description/` | 로봇 위치 모델 URDF (센서 frame: `laser`, `imu_link`, `camera_link`, `ultrasonic_*_link`) | 조원 A |
-| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, BNO085, 집게 서보 1개. 초음파 코드는 남아 있지만 실제 센서 없음) | 조원 A |
+| `firmware/mega_sensor_controller/` | Mega 펌웨어 (MDD10 모터 속도 제어, 엔코더 2개, 집게 서보 1개. 초음파·BNO085 코드는 남아 있지만 쓰지 않음: `NO_ULTRASONIC 1`, `SIM_IMU 1`) | 조원 A |
 | `firmware/rrc_lite_patch/` | **사용 안 함** (RRC Lite를 뺌, 2026-10-29). 기록용 | — |
 | (예정) 카메라 / `/vision/target` | 빨간 대상 탐지 | 조원 B |
 | `firmware/nucleo_controller/` | 옛 NUCLEO 계획. 사용하지 않음 | — |
@@ -72,10 +72,11 @@
    지우거나 우회하지 않는다. **물리 비상정지(배터리 바로 뒤, 전체 전원 차단)는 필수**다 (펌웨어가 멈추거나 MDD10이 고장 나면 소프트웨어 정지는 소용없다).
 5. `poli_navigation/fake_odom.py`와 `poli_hardware`의 `hardware.launch.py`는 둘 다 `/odom_raw`를 발행하므로 **동시에 실행하지 않는다.**
    fake 테스트는 `ros2 launch poli_hardware hardware.launch.py`(기본 fake 모드)만 켜면 조원 A 토픽이 전부 나온다.
-6. odom → base_link TF는 robot_localization(EKF)만 발행한다. 하드웨어 노드는 TF를 발행하지 않는다.
+6. 임무 launch에는 EKF(robot_localization)가 없다. 임무 노드가 `/imu/data` 자이로로 방향을, `/odom_raw`로 거리를 계산하고 LiDAR 벽 거리로 보정한다.
+   실제 하드웨어 실행에서는 어떤 노드도 odom → base_link TF를 발행하지 않는다 (시뮬레이션용 `fake_robot`, `fake_odom`만 발행).
    base_link → 센서 frame은 `poli_description`(robot_state_publisher)만 발행한다. 센서 위치를 코드 상수로 따로 두지 말고 URDF를 고친다.
    (초음파 토픽 `/range/front` 등은 옛 계획. 2026-11-02 실제 로봇에 초음파 없음)
-   IMU frame `imu_link` = BNO085 위치.
+   IMU frame `imu_link` = MPU6050 위치.
 7. 실측하지 않은 값(바퀴 지름·간격, 센서 위치, 서보 각도 등)은 상수/파라미터로 빼고 `TODO_MEASURE`(실측 필요) 또는 `SIM_ONLY`(시뮬레이션 임시값) 주석을 단다. 임시값을 진짜 값처럼 굳히지 않는다.
 8. Mega 시리얼 packet 형식을 바꾸면 `docs/serial_protocol.md`, 펌웨어, `poli_hardware/mega_protocol.py`를 **함께** 고친다.
 9. 서보 전원은 Mega 5V 핀에서 받지 않는다 (5V 10A 컨버터, GND는 Mega와 공통). DS3218 사양 4.8~6.8 V, PWM 범위 500~2500 µs.
